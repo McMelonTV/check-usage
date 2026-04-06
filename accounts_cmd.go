@@ -222,14 +222,6 @@ func printAccountsList(accounts []storedAccount) {
 }
 
 func findMatchingAccount(accounts []storedAccount, candidate storedAccount) int {
-	if candidate.AuthData.AccountID != nil && strings.TrimSpace(*candidate.AuthData.AccountID) != "" {
-		for i := range accounts {
-			if accounts[i].AuthData.AccountID != nil && *accounts[i].AuthData.AccountID == *candidate.AuthData.AccountID {
-				return i
-			}
-		}
-	}
-
 	if candidate.Email != nil {
 		email := strings.ToLower(strings.TrimSpace(*candidate.Email))
 		if email != "" {
