@@ -195,6 +195,15 @@ func runAccountsRename(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
+	for i := range store.Accounts {
+		if i == index {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(store.Accounts[i].Name), newName) {
+			fmt.Fprintf(os.Stderr, "error: account name %q already exists\n", newName)
+			return 1
+		}
+	}
 
 	oldName := store.Accounts[index].Name
 	store.Accounts[index].Name = newName
@@ -222,14 +231,6 @@ func printAccountsList(accounts []storedAccount) {
 }
 
 func findMatchingAccount(accounts []storedAccount, candidate storedAccount) int {
-	if candidate.AuthData.AccountID != nil && strings.TrimSpace(*candidate.AuthData.AccountID) != "" {
-		for i := range accounts {
-			if accounts[i].AuthData.AccountID != nil && *accounts[i].AuthData.AccountID == *candidate.AuthData.AccountID {
-				return i
-			}
-		}
-	}
-
 	if candidate.Email != nil {
 		email := strings.ToLower(strings.TrimSpace(*candidate.Email))
 		if email != "" {
