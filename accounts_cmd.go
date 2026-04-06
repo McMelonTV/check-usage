@@ -195,6 +195,15 @@ func runAccountsRename(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
+	for i := range store.Accounts {
+		if i == index {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(store.Accounts[i].Name), newName) {
+			fmt.Fprintf(os.Stderr, "error: account name %q already exists\n", newName)
+			return 1
+		}
+	}
 
 	oldName := store.Accounts[index].Name
 	store.Accounts[index].Name = newName

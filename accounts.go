@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func loadAccounts(path string) (*accountsStore, error) {
@@ -30,9 +31,15 @@ func loadAccountsOrEmpty(path string) (*accountsStore, error) {
 }
 
 func parseAccounts(content []byte) (*accountsStore, error) {
+	if strings.TrimSpace(string(content)) == "" {
+		return &accountsStore{Accounts: []storedAccount{}}, nil
+	}
 	var store accountsStore
 	if err := json.Unmarshal(content, &store); err != nil {
 		return nil, err
+	}
+	if store.Accounts == nil {
+		store.Accounts = []storedAccount{}
 	}
 	return &store, nil
 }
