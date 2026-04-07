@@ -72,6 +72,7 @@ func runAccountsLogin(args []string) int {
 		fmt.Fprintln(os.Stderr, "accounts login does not take positional arguments")
 		return 2
 	}
+	requestedName := strings.TrimSpace(*name)
 
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
 	flow := strings.ToLower(strings.TrimSpace(*authFlow))
@@ -79,9 +80,9 @@ func runAccountsLogin(args []string) int {
 	var err error
 	switch flow {
 	case "device":
-		account, err = runDeviceAuthLogin(strings.TrimSpace(*name), client, !*noBrowser)
+		account, err = runDeviceAuthLogin(requestedName, client, !*noBrowser)
 	case "browser", "oauth":
-		account, err = runOAuthLogin(strings.TrimSpace(*name), client, !*noBrowser)
+		account, err = runOAuthLogin(requestedName, client, !*noBrowser)
 	default:
 		fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
 		return 2
@@ -99,17 +100,24 @@ func runAccountsLogin(args []string) int {
 
 	idx := findMatchingAccount(store.Accounts, account)
 	if idx >= 0 {
-		account.ID = store.Accounts[idx].ID
-		if strings.TrimSpace(*name) == "" && strings.TrimSpace(store.Accounts[idx].Name) != "" {
-			account.Name = store.Accounts[idx].Name
+		upsert, reason, existing, candidate := shouldUpsertMatchedAccount(store.Accounts[idx], account, requestedName, client, recheckAccountPlanType)
+		store.Accounts[idx] = existing
+		account = candidate
+		if !upsert {
+			fmt.Printf("Found account with same email but %s; adding as separate account.\n", reason)
+		} else {
+			account.ID = store.Accounts[idx].ID
+			if requestedName == "" && strings.TrimSpace(store.Accounts[idx].Name) != "" {
+				account.Name = store.Accounts[idx].Name
+			}
+			store.Accounts[idx] = account
+			if err := saveAccounts(*accountsPath, store); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1
+			}
+			fmt.Printf("Updated account %q (%s).\n", account.Name, account.ID)
+			return 0
 		}
-		store.Accounts[idx] = account
-		if err := saveAccounts(*accountsPath, store); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
-		}
-		fmt.Printf("Updated account %q (%s).\n", account.Name, account.ID)
-		return 0
 	}
 
 	store.Accounts = append(store.Accounts, account)
@@ -243,6 +251,61 @@ func findMatchingAccount(accounts []storedAccount, candidate storedAccount) int 
 	}
 
 	return -1
+}
+
+type planRecheckFunc func(storedAccount, *http.Client) (storedAccount, string, bool)
+
+func shouldUpsertMatchedAccount(existing, candidate storedAccount, requestedName string, client *http.Client, recheckPlan planRecheckFunc) (bool, string, storedAccount, storedAccount) {
+	requestedName = strings.TrimSpace(requestedName)
+	if requestedName != "" && !strings.EqualFold(strings.TrimSpace(existing.Name), requestedName) {
+		return false, "a different --name was provided", existing, candidate
+	}
+
+	existingPlan := normalizedPlanType(existing.PlanType)
+	candidatePlan := normalizedPlanType(candidate.PlanType)
+	if existingPlan == "" || candidatePlan == "" || existingPlan == candidatePlan || recheckPlan == nil {
+		return true, "", existing, candidate
+	}
+
+	existing, existingPlan, existingChecked := recheckPlan(existing, client)
+	candidate, candidatePlan, candidateChecked := recheckPlan(candidate, client)
+	if existingChecked && candidateChecked && existingPlan != "" && candidatePlan != "" && existingPlan != candidatePlan {
+		return false, "a different plan was detected after re-check", existing, candidate
+	}
+
+	return true, "", existing, candidate
+}
+
+func normalizedPlanType(plan *string) string {
+	if plan == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(*plan))
+}
+
+func recheckAccountPlanType(account storedAccount, client *http.Client) (storedAccount, string, bool) {
+	if client == nil {
+		return account, "", false
+	}
+
+	refreshed, _, err := ensureFreshTokens(account, client)
+	if err != nil {
+		return account, "", false
+	}
+	account = refreshed
+
+	usage, err := fetchUsage(account, client)
+	if err != nil {
+		return account, "", false
+	}
+
+	plan := strings.TrimSpace(usage.PlanType)
+	if plan == "" {
+		return account, "", false
+	}
+
+	account.PlanType = strPtr(plan)
+	return account, strings.ToLower(plan), true
 }
 
 func findAccountForRemoval(accounts []storedAccount, target string) (int, error) {
