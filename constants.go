@@ -2,6 +2,7 @@ package main
 
 const (
 	chatgptUsageURL           = "https://chatgpt.com/backend-api/wham/usage"
+	chatgptResetCreditsURL    = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 	oauthTokenURL             = "https://auth.openai.com/oauth/token"
 	oauthIssuerURL            = "https://auth.openai.com"
 	oauthClientID             = "app_EMoamEEZ73f0CkXaXp7hrann"

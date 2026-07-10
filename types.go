@@ -43,12 +43,28 @@ type creditStatus struct {
 	Balance    *string `json:"balance"`
 }
 
+type resetCreditsPayload struct {
+	AvailableCount   int                 `json:"available_count"`
+	TotalEarnedCount int                 `json:"total_earned_count"`
+	Credits          []resetCreditDetail `json:"credits"`
+}
+
+type resetCreditDetail struct {
+	Status          string `json:"status"`
+	Title           string `json:"title"`
+	GrantedAt       string `json:"granted_at"`
+	ExpiresAt       string `json:"expires_at"`
+	RedeemStartedAt string `json:"redeem_started_at"`
+	RedeemedAt      string `json:"redeemed_at"`
+}
+
 type usageRow struct {
 	Name          string
 	Email         string
 	Plan          string
 	Primary       string
 	Secondary     string
+	ResetCredits  string
 	SortName      string
 	PrimaryUsed   *float64
 	SecondaryUsed *float64

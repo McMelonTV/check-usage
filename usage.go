@@ -25,12 +25,13 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 			defer wg.Done()
 
 			row := usageRow{
-				Name:      account.Name,
-				Email:     valueOrDash(account.Email),
-				Plan:      valueOrDash(account.PlanType),
-				Primary:   "-",
-				Secondary: "-",
-				SortName:  strings.ToLower(account.Name),
+				Name:         account.Name,
+				Email:        valueOrDash(account.Email),
+				Plan:         valueOrDash(account.PlanType),
+				Primary:      "-",
+				Secondary:    "-",
+				ResetCredits: "-",
+				SortName:     strings.ToLower(account.Name),
 			}
 
 			updated := account
@@ -40,11 +41,13 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 			case "apikey":
 				row.Primary = "n/a"
 				row.Secondary = "n/a"
+				row.ResetCredits = "n/a"
 			case "chatgpt":
 				refreshedAcc, changed, refreshErr := ensureFreshTokens(account, client)
 				if refreshErr != nil {
 					row.Primary = "n/a"
 					row.Secondary = "n/a"
+					row.ResetCredits = "n/a"
 					results <- accountResult{Index: idx, Row: row, Updated: updated}
 					return
 				}
@@ -56,6 +59,7 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 				if usageErr != nil {
 					row.Primary = "n/a"
 					row.Secondary = "n/a"
+					row.ResetCredits = "n/a"
 					results <- accountResult{Index: idx, Row: row, Updated: updated, TokenRefreshed: tokenRefreshed}
 					return
 				}
@@ -66,9 +70,16 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 				row.Secondary = limitSummary(usage.RateLimit, false, now)
 				row.PrimaryUsed = windowUsedPercent(usage.RateLimit, true)
 				row.SecondaryUsed = windowUsedPercent(usage.RateLimit, false)
+				resetCredits, resetCreditsErr := fetchResetCredits(updated, client)
+				if resetCreditsErr != nil {
+					row.ResetCredits = "unavailable"
+				} else {
+					row.ResetCredits = resetCreditsSummary(resetCredits, now)
+				}
 			default:
 				row.Primary = "n/a"
 				row.Secondary = "n/a"
+				row.ResetCredits = "n/a"
 			}
 
 			results <- accountResult{Index: idx, Row: row, Updated: updated, TokenRefreshed: tokenRefreshed}
