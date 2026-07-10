@@ -95,6 +95,42 @@ func fetchUsage(acc storedAccount, client *http.Client) (*rateLimitStatusPayload
 	return &payload, nil
 }
 
+func fetchResetCredits(acc storedAccount, client *http.Client) (*resetCreditsPayload, error) {
+	if acc.AuthData.AccessToken == nil {
+		return nil, fmt.Errorf("missing access token")
+	}
+	req, err := http.NewRequest(http.MethodGet, chatgptResetCreditsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+*acc.AuthData.AccessToken)
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("OpenAI-Beta", "codex-1")
+	req.Header.Set("originator", "Codex Desktop")
+	if acc.AuthData.AccountID != nil && *acc.AuthData.AccountID != "" {
+		req.Header.Set("chatgpt-account-id", *acc.AuthData.AccountID)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("reset credits request failed: %s: %s", resp.Status, truncateText(string(body), 300))
+	}
+
+	var payload resetCreditsPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
+
 func tokenExpiredOrNear(token string) bool {
 	exp, ok := jwtExp(token)
 	if !ok {

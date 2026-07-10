@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -16,16 +17,17 @@ func printTable(rows []usageRow) {
 
 	var b bytes.Buffer
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ACCOUNT\tEMAIL\tPLAN\t5H LIMIT\tWEEKLY LIMIT")
+	fmt.Fprintln(w, "ACCOUNT\tEMAIL\tPLAN\t5H LIMIT\tWEEKLY LIMIT\tRESET CREDITS")
 	for _, r := range rows {
 		fmt.Fprintf(
 			w,
-			"%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Name,
 			r.Email,
 			r.Plan,
 			r.Primary,
 			r.Secondary,
+			r.ResetCredits,
 		)
 	}
 	_ = w.Flush()
@@ -75,6 +77,94 @@ func resetTimesText(resetAt *int64, now time.Time) (string, string) {
 	}
 	resetTime := time.Unix(*resetAt, 0).In(now.Location())
 	return humanizeDuration(resetTime.Sub(now)), resetTime.Format("January 2, 3:04 PM MST")
+}
+
+func resetCreditsSummary(c *resetCreditsPayload, now time.Time) string {
+	if c == nil {
+		return "-"
+	}
+
+	summary := fmt.Sprintf("%d available", c.AvailableCount)
+	next, ok := earliestExpiringAvailableResetCredit(c.Credits)
+	if !ok {
+		return summary
+	}
+
+	expires := resetCreditTimeText(next.ExpiresAt, now, false)
+	remaining := resetCreditRemainingText(next.ExpiresAt, now)
+	if expires == "-" {
+		return summary
+	}
+	return fmt.Sprintf("%s; earliest exp %s (%s)", summary, expires, remaining)
+}
+
+func earliestExpiringAvailableResetCredit(credits []resetCreditDetail) (resetCreditDetail, bool) {
+	available := filteredResetCredits(credits, false)
+	if len(available) == 0 {
+		return resetCreditDetail{}, false
+	}
+	sortResetCredits(available)
+	return available[0], true
+}
+
+func sortResetCredits(credits []resetCreditDetail) {
+	sort.SliceStable(credits, func(i, j int) bool {
+		left, leftOK := parseResetCreditTime(credits[i].ExpiresAt)
+		right, rightOK := parseResetCreditTime(credits[j].ExpiresAt)
+		switch {
+		case leftOK && rightOK:
+			return left.Before(right)
+		case leftOK:
+			return true
+		case rightOK:
+			return false
+		default:
+			return credits[i].ExpiresAt < credits[j].ExpiresAt
+		}
+	})
+}
+
+func resetCreditTimeText(value string, now time.Time, includeRemaining bool) string {
+	t, ok := parseResetCreditTime(value)
+	if !ok {
+		return "-"
+	}
+
+	local := t.In(now.Location())
+	text := local.Format("January 2, 3:04 PM MST")
+	if includeRemaining {
+		text += " (" + humanizeDuration(local.Sub(now)) + " remaining)"
+	}
+	return text
+}
+
+func resetCreditRemainingText(value string, now time.Time) string {
+	t, ok := parseResetCreditTime(value)
+	if !ok {
+		return "-"
+	}
+	return humanizeDuration(t.In(now.Location()).Sub(now))
+}
+
+func parseResetCreditTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+	}
+	for _, format := range formats {
+		if t, err := time.Parse(format, value); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func humanizeDuration(d time.Duration) string {
