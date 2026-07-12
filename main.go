@@ -48,15 +48,15 @@ func main() {
 }
 
 func printRootCommandUsage(fs *flag.FlagSet) {
-	fmt.Println("Usage:")
+	fmt.Println(headerText("Usage:"))
 	fmt.Printf("  %s [flags]\n", os.Args[0])
 	fmt.Printf("  %s accounts <command> [flags]\n", os.Args[0])
 	fmt.Printf("  %s resets [flags] <account name/email/id>\n", os.Args[0])
 	fmt.Println()
-	fmt.Println("Subcommands:")
+	fmt.Println(headerText("Subcommands:"))
 	fmt.Println("  accounts  manage saved accounts")
 	fmt.Println("  resets    show reset-credit details for one account")
 	fmt.Println()
-	fmt.Println("Flags:")
+	fmt.Println(headerText("Flags:"))
 	fs.PrintDefaults()
 }

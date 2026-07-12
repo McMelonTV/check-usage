@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"net/http"
@@ -94,13 +95,14 @@ func accountEmailMatches(account storedAccount, target string) bool {
 }
 
 func printResetCreditsDetails(account storedAccount, payload *resetCreditsPayload, showUsed bool, now time.Time) {
-	fmt.Printf("Account: %s\n", account.Name)
-	fmt.Printf("Email: %s\n", valueOrDash(account.Email))
-	fmt.Printf("Available reset credits: %d\n", payload.AvailableCount)
-	fmt.Printf("Total earned reset credits: %d\n", payload.TotalEarnedCount)
+	fmt.Printf("%s %s\n", headerText("Account:"), account.Name)
+	fmt.Printf("%s %s\n", headerText("Email:"), valueOrDash(account.Email))
+	fmt.Printf("%s %s\n", headerText("Available reset credits:"), colorizeAvailableResetCreditCount(payload.AvailableCount))
+	fmt.Printf("%s %d\n", headerText("Total earned reset credits:"), payload.TotalEarnedCount)
 
 	credits := filteredResetCredits(payload.Credits, showUsed)
 	if len(credits) == 0 {
+		fmt.Println()
 		if showUsed {
 			fmt.Println("No reset credits found.")
 		} else {
@@ -111,7 +113,8 @@ func printResetCreditsDetails(account storedAccount, payload *resetCreditsPayloa
 
 	sortResetCredits(credits)
 	fmt.Println()
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var b bytes.Buffer
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "#\tSTATUS\tTITLE\tGAINED\tEXPIRES\tREMAINING\tREDEEM STARTED\tREDEEMED")
 	for i, credit := range credits {
 		fmt.Fprintf(
@@ -128,6 +131,26 @@ func printResetCreditsDetails(account storedAccount, payload *resetCreditsPayloa
 		)
 	}
 	_ = w.Flush()
+	fmt.Print(colorizeTableOutput(applyResetCreditStatusColors(b.String(), credits)))
+}
+
+func applyResetCreditStatusColors(tableText string, credits []resetCreditDetail) string {
+	trimmed := strings.TrimRight(tableText, "\n")
+	if trimmed == "" {
+		return tableText
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	rowCount := len(lines) - 1
+	if rowCount > len(credits) {
+		rowCount = len(credits)
+	}
+	for i := 0; i < rowCount; i++ {
+		lineIndex := i + 1
+		status := valueOrUnknown(credits[i].Status)
+		lines[lineIndex] = strings.Replace(lines[lineIndex], status, colorizeResetCreditStatus(status), 1)
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func filteredResetCredits(credits []resetCreditDetail, showUsed bool) []resetCreditDetail {
@@ -145,10 +168,11 @@ func resetCreditAvailable(credit resetCreditDetail) bool {
 }
 
 func valueOrUnknown(value string) string {
-	if strings.TrimSpace(value) == "" {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
 		return "unknown"
 	}
-	return value
+	return strings.ReplaceAll(value, "_", " ")
 }
 
 func valueOrDashString(value string) string {

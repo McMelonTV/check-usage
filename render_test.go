@@ -19,7 +19,7 @@ func TestResetCreditsSummaryShowsAvailableCountAndEarliestExpiry(t *testing.T) {
 	}
 
 	got := resetCreditsSummary(payload, now)
-	want := "2 available; earliest exp July 11, 2:00 PM UTC (26h)"
+	want := "2, earliest exp. in 26h (July 11, 2:00 PM UTC)"
 	if got != want {
 		t.Fatalf("resetCreditsSummary() = %q, want %q", got, want)
 	}
@@ -28,7 +28,7 @@ func TestResetCreditsSummaryShowsAvailableCountAndEarliestExpiry(t *testing.T) {
 func TestResetCreditsSummaryHandlesMissingCredits(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	got := resetCreditsSummary(&resetCreditsPayload{AvailableCount: 0, TotalEarnedCount: 3}, now)
-	if got != "0 available" {
+	if got != "0" {
 		t.Fatalf("resetCreditsSummary() = %q", got)
 	}
 }
@@ -60,8 +60,34 @@ func TestResetCreditsSummaryHandlesInvalidTimes(t *testing.T) {
 	}
 
 	got := resetCreditsSummary(payload, now)
-	want := "1 available"
+	want := "1"
 	if got != want {
 		t.Fatalf("resetCreditsSummary() = %q, want %q", got, want)
+	}
+}
+
+func TestColorizeResetCreditsSummary(t *testing.T) {
+	text := "4, earliest exp. in 26h (July 11, 2:00 PM UTC)"
+	want := ansiLightGreen + "4" + ansiReset + ", earliest exp. in 26h (July 11, 2:00 PM UTC)"
+	if got := colorizeResetCreditsSummary(text); got != want {
+		t.Fatalf("colorizeResetCreditsSummary() = %q, want %q", got, want)
+	}
+
+	want = ansiRed + "unavailable" + ansiReset
+	if got := colorizeResetCreditsSummary("unavailable"); got != want {
+		t.Fatalf("colorizeResetCreditsSummary(unavailable) = %q, want %q", got, want)
+	}
+}
+
+func TestApplyResetCreditStatusColors(t *testing.T) {
+	table := "#  STATUS     TITLE\n1  available  Full reset\n2  expired    Full reset\n"
+	credits := []resetCreditDetail{{Status: "AVAILABLE"}, {Status: "expired"}}
+
+	got := colorizeTableOutput(applyResetCreditStatusColors(table, credits))
+	want := headerText("#  STATUS     TITLE") + "\n" +
+		"1  " + ansiLightGreen + "available" + ansiReset + "  Full reset\n" +
+		"2  " + ansiRed + "expired" + ansiReset + "    Full reset\n"
+	if got != want {
+		t.Fatalf("styled reset-credit table = %q, want %q", got, want)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -84,7 +85,7 @@ func resetCreditsSummary(c *resetCreditsPayload, now time.Time) string {
 		return "-"
 	}
 
-	summary := fmt.Sprintf("%d available", c.AvailableCount)
+	summary := strconv.Itoa(c.AvailableCount)
 	next, ok := earliestExpiringAvailableResetCredit(c.Credits)
 	if !ok {
 		return summary
@@ -95,7 +96,7 @@ func resetCreditsSummary(c *resetCreditsPayload, now time.Time) string {
 	if expires == "-" {
 		return summary
 	}
-	return fmt.Sprintf("%s; earliest exp %s (%s)", summary, expires, remaining)
+	return fmt.Sprintf("%s, earliest exp. in %s (%s)", summary, remaining, expires)
 }
 
 func earliestExpiringAvailableResetCredit(credits []resetCreditDetail) (resetCreditDetail, bool) {
@@ -198,8 +199,12 @@ func colorizeTableOutput(tableText string) string {
 		return ""
 	}
 	lines := strings.Split(trimmed, "\n")
-	lines[0] = ansiHeader + lines[0] + ansiReset
+	lines[0] = headerText(lines[0])
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func headerText(text string) string {
+	return ansiHeader + text + ansiReset
 }
 
 func windowUsedPercent(rl *rateLimitDetails, primary bool) *float64 {
@@ -237,10 +242,56 @@ func applyUsageColors(tableText string, rows []usageRow) string {
 		line := lines[lineIndex]
 		line = strings.Replace(line, rows[i].Primary, colorizeUsage(rows[i].Primary, rows[i].PrimaryUsed), 1)
 		line = strings.Replace(line, rows[i].Secondary, colorizeUsage(rows[i].Secondary, rows[i].SecondaryUsed), 1)
+		line = replaceLast(line, rows[i].ResetCredits, colorizeResetCreditsSummary(rows[i].ResetCredits))
 		lines[lineIndex] = line
 	}
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func replaceLast(text, old, replacement string) string {
+	index := strings.LastIndex(text, old)
+	if index < 0 {
+		return text
+	}
+	return text[:index] + replacement + text[index+len(old):]
+}
+
+func colorizeResetCreditsSummary(text string) string {
+	if text == "-" || text == "n/a" {
+		return text
+	}
+	if text == "unavailable" {
+		return ansiRed + text + ansiReset
+	}
+
+	countText, _, _ := strings.Cut(text, ",")
+	count, err := strconv.Atoi(strings.TrimSpace(countText))
+	if err != nil {
+		return text
+	}
+	return strings.Replace(text, countText, colorizeAvailableResetCreditCount(count), 1)
+}
+
+func colorizeAvailableResetCreditCount(count int) string {
+	color := ansiLightGreen
+	if count == 0 {
+		color = ansiRed
+	}
+	return color + strconv.Itoa(count) + ansiReset
+}
+
+func colorizeResetCreditStatus(status string) string {
+	color := ansiRed
+	switch status {
+	case "available":
+		color = ansiLightGreen
+	case "redeemed":
+		color = ansiGreen
+	case "unknown":
+		color = ansiAmber
+	}
+	return color + status + ansiReset
 }
 
 func usageColor(used float64) string {

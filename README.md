@@ -25,7 +25,7 @@ go build -o codex-usage .
 The output includes 5-hour and weekly usage limits plus the total number of
 available reset credits and the earliest available reset-credit expiry.
 
-3. Show reset-credit/coupon details for one account:
+3. Show reset-credit details for one account:
 
 ```bash
 ./codex-usage resets "My Account"
