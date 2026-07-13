@@ -60,6 +60,18 @@ Use `--accounts-file path` to choose a different accounts file or `--timeout sec
 
 The app signs in separately from the CLI and displays remaining usage windows and "reset credits". It offers Glass and Material You widgets, plus a Nothing-inspired style available on Nothing devices. Each widget can use a different account and style.
 
+### Screenshots
+
+<p align="center">
+  <img src=".github/assets/mobile-nothing.png" alt="AI Usage Widgets on a Nothing phone" height="480">
+  &nbsp;
+  <img src=".github/assets/tablet-portrait.png" alt="AI Usage Widgets on a tablet in portrait orientation" height="480">
+</p>
+
+<p align="center">
+  <img src=".github/assets/tablet-landscape.png" alt="AI Usage Widgets on a tablet in landscape orientation" width="800">
+</p>
+
 After installing the app, connect a Codex account and add **AI Usage Widgets** from your launcher's widget picker. Account credentials are encrypted using Android Keystore, and the app has no analytics or backend.
 
 To build the Android app from source, you need JDK 25, Android SDK 36, and an Android 8.0 (API 26) or newer device or emulator:
