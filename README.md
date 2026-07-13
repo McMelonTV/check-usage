@@ -1,84 +1,74 @@
 # codex-usage
 
-Small Go CLI for checking ChatGPT usage/rate-limit info across saved accounts.
+A simple Go CLI app for easily checking OpenAI Codex/ChatGPT Work usage limits and available "reset credits" across multiple ChatGPT accounts.
 
-This repository also contains **AI Usage Widgets**, a provider-ready Android companion app. Codex is its first provider. The app signs in independently, shows both remaining usage windows and reset credits, and offers Nothing-inspired, Glass, and Pixel/Material You home-screen widget styles.
+This repository also includes an Android app with home-screen widgets for the same usage information.
 
-## Android app
+## Install
 
-Requirements:
+Download a prebuilt binary for your platform from [GitHub Releases](https://github.com/McMelonTV/codex-usage/releases) and run `codex-usage`/`codex-usage.exe` in a terminal.
 
-- JDK 25
-- Android SDK 36
-- An API 26+ Android device or emulator
+To build the CLI from source instead, install [Go](https://go.dev/doc/install) and run:
 
-Build the debug APK:
+On Linux/macOS:
+```bash
+go build -o codex-usage .
+```
+
+On Windows:
+```sh
+go build -o codex-usage.exe .
+```
+
+## Get started
+
+Sign in to your first account:
+
+```bash
+./codex-usage accounts login --name "My Account"
+```
+
+Then view usage for all saved accounts:
+
+```bash
+./codex-usage
+```
+
+The summary shows the 5-hour and weekly Codex limits, available reset credits, and the earliest credit expiry.
+
+To see individual reset credits for an account:
+
+```bash
+./codex-usage resets "My Account"
+```
+
+An account can be identified by its name, email, or ID. Add `--show-used` to include redeemed and expired credits.
+
+## Commands
+
+```text
+codex-usage accounts list
+codex-usage accounts login [--name name] [--no-browser] [--auth-flow device|browser]
+codex-usage accounts remove <id-or-name>
+codex-usage accounts rename <id-or-name> <new-name>
+codex-usage resets [--show-used] <account-name-email-or-id>
+```
+
+Use `--accounts-file path` to choose a different accounts file or `--timeout seconds` to change the request timeout. By default, accounts are stored in `~/.config/codex-usage/accounts.json`.
+
+## Android app ("AI Usage Widgets")
+
+The app signs in separately from the CLI and displays remaining usage windows and "reset credits". It offers Glass and Material You widgets, plus a Nothing-inspired style available on Nothing devices. Each widget can use a different account and style.
+
+After installing the app, connect a Codex account and add **AI Usage Widgets** from your launcher's widget picker. Account credentials are encrypted using Android Keystore, and the app has no analytics or backend.
+
+To build the Android app from source, you need JDK 25, Android SDK 36, and an Android 8.0 (API 26) or newer device or emulator:
 
 ```bash
 cd android
 ./gradlew :app:assembleDebug
 ```
 
-The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
+The APK is created at `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-The Android namespace and application ID are `ing.boykiss.aiusagewidgets`. Java and Kotlin compilation both target JVM 25. Provider credentials are kept in Android Keystore-backed encrypted storage; usage snapshots and widget configuration are stored locally in Room. The app has no analytics or backend.
-
-After installing, connect Codex using device authorization, then add **AI Usage Widgets** from the launcher widget picker. Each widget can select an account and one of the three styles.
-
-Periodic refresh uses WorkManager's 15-minute minimum interval, but Android may defer work. The current Codex provider mirrors compatibility-sensitive ChatGPT/Codex endpoints used by the CLI and may require updates if those interfaces change.
-
-## Build
-
-```bash
-go build -o codex-usage .
-```
-
-## Quick Start
-
-1. Log in an account:
-
-```bash
-./codex-usage accounts login --name "My Account"
-```
-
-2. Check current usage, including Codex rate limits and a compact reset-credit summary:
-
-```bash
-./codex-usage
-```
-
-The output includes 5-hour and weekly usage limits plus the total number of
-available reset credits and the earliest available reset-credit expiry.
-
-3. Show reset-credit details for one account:
-
-```bash
-./codex-usage resets "My Account"
-```
-
-The `resets` subcommand accepts an account name, email, or ID. It shows reset
-credit totals plus individual available credits with title, status, gained time,
-expiry time, and remaining time. Add `--show-used` to include redeemed, expired,
-or otherwise unavailable credits.
-
-The default accounts file is:
-
-`~/.config/codex-usage/accounts.json`
-
-## Commands
-
-Main command:
-
-```bash
-./codex-usage [--accounts-file path] [--timeout seconds] [--show-color-config]
-```
-
-Account management:
-
-```bash
-./codex-usage accounts list [--accounts-file path]
-./codex-usage accounts login [--accounts-file path] [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]
-./codex-usage accounts remove [--accounts-file path] <id-or-name>
-./codex-usage accounts rename [--accounts-file path] <id-or-name> <new-name>
-./codex-usage resets [--accounts-file path] [--timeout seconds] [--show-used] <account name/email/id>
-```
+The widgets should automatically refresh approximately every 15 minutes, although the exact refresh timing is controlled by Android and appears to be a bit inconsistent. You should always be able to trigger a refresh using the button in the widget.
