@@ -9,6 +9,8 @@ import (
 )
 
 func main() {
+	configureANSIOutput()
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "accounts":
