@@ -6,8 +6,9 @@
     <application
         android:name=".UsageWidgetsApplication"
         android:allowBackup="false"
-        android:icon="@drawable/ic_usage_widgets"
+        android:icon="@mipmap/ic_usage_widgets"
         android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_usage_widgets"
         android:supportsRtl="true"
         android:theme="@style/Theme.UsageWidgets"
         android:usesCleartextTraffic="false">

@@ -70,8 +70,11 @@ class UsageWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Responsive(
         setOf(
             androidx.compose.ui.unit.DpSize(120.dp, 80.dp),
+            androidx.compose.ui.unit.DpSize(120.dp, 140.dp),
             androidx.compose.ui.unit.DpSize(150.dp, 140.dp),
+            androidx.compose.ui.unit.DpSize(190.dp, 140.dp),
             androidx.compose.ui.unit.DpSize(220.dp, 140.dp),
+            androidx.compose.ui.unit.DpSize(300.dp, 140.dp),
             androidx.compose.ui.unit.DpSize(320.dp, 160.dp),
         )
     )
@@ -92,6 +95,10 @@ class UsageWidget : GlanceAppWidget() {
             if (renderState == null) {
                 EmptyWidget()
             } else {
+                val expanded = size.height >= 115.dp
+                val compact = size.height < 105.dp
+                val square = expanded && size.width < size.height * 1.45f
+                val horizontalPadding = if (compact || square) 24.dp else 36.dp
                 UsageWidgetContent(
                     accountId = renderState.accountId,
                     visualStyle = renderState.visualStyle,
@@ -104,9 +111,10 @@ class UsageWidget : GlanceAppWidget() {
                     useSystemNdot = NothingFont.isAvailable(),
                     // A two-row widget has enough vertical room for the reset line even when
                     // it is only three launcher columns wide.
-                    expanded = size.height >= 115.dp,
-                    compact = size.height < 105.dp,
-                    square = size.width < 180.dp && size.height >= 115.dp,
+                    expanded = expanded,
+                    compact = compact,
+                    square = square,
+                    progressMaxWidth = size.width - horizontalPadding,
                 )
             }
         }
@@ -250,6 +258,7 @@ private fun UsageWidgetContent(
     expanded: Boolean,
     compact: Boolean,
     square: Boolean,
+    progressMaxWidth: androidx.compose.ui.unit.Dp,
 ) {
     val configuredStyle = runCatching { WidgetVisualStyle.valueOf(visualStyle) }.getOrDefault(WidgetVisualStyle.PIXEL)
     val style = if (configuredStyle == WidgetVisualStyle.NOTHING && !useSystemNdot) WidgetVisualStyle.PIXEL else configuredStyle
@@ -313,6 +322,8 @@ private fun UsageWidgetContent(
         }
         if (square) {
             Spacer(GlanceModifier.defaultWeight())
+        } else if (expanded) {
+            Spacer(GlanceModifier.defaultWeight())
         } else {
             Spacer(GlanceModifier.height(if (compact) 4.dp else 6.dp))
         }
@@ -361,18 +372,18 @@ private fun UsageWidgetContent(
                         maxLines = 1,
                     )
                     Spacer(GlanceModifier.height(3.dp))
-                    UsageProgressBar(featuredPercent, p, square = true)
+                    UsageProgressBar(featuredPercent, p, square = true, progressMaxWidth = progressMaxWidth)
                 }
             } else {
                 Spacer(GlanceModifier.height(8.dp))
-                UsageProgressBar(featuredPercent, p, square = false)
+                UsageProgressBar(featuredPercent, p, square = false, progressMaxWidth = progressMaxWidth)
             }
         }
         if (expanded) {
             if (square) {
                 Spacer(GlanceModifier.defaultWeight())
             } else {
-                Spacer(GlanceModifier.height(7.dp))
+                Spacer(GlanceModifier.defaultWeight())
             }
             Text(
                 countdown(resetAt),
@@ -389,15 +400,19 @@ private fun UsageWidgetContent(
 }
 
 @Composable
-private fun UsageProgressBar(percent: Double?, p: WidgetPalette, square: Boolean) {
+private fun UsageProgressBar(
+    percent: Double?,
+    p: WidgetPalette,
+    square: Boolean,
+    progressMaxWidth: androidx.compose.ui.unit.Dp,
+) {
     Box(
         GlanceModifier.fillMaxWidth().height(if (square) 6.dp else 7.dp)
             .background(p.track).cornerRadius(if (square) 3.dp else 4.dp),
     ) {
         val fraction = ((percent ?: 0.0) / 100.0).coerceIn(0.05, 1.0)
-        val progressWidth = if (square) 124 else 220
         Box(
-            GlanceModifier.width((progressWidth * fraction).dp).height(if (square) 6.dp else 7.dp)
+            GlanceModifier.width((progressMaxWidth.value * fraction).dp).height(if (square) 6.dp else 7.dp)
                 .background(p.accent).cornerRadius(if (square) 3.dp else 4.dp),
         ) {}
     }
