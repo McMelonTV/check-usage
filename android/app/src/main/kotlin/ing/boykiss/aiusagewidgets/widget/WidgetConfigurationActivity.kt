@@ -39,7 +39,7 @@ class WidgetConfigurationActivity : ComponentActivity() {
     private var appWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
     private var accounts by mutableStateOf<List<AccountEntity>>(emptyList())
     private var selected by mutableStateOf<AccountEntity?>(null)
-    private var style by mutableStateOf(WidgetVisualStyle.PIXEL)
+    private var style by mutableStateOf(WidgetVisualStyle.MATERIAL_YOU)
     private var reconfiguring by mutableStateOf(false)
     private var loaded by mutableStateOf(false)
     private var saving by mutableStateOf(false)
@@ -60,8 +60,8 @@ class WidgetConfigurationActivity : ComponentActivity() {
                 ?: accounts.firstOrNull()
             style = existing?.visualStyle
                 ?.let { runCatching { WidgetVisualStyle.valueOf(it) }.getOrNull() }
-                ?: WidgetVisualStyle.PIXEL
-            if (style == WidgetVisualStyle.NOTHING && !NothingFont.isAvailable()) style = WidgetVisualStyle.PIXEL
+                ?: WidgetVisualStyle.MATERIAL_YOU
+            if (style == WidgetVisualStyle.NOTHING && !NothingFont.isAvailable()) style = WidgetVisualStyle.MATERIAL_YOU
             loaded = true
         }
         setContent {
@@ -94,7 +94,9 @@ class WidgetConfigurationActivity : ComponentActivity() {
                                 FilterChip(
                                     selected = style == option,
                                     onClick = { style = option },
-                                    label = { Text(option.name.replace('_', ' ')) },
+                                    label = {
+                                        Text(if (option == WidgetVisualStyle.MATERIAL_YOU) "Material You" else option.name.replace('_', ' '))
+                                    },
                                     enabled = loaded && !saving,
                                     colors = FilterChipDefaults.filterChipColors(
                                         labelColor = MaterialTheme.colorScheme.onSurface,

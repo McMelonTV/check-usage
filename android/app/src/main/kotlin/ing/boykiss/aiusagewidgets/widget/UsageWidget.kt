@@ -148,7 +148,7 @@ private fun Preferences.toWidgetRenderState(): WidgetRenderState? {
         accountId = this[RenderAccountIdKey] ?: return null,
         accountName = this[RenderAccountNameKey] ?: return null,
         providerName = this[RenderProviderNameKey].orEmpty(),
-        visualStyle = this[RenderVisualStyleKey] ?: WidgetVisualStyle.PIXEL.name,
+        visualStyle = this[RenderVisualStyleKey] ?: WidgetVisualStyle.MATERIAL_YOU.name,
         shortPercent = this[RenderShortPercentKey],
         longPercent = this[RenderLongPercentKey],
         resetAt = this[RenderResetAtKey],
@@ -238,7 +238,7 @@ private fun palette(style: WidgetVisualStyle): WidgetPalette = when (style) {
         ColorProvider(Color(0xD99AAEB3)), ColorProvider(Color.White), ColorProvider(Color(0xFFE3ECEE)),
         ColorProvider(Color.White), ColorProvider(Color(0xFF536F7A)), 34.dp,
     )
-    WidgetVisualStyle.PIXEL -> WidgetPalette(
+    WidgetVisualStyle.MATERIAL_YOU -> WidgetPalette(
         ColorProvider(Color(0xFFE2EBF5)), ColorProvider(Color(0xFF17212B)),
         ColorProvider(Color(0xFF526170)), ColorProvider(Color(0xFF174F83)), ColorProvider(Color(0xFF9BAFC0)), 28.dp,
     )
@@ -260,8 +260,8 @@ private fun UsageWidgetContent(
     square: Boolean,
     progressMaxWidth: androidx.compose.ui.unit.Dp,
 ) {
-    val configuredStyle = runCatching { WidgetVisualStyle.valueOf(visualStyle) }.getOrDefault(WidgetVisualStyle.PIXEL)
-    val style = if (configuredStyle == WidgetVisualStyle.NOTHING && !useSystemNdot) WidgetVisualStyle.PIXEL else configuredStyle
+    val configuredStyle = runCatching { WidgetVisualStyle.valueOf(visualStyle) }.getOrDefault(WidgetVisualStyle.MATERIAL_YOU)
+    val style = if (configuredStyle == WidgetVisualStyle.NOTHING && !useSystemNdot) WidgetVisualStyle.MATERIAL_YOU else configuredStyle
     val p = palette(style)
     val params = actionParametersOf(AccountIdKey to accountId)
     val featuredPercent = longPercent ?: shortPercent
@@ -510,7 +510,7 @@ private val NDotAllFontFamily = FontFamily("NDot55All")
 private fun refreshIcon(style: WidgetVisualStyle): Int = when (style) {
     WidgetVisualStyle.NOTHING -> R.drawable.ic_widget_refresh_nothing
     WidgetVisualStyle.GLASS -> R.drawable.ic_widget_refresh_glass
-    WidgetVisualStyle.PIXEL -> R.drawable.ic_widget_refresh_pixel
+    WidgetVisualStyle.MATERIAL_YOU -> R.drawable.ic_widget_refresh_material_you
 }
 
 /** A launcher-safe 5x7 dot display inspired by Nothing's NDot treatment. */

@@ -8,7 +8,7 @@ import androidx.compose.runtime.Immutable
 enum class UsageMetricKind { SHORT_WINDOW, LONG_WINDOW, RESET_CREDITS }
 enum class AuthenticationState { CONNECTED, SIGN_IN_REQUIRED }
 enum class DataFreshness { FRESH, STALE, ERROR }
-enum class WidgetVisualStyle { NOTHING, GLASS, PIXEL }
+enum class WidgetVisualStyle { NOTHING, GLASS, MATERIAL_YOU }
 
 const val MAX_ACCOUNT_DISPLAY_NAME_LENGTH = 50
 
