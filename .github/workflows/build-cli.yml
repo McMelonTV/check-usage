@@ -1,0 +1,57 @@
+name: Build CLI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**.go"
+      - go.mod
+      - go.sum
+      - .github/workflows/build-cli.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build all platforms
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        shell: bash
+        run: |
+          targets=(
+            "linux amd64 codex-usage-linux-amd64"
+            "linux arm64 codex-usage-linux-arm64"
+            "windows amd64 codex-usage-windows-amd64.exe"
+            "windows arm64 codex-usage-windows-arm64.exe"
+            "darwin amd64 codex-usage-macos-amd64"
+            "darwin arm64 codex-usage-macos-arm64"
+          )
+
+          for target in "${targets[@]}"; do
+            read -r goos goarch binary <<< "$target"
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags="-s -w" -o "dist/$binary" .
+          done
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-binaries
+          path: dist/*
+          if-no-files-found: error
