@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Usage Widgets</string>
+    <string name="widget_description">Usage limits and reset credits for a connected account</string>
+</resources>
