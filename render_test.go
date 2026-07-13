@@ -91,3 +91,31 @@ func TestApplyResetCreditStatusColors(t *testing.T) {
 		t.Fatalf("styled reset-credit table = %q, want %q", got, want)
 	}
 }
+
+func TestSelectWindowClassifiesWeeklyPrimaryByDuration(t *testing.T) {
+	weeklySeconds := 7 * 24 * 60 * 60
+	weekly := &rateLimitWindow{UsedPercent: 15, LimitWindowSeconds: &weeklySeconds}
+	rl := &rateLimitDetails{PrimaryWindow: weekly}
+
+	if got := selectWindow(rl, true); got != nil {
+		t.Fatalf("short window = %#v, want nil", got)
+	}
+	if got := selectWindow(rl, false); got != weekly {
+		t.Fatalf("weekly window = %#v, want primary weekly window", got)
+	}
+}
+
+func TestSelectWindowClassifiesBothWindowsByDuration(t *testing.T) {
+	shortSeconds := 5 * 60 * 60
+	weeklySeconds := 7 * 24 * 60 * 60
+	short := &rateLimitWindow{LimitWindowSeconds: &shortSeconds}
+	weekly := &rateLimitWindow{LimitWindowSeconds: &weeklySeconds}
+	rl := &rateLimitDetails{PrimaryWindow: short, SecondaryWindow: weekly}
+
+	if got := selectWindow(rl, true); got != short {
+		t.Fatalf("short window = %#v, want primary short window", got)
+	}
+	if got := selectWindow(rl, false); got != weekly {
+		t.Fatalf("weekly window = %#v, want secondary weekly window", got)
+	}
+}

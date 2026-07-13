@@ -55,10 +55,27 @@ func selectWindow(rl *rateLimitDetails, primary bool) *rateLimitWindow {
 	if rl == nil {
 		return nil
 	}
-	if primary {
-		return rl.PrimaryWindow
+
+	candidates := []struct {
+		window        *rateLimitWindow
+		fallbackShort bool
+	}{
+		{window: rl.PrimaryWindow, fallbackShort: true},
+		{window: rl.SecondaryWindow, fallbackShort: false},
 	}
-	return rl.SecondaryWindow
+	for _, candidate := range candidates {
+		if candidate.window != nil && windowIsShort(candidate.window, candidate.fallbackShort) == primary {
+			return candidate.window
+		}
+	}
+	return nil
+}
+
+func windowIsShort(window *rateLimitWindow, fallback bool) bool {
+	if window == nil || window.LimitWindowSeconds == nil {
+		return fallback
+	}
+	return *window.LimitWindowSeconds > 0 && *window.LimitWindowSeconds <= 24*60*60
 }
 
 func percentValue(usedPercent float64) float64 {
@@ -326,15 +343,7 @@ func printColorConfigLine(name, rng string, sample float64) {
 }
 
 func resetAt(rl *rateLimitDetails, primary bool) string {
-	if rl == nil {
-		return "-"
-	}
-	var w *rateLimitWindow
-	if primary {
-		w = rl.PrimaryWindow
-	} else {
-		w = rl.SecondaryWindow
-	}
+	w := selectWindow(rl, primary)
 	if w == nil || w.ResetAt == nil {
 		return "-"
 	}
