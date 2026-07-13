@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "ing.boykiss.usagewidgets"
+    namespace = "ing.boykiss.aiusagewidgets"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "ing.boykiss.usagewidgets"
+        applicationId = "ing.boykiss.aiusagewidgets"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

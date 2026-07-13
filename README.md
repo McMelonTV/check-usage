@@ -2,7 +2,7 @@
 
 Small Go CLI for checking ChatGPT usage/rate-limit info across saved accounts.
 
-This repository also contains **Usage Widgets**, a provider-ready Android companion app. Codex is its first provider. The app signs in independently, shows both remaining usage windows and reset credits, and offers Nothing-inspired, Glass, and Pixel/Material You home-screen widget styles.
+This repository also contains **AI Usage Widgets**, a provider-ready Android companion app. Codex is its first provider. The app signs in independently, shows both remaining usage windows and reset credits, and offers Nothing-inspired, Glass, and Pixel/Material You home-screen widget styles.
 
 ## Android app
 
@@ -21,9 +21,9 @@ cd android
 
 The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-The Android namespace and application ID are `ing.boykiss.usagewidgets`. Java and Kotlin compilation both target JVM 25. Provider credentials are kept in Android Keystore-backed encrypted storage; usage snapshots and widget configuration are stored locally in Room. The app has no analytics or backend.
+The Android namespace and application ID are `ing.boykiss.aiusagewidgets`. Java and Kotlin compilation both target JVM 25. Provider credentials are kept in Android Keystore-backed encrypted storage; usage snapshots and widget configuration are stored locally in Room. The app has no analytics or backend.
 
-After installing, connect Codex using device authorization, then add **Usage Widgets** from the launcher widget picker. Each widget can select an account and one of the three styles.
+After installing, connect Codex using device authorization, then add **AI Usage Widgets** from the launcher widget picker. Each widget can select an account and one of the three styles.
 
 Periodic refresh uses WorkManager's 15-minute minimum interval, but Android may defer work. The current Codex provider mirrors compatibility-sensitive ChatGPT/Codex endpoints used by the CLI and may require updates if those interfaces change.
 

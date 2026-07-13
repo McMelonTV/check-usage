@@ -5,6 +5,6 @@
     android:background="@drawable/widget_loading_background"
     android:gravity="center"
     android:padding="16dp"
-    android:text="Usage Widgets"
+    android:text="AI Usage Widgets"
     android:textColor="#FFFFFFFF"
     android:textSize="16sp" />

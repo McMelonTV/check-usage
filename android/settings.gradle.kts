@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "UsageWidgets"
+rootProject.name = "AIUsageWidgets"
 include(":app")
