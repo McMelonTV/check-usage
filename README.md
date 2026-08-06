@@ -28,13 +28,25 @@ Sign in to your first account:
 ./codex-usage accounts login --name "My Account"
 ```
 
-Then view usage for all saved accounts:
+Then open the interactive usage dashboard:
 
 ```bash
 ./codex-usage
 ```
 
-The summary shows the 5-hour and weekly Codex limits, available reset credits, and the earliest credit expiry.
+The Bubble Tea interface has Usage, Resets, Accounts, and Settings tabs. Press `Tab` to focus the tab row, then use Left/Right to switch tabs; the active content row remains selected but muted. Press `Tab` again to restore content focus, or press Up/Down to restore focus and move immediately. Use `r` to refresh, `?` for help, and `q` to quit.
+
+Resets uses an account sidebar and immediately shows cached resets for the focused account. Choose an account with Up/Down, then press Enter or Right to focus its reset rows and refresh them. Press Enter twice on a reset to confirm a claim. Claiming is currently a UI-only placeholder and does not call an API; Left or Escape returns to the account sidebar.
+
+Settings let you show used or remaining usage, independently place the bar fill and percentage on the left or right, choose a default, colorblind, or monochrome semantic palette, set an automatic refresh interval, and enable compact account rows. Preferences are stored in `settings.json` beside `accounts.json`. Each account has its own cached snapshot under the platform cache directory (`~/.cache/codex-usage/accounts/` on Linux), including when zero resets are available, so cached values or skeletons appear immediately while account requests refresh in parallel.
+
+For a non-interactive table suitable for scripts or logs, use:
+
+```bash
+./codex-usage --plain
+```
+
+Output also switches to the plain table automatically when it is redirected or piped.
 
 To see individual reset credits for an account:
 
