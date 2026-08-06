@@ -23,7 +23,7 @@ func loadAccountsOrEmpty(path string) (*accountsStore, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &accountsStore{Accounts: []storedAccount{}}, nil
+			return emptyAccountsStore(), nil
 		}
 		return nil, err
 	}
@@ -32,16 +32,50 @@ func loadAccountsOrEmpty(path string) (*accountsStore, error) {
 
 func parseAccounts(content []byte) (*accountsStore, error) {
 	if strings.TrimSpace(string(content)) == "" {
-		return &accountsStore{Accounts: []storedAccount{}}, nil
+		return emptyAccountsStore(), nil
 	}
-	var store accountsStore
+	store := accountsStore{}
 	if err := json.Unmarshal(content, &store); err != nil {
 		return nil, err
 	}
 	if store.Accounts == nil {
 		store.Accounts = []storedAccount{}
 	}
+	store.needsSave = normalizeAccounts(&store)
 	return &store, nil
+}
+
+func emptyAccountsStore() *accountsStore {
+	return &accountsStore{Accounts: []storedAccount{}, needsSave: true}
+}
+
+func defaultAppSettings() appSettings {
+	return appSettings{UsageDisplay: "used", BarFill: "left", PercentagePosition: "right", ColorTheme: "default", AutoRefreshSeconds: 60, CompactMode: false}
+}
+
+func normalizeAccounts(store *accountsStore) bool {
+	changed := false
+	for i := range store.Accounts {
+		if strings.TrimSpace(store.Accounts[i].Provider) == "" {
+			store.Accounts[i].Provider = inferredProvider(store.Accounts[i])
+			changed = true
+		}
+	}
+	return changed
+}
+
+func inferredProvider(account storedAccount) string {
+	switch normalizeAuthType(account.AuthData.Type) {
+	case "chatgpt":
+		return "OpenAI"
+	case "apikey":
+		return "OpenAI API"
+	default:
+		if value := strings.TrimSpace(account.AuthData.Type); value != "" {
+			return value
+		}
+		return "OpenAI"
+	}
 }
 
 func saveAccounts(path string, store *accountsStore) error {
@@ -52,7 +86,11 @@ func saveAccounts(path string, store *accountsStore) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return err
+	}
+	store.needsSave = false
+	return nil
 }
 
 func defaultAccountsPath() string {

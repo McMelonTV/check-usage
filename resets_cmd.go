@@ -63,6 +63,10 @@ func runResetsCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
+	if err := updateAccountResetCache(updated.ID, credits, time.Now().Unix()); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
 
 	printResetCreditsDetails(updated, credits, *showUsed, time.Now())
 	return 0

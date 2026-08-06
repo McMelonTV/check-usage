@@ -287,6 +287,7 @@ func buildStoredAccount(requestedName string, email, planType, accountID *string
 	return storedAccount{
 		ID:       newAccountID(),
 		Name:     name,
+		Provider: "OpenAI",
 		Email:    email,
 		PlanType: planType,
 		AuthData: authData{

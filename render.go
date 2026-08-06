@@ -327,21 +327,6 @@ func usageColor(used float64) string {
 	}
 }
 
-func printColorConfig() {
-	fmt.Println("Usage color configuration:")
-	printColorConfigLine("max", "0-5%", 3)
-	printColorConfigLine("good", "5-50%", 25)
-	printColorConfigLine("medium", "50-65%", 55)
-	printColorConfigLine("bad", "65-80%", 72)
-	printColorConfigLine("critical", "80-100%", 90)
-}
-
-func printColorConfigLine(name, rng string, sample float64) {
-	pct := fmt.Sprintf("%3.0f%%", sample)
-	coloredPct := usageColor(sample) + pct + ansiReset
-	fmt.Printf("  %-8s %-9s sample %s used\n", name, rng, coloredPct)
-}
-
 func resetAt(rl *rateLimitDetails, primary bool) string {
 	w := selectWindow(rl, primary)
 	if w == nil || w.ResetAt == nil {

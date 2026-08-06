@@ -167,6 +167,10 @@ func runAccountsRemove(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
+	if err := removeAccountUsageCache(removed.ID); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
 
 	fmt.Printf("Removed account %q (%s).\n", removed.Name, removed.ID)
 	return 0
@@ -235,9 +239,9 @@ func printAccountsList(accounts []storedAccount) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tEMAIL\tPLAN\tAUTH TYPE")
+	fmt.Fprintln(w, "ID\tNAME\tPROVIDER\tEMAIL\tPLAN\tAUTH TYPE")
 	for _, acc := range accounts {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", acc.ID, acc.Name, valueOrDash(acc.Email), valueOrDash(acc.PlanType), acc.AuthData.Type)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", acc.ID, acc.Name, acc.Provider, valueOrDash(acc.Email), valueOrDash(acc.PlanType), acc.AuthData.Type)
 	}
 	_ = w.Flush()
 }
