@@ -60,5 +60,5 @@ func printRootCommandUsage(fs *flag.FlagSet) {
 	fmt.Println("  resets    show reset-credit details for one account")
 	fmt.Println()
 	fmt.Println(headerText("Flags:"))
-	fs.PrintDefaults()
+	printDoubleDashFlagDefaults(fs)
 }

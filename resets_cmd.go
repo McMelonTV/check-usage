@@ -14,6 +14,7 @@ import (
 func runResetsCommand(args []string) int {
 	fs := flag.NewFlagSet("resets", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
 	timeout := fs.Int("timeout", 20, "HTTP timeout in seconds")
 	showUsed := fs.Bool("show-used", false, "include redeemed, expired, and other unavailable reset credits")

@@ -38,6 +38,7 @@ func runAccountsCommand(args []string) int {
 func runAccountsList(args []string) int {
 	fs := flag.NewFlagSet("accounts list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -60,6 +61,7 @@ func runAccountsList(args []string) int {
 func runAccountsLogin(args []string) int {
 	fs := flag.NewFlagSet("accounts login", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
 	name := fs.String("name", "", "display name for the account")
 	timeout := fs.Int("timeout", 30, "HTTP timeout in seconds")
@@ -132,6 +134,7 @@ func runAccountsLogin(args []string) int {
 func runAccountsRemove(args []string) int {
 	fs := flag.NewFlagSet("accounts remove", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -172,6 +175,7 @@ func runAccountsRemove(args []string) int {
 func runAccountsRename(args []string) int {
 	fs := flag.NewFlagSet("accounts rename", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
 	if err := fs.Parse(args); err != nil {
 		return 2
