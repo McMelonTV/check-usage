@@ -1,18 +1,14 @@
 package main
 
+import "github.com/McMelonTV/codex-usage/codexapi"
+
 const (
-	chatgptUsageURL           = "https://chatgpt.com/backend-api/wham/usage"
-	chatgptResetCreditsURL    = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
-	oauthTokenURL             = "https://auth.openai.com/oauth/token"
 	oauthIssuerURL            = "https://auth.openai.com"
-	oauthClientID             = "app_EMoamEEZ73f0CkXaXp7hrann"
+	oauthClientID             = codexapi.ClientID
 	oauthOriginator           = "codex_cli_rs"
 	oauthScope                = "openid profile email offline_access api.connectors.read api.connectors.invoke"
-	deviceAuthBaseURL         = "https://auth.openai.com/api/accounts"
-	deviceAuthUserCodePath    = "/deviceauth/usercode"
-	deviceAuthTokenPath       = "/deviceauth/token"
-	deviceAuthVerificationURL = "https://auth.openai.com/codex/device"
-	deviceAuthRedirectURI     = "https://auth.openai.com/deviceauth/callback"
+	deviceAuthVerificationURL = codexapi.DeviceVerificationURL
+	deviceAuthRedirectURI     = codexapi.DeviceRedirectURI
 	deviceAuthMaxWaitSeconds  = 15 * 60
 	oauthTimeout              = 5 * 60
 	oauthDefaultPort          = 1455

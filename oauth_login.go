@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -18,15 +17,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/McMelonTV/codex-usage/codexapi"
 )
 
 const oauthCallbackPath = "/auth/callback"
 
-type oauthTokenResponse struct {
-	IDToken      string `json:"id_token"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-}
+type oauthTokenResponse = codexapi.TokenResponse
 
 type pkceCodes struct {
 	Verifier  string
@@ -38,17 +35,8 @@ type oauthResult struct {
 	Err     error
 }
 
-type deviceUserCodeResponse struct {
-	DeviceAuthID string `json:"device_auth_id"`
-	UserCode     string `json:"user_code"`
-	Interval     string `json:"interval"`
-}
-
-type deviceTokenPollResponse struct {
-	AuthorizationCode string `json:"authorization_code"`
-	CodeChallenge     string `json:"code_challenge"`
-	CodeVerifier      string `json:"code_verifier"`
-}
+type deviceUserCodeResponse = codexapi.DeviceUserCodeResponse
+type deviceTokenPollResponse = codexapi.DeviceTokenPollResponse
 
 func runOAuthLogin(accountName string, client *http.Client, openBrowser bool) (storedAccount, error) {
 	pkce, err := generatePKCE()
@@ -184,76 +172,19 @@ func runDeviceAuthLogin(accountName string, client *http.Client, openBrowser boo
 }
 
 func requestDeviceUserCode(client *http.Client) (*deviceUserCodeResponse, error) {
-	body := `{"client_id":"` + oauthClientID + `"}`
-	req, err := http.NewRequest(http.MethodPost, deviceAuthBaseURL+deviceAuthUserCodePath, strings.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("device auth usercode request failed: %s: %s", resp.Status, truncateText(string(bodyBytes), 300))
-	}
-
-	var out deviceUserCodeResponse
-	if err := json.Unmarshal(bodyBytes, &out); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(out.DeviceAuthID) == "" || strings.TrimSpace(out.UserCode) == "" {
-		return nil, fmt.Errorf("device auth response missing required fields")
-	}
-	if strings.TrimSpace(out.Interval) == "" {
-		out.Interval = "5"
-	}
-	return &out, nil
+	return codexapi.RequestDeviceUserCode(context.Background(), client)
 }
 
 func pollDeviceToken(client *http.Client, code *deviceUserCodeResponse) (*deviceTokenPollResponse, error) {
 	intervalSeconds := parseIntervalSeconds(code.Interval)
 	deadline := time.Now().Add(time.Duration(deviceAuthMaxWaitSeconds) * time.Second)
-	url := deviceAuthBaseURL + deviceAuthTokenPath
-
 	for {
-		reqBody := `{"device_auth_id":"` + jsonEscape(code.DeviceAuthID) + `","user_code":"` + jsonEscape(code.UserCode) + `"}`
-		req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(reqBody))
+		out, pending, err := codexapi.PollDeviceToken(context.Background(), client, code.DeviceAuthID, code.UserCode)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		bodyBytes, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			return nil, readErr
-		}
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			var out deviceTokenPollResponse
-			if err := json.Unmarshal(bodyBytes, &out); err != nil {
-				return nil, err
-			}
-			if strings.TrimSpace(out.AuthorizationCode) == "" || strings.TrimSpace(out.CodeVerifier) == "" {
-				return nil, fmt.Errorf("device auth token response missing authorization code or code verifier")
-			}
-			return &out, nil
-		}
-
-		if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusNotFound {
-			return nil, fmt.Errorf("device auth polling failed: %s: %s", resp.Status, truncateText(string(bodyBytes), 300))
+		if !pending {
+			return out, nil
 		}
 
 		if time.Now().After(deadline) {
@@ -298,14 +229,6 @@ func buildStoredAccount(requestedName string, email, planType, accountID *string
 			AccountID:    accountID,
 		},
 	}
-}
-
-func jsonEscape(s string) string {
-	b, _ := json.Marshal(s)
-	if len(b) >= 2 {
-		return string(b[1 : len(b)-1])
-	}
-	return s
 }
 
 func listenOAuthCallback() (net.Listener, int, error) {
@@ -380,39 +303,14 @@ func buildAuthorizeURL(redirectURI, challenge, state string) string {
 }
 
 func exchangeAuthorizationCode(client *http.Client, code, redirectURI, codeVerifier string) (*oauthTokenResponse, error) {
-	reqBody := "grant_type=authorization_code" +
-		"&code=" + oauthEncode(code) +
-		"&redirect_uri=" + oauthEncode(redirectURI) +
-		"&client_id=" + oauthEncode(oauthClientID) +
-		"&code_verifier=" + oauthEncode(codeVerifier)
-
-	req, err := http.NewRequest(http.MethodPost, oauthTokenURL, strings.NewReader(reqBody))
+	tokens, err := codexapi.ExchangeAuthorizationCode(context.Background(), client, code, redirectURI, codeVerifier)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("token exchange failed: %s: %s", resp.Status, truncateText(string(body), 300))
-	}
-
-	var tokens oauthTokenResponse
-	if err := json.Unmarshal(body, &tokens); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(tokens.AccessToken) == "" || strings.TrimSpace(tokens.RefreshToken) == "" || strings.TrimSpace(tokens.IDToken) == "" {
+	if strings.TrimSpace(tokens.RefreshToken) == "" || strings.TrimSpace(tokens.IDToken) == "" {
 		return nil, fmt.Errorf("token exchange response missing required tokens")
 	}
-	return &tokens, nil
+	return tokens, nil
 }
 
 func oauthEncode(s string) string {
@@ -420,36 +318,18 @@ func oauthEncode(s string) string {
 }
 
 func parseIDTokenClaims(idToken string) (*string, *string, *string) {
-	parts := strings.Split(idToken, ".")
-	if len(parts) != 3 {
-		return nil, nil, nil
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	identity, err := codexapi.ParseIdentity(idToken)
 	if err != nil {
 		return nil, nil, nil
 	}
-
-	var m map[string]any
-	if err := json.Unmarshal(payload, &m); err != nil {
-		return nil, nil, nil
-	}
-
-	email := mapStringPtr(m, "email")
-	authClaim, _ := m["https://api.openai.com/auth"].(map[string]any)
-	planType := mapStringPtr(authClaim, "chatgpt_plan_type")
-	accountID := mapStringPtr(authClaim, "chatgpt_account_id")
-	return email, planType, accountID
+	return optionalString(identity.Email), optionalString(identity.PlanType), optionalString(identity.AccountID)
 }
 
-func mapStringPtr(m map[string]any, key string) *string {
-	if m == nil {
+func optionalString(value string) *string {
+	if strings.TrimSpace(value) == "" {
 		return nil
 	}
-	v, ok := m[key].(string)
-	if !ok || strings.TrimSpace(v) == "" {
-		return nil
-	}
-	return strPtr(v)
+	return strPtr(value)
 }
 
 func generatePKCE() (*pkceCodes, error) {

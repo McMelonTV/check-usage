@@ -48,6 +48,16 @@ For a non-interactive table suitable for scripts or logs, use:
 
 Output also switches to the plain table automatically when it is redirected or piped.
 
+For structured application integration, use the importable `usageapi` Go package or the versioned stdin/stdout JSON-RPC interface. No HTTP server is required:
+
+```bash
+./codex-usage api accounts.list
+./codex-usage api usage.get '{"refresh":true}'
+./codex-usage api serve
+```
+
+See [Application API](docs/application-api.md) for the complete method list, device-auth flow, NDJSON framing, error behavior, and Go example. API responses expose public account metadata but never stored OAuth tokens.
+
 To see individual reset credits for an account:
 
 ```bash
@@ -64,6 +74,7 @@ codex-usage accounts login [--name name] [--no-browser] [--auth-flow device|brow
 codex-usage accounts remove <id-or-name>
 codex-usage accounts rename <id-or-name> <new-name>
 codex-usage resets [--show-used] <account-name-email-or-id>
+codex-usage api [--accounts-file path] [--cache-dir path] <method|serve> [params-json|-]
 ```
 
 Use `--accounts-file path` to choose a different accounts file or `--timeout seconds` to change the request timeout. By default, accounts are stored in `~/.config/codex-usage/accounts.json`.
@@ -86,13 +97,15 @@ The app signs in separately from the CLI and displays remaining usage windows an
 
 After installing the app, connect a Codex account and add **AI Usage Widgets** from your launcher's widget picker. Account credentials are encrypted using Android Keystore, and the app has no analytics or backend.
 
-To build the Android app from source, you need JDK 25, Android SDK 36, and an Android 8.0 (API 26) or newer device or emulator:
+To build the Android app from source, you need Go 1.26, JDK 25, Android SDK 36, and an Android 8.0 (API 26) or newer device or emulator. The Gradle build automatically compiles the shared Go provider logic into an AAR using the pinned Go Mobile tool:
 
 ```bash
 cd android
 ./gradlew :app:assembleDebug
 ```
 
-The APK is created at `android/app/build/outputs/apk/debug/app-debug.apk`.
+The build creates a universal APK plus `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86` APKs under `android/app/build/outputs/apk/debug/`. CI publishes all five variants with stable filenames and a SHA-256 checksum manifest.
+
+The CLI and Android app share `codexapi` for device authorization, token refresh, Codex API requests, JWT identity parsing, and usage-window mapping. Android-specific UI, encrypted credential storage, background work, and widgets remain Kotlin code.
 
 The widgets should automatically refresh approximately every 15 minutes, although the exact refresh timing is controlled by Android and appears to be a bit inconsistent. You should always be able to trigger a refresh using the button in the widget.

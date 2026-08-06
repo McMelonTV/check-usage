@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - "android/**"
+      - "codexapi/**"
+      - "mobile/codexlogic/**"
+      - go.mod
+      - go.sum
       - .github/workflows/build-android.yml
 
 permissions:
@@ -29,18 +33,48 @@ jobs:
           distribution: temurin
           java-version: "25"
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Test and build
         run: ./gradlew :app:testDebugUnitTest :app:assembleDebug
 
-      - name: Rename APK
-        run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/ai-usage-widgets.apk
+      - name: Stage universal and per-architecture APKs
+        shell: bash
+        run: |
+          source_dir="app/build/outputs/apk/debug"
+          output_dir="app/build/release-apks"
+          mkdir -p "$output_dir"
 
-      - name: Upload APK
+          declare -A apks=(
+            ["app-universal-debug.apk"]="ai-usage-widgets-universal.apk"
+            ["app-arm64-v8a-debug.apk"]="ai-usage-widgets-arm64-v8a.apk"
+            ["app-armeabi-v7a-debug.apk"]="ai-usage-widgets-armeabi-v7a.apk"
+            ["app-x86_64-debug.apk"]="ai-usage-widgets-x86_64.apk"
+            ["app-x86-debug.apk"]="ai-usage-widgets-x86.apk"
+          )
+
+          for source_name in "${!apks[@]}"; do
+            test -f "$source_dir/$source_name"
+            cp "$source_dir/$source_name" "$output_dir/${apks[$source_name]}"
+          done
+
+          (
+            cd "$output_dir"
+            sha256sum ./*.apk > ai-usage-widgets-SHA256SUMS.txt
+          )
+
+          ls -lh "$output_dir"
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: ai-usage-widgets-debug
-          path: android/app/build/outputs/apk/debug/ai-usage-widgets.apk
+          path: android/app/build/release-apks/*
           if-no-files-found: error

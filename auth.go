@@ -1,62 +1,36 @@
 package main
 
 import (
-	"encoding/base64"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/McMelonTV/codex-usage/codexapi"
 )
 
 func ensureFreshTokens(acc storedAccount, client *http.Client) (storedAccount, bool, error) {
 	if acc.AuthData.AccessToken == nil || acc.AuthData.RefreshToken == nil {
 		return acc, false, fmt.Errorf("missing access/refresh token")
 	}
-	if !tokenExpiredOrNear(*acc.AuthData.AccessToken) {
+	credentials := codexapi.Credentials{AccessToken: *acc.AuthData.AccessToken, RefreshToken: *acc.AuthData.RefreshToken}
+	if acc.AuthData.IDToken != nil {
+		credentials.IDToken = *acc.AuthData.IDToken
+	}
+	if acc.AuthData.AccountID != nil {
+		credentials.AccountID = *acc.AuthData.AccountID
+	}
+	updated, changed, err := codexapi.RefreshCredentials(context.Background(), client, credentials, time.Now())
+	if err != nil {
+		return acc, false, err
+	}
+	if !changed {
 		return acc, false, nil
 	}
-
-	v := url.Values{}
-	v.Set("grant_type", "refresh_token")
-	v.Set("refresh_token", *acc.AuthData.RefreshToken)
-	v.Set("client_id", oauthClientID)
-	req, err := http.NewRequest(http.MethodPost, oauthTokenURL, strings.NewReader(v.Encode()))
-	if err != nil {
-		return acc, false, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return acc, false, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return acc, false, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return acc, false, fmt.Errorf("refresh failed: %s: %s", resp.Status, truncateText(string(body), 300))
-	}
-	var r struct {
-		IDToken      *string `json:"id_token"`
-		AccessToken  string  `json:"access_token"`
-		RefreshToken *string `json:"refresh_token"`
-	}
-	if err := json.Unmarshal(body, &r); err != nil {
-		return acc, false, err
-	}
-
-	acc.AuthData.AccessToken = &r.AccessToken
-	if r.IDToken != nil {
-		acc.AuthData.IDToken = r.IDToken
-	}
-	if r.RefreshToken != nil {
-		acc.AuthData.RefreshToken = r.RefreshToken
+	acc.AuthData.AccessToken = strPtr(updated.AccessToken)
+	acc.AuthData.RefreshToken = strPtr(updated.RefreshToken)
+	if updated.IDToken != "" {
+		acc.AuthData.IDToken = strPtr(updated.IDToken)
 	}
 	return acc, true, nil
 }
@@ -65,100 +39,27 @@ func fetchUsage(acc storedAccount, client *http.Client) (*rateLimitStatusPayload
 	if acc.AuthData.AccessToken == nil {
 		return nil, fmt.Errorf("missing access token")
 	}
-	req, err := http.NewRequest(http.MethodGet, chatgptUsageURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+*acc.AuthData.AccessToken)
-	req.Header.Set("User-Agent", userAgent)
-	if acc.AuthData.AccountID != nil && *acc.AuthData.AccountID != "" {
-		req.Header.Set("chatgpt-account-id", *acc.AuthData.AccountID)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("usage request failed: %s: %s", resp.Status, truncateText(string(body), 300))
-	}
-
-	var payload rateLimitStatusPayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
-	}
-	return &payload, nil
+	return codexapi.FetchUsage(context.Background(), client, *acc.AuthData.AccessToken, stringValue(acc.AuthData.AccountID), userAgent)
 }
 
 func fetchResetCredits(acc storedAccount, client *http.Client) (*resetCreditsPayload, error) {
 	if acc.AuthData.AccessToken == nil {
 		return nil, fmt.Errorf("missing access token")
 	}
-	req, err := http.NewRequest(http.MethodGet, chatgptResetCreditsURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+*acc.AuthData.AccessToken)
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("OpenAI-Beta", "codex-1")
-	req.Header.Set("originator", "Codex Desktop")
-	if acc.AuthData.AccountID != nil && *acc.AuthData.AccountID != "" {
-		req.Header.Set("chatgpt-account-id", *acc.AuthData.AccountID)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("reset credits request failed: %s: %s", resp.Status, truncateText(string(body), 300))
-	}
-
-	var payload resetCreditsPayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
-	}
-	return &payload, nil
+	return codexapi.FetchResetCredits(context.Background(), client, *acc.AuthData.AccessToken, stringValue(acc.AuthData.AccountID), userAgent)
 }
 
 func tokenExpiredOrNear(token string) bool {
-	exp, ok := jwtExp(token)
-	if !ok {
-		return true
-	}
-	return exp <= time.Now().Unix()+expirySkew
+	return codexapi.TokenExpiredOrNear(token, time.Now(), time.Duration(expirySkew)*time.Second)
 }
 
 func jwtExp(token string) (int64, bool) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return 0, false
+	return codexapi.JWTExpiry(token)
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
 	}
-	b, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return 0, false
-	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return 0, false
-	}
-	switch v := m["exp"].(type) {
-	case float64:
-		return int64(v), true
-	case string:
-		n, err := strconv.ParseInt(v, 10, 64)
-		return n, err == nil && n != 0
-	default:
-		return 0, false
-	}
+	return *value
 }

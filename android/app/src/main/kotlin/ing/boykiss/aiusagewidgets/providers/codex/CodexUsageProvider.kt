@@ -1,9 +1,9 @@
 package ing.boykiss.aiusagewidgets.providers.codex
 
-import android.util.Base64
 import ing.boykiss.aiusagewidgets.data.credentials.CredentialStore
 import ing.boykiss.aiusagewidgets.data.credentials.ProviderCredentials
 import ing.boykiss.aiusagewidgets.domain.CreditMetric
+import ing.boykiss.aiusagewidgets.domain.DataFreshness
 import ing.boykiss.aiusagewidgets.domain.ProviderAccount
 import ing.boykiss.aiusagewidgets.domain.ProviderAccountId
 import ing.boykiss.aiusagewidgets.domain.ProviderDescriptor
@@ -11,18 +11,12 @@ import ing.boykiss.aiusagewidgets.domain.ProviderId
 import ing.boykiss.aiusagewidgets.domain.ProviderUsageSnapshot
 import ing.boykiss.aiusagewidgets.domain.UsageMetricKind
 import ing.boykiss.aiusagewidgets.domain.UsageWindow
-import ing.boykiss.aiusagewidgets.domain.DataFreshness
-import ing.boykiss.aiusagewidgets.domain.remainingPercent
 import ing.boykiss.aiusagewidgets.providers.api.AuthenticationProgress
 import ing.boykiss.aiusagewidgets.providers.api.AuthenticationSession
 import ing.boykiss.aiusagewidgets.providers.api.ProviderAuthenticator
 import ing.boykiss.aiusagewidgets.providers.api.ProviderUsageSource
 import ing.boykiss.aiusagewidgets.providers.api.UsageProvider
-import java.time.Instant
 import java.util.UUID
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 class CodexUsageProvider(
     private val api: CodexApiClient,
@@ -42,7 +36,7 @@ class CodexUsageProvider(
         return AuthenticationSession(
             response.deviceAuthId,
             response.userCode,
-            CodexApiClient.DEVICE_VERIFICATION_URL,
+            api.verificationUrl,
             response.interval.toIntOrNull()?.coerceAtLeast(1) ?: 5,
         )
     }
@@ -50,24 +44,21 @@ class CodexUsageProvider(
     override suspend fun pollAuthentication(session: AuthenticationSession): AuthenticationProgress {
         val result = api.pollDeviceCode(session.sessionId, session.userCode) ?: return AuthenticationProgress.Pending
         val tokens = api.exchangeCode(result.authorizationCode, result.codeVerifier)
-        val idToken = requireNotNull(tokens.idToken)
-        val claims = claims(idToken)
-        val email = claims["email"]
-        val authClaims = claims["https://api.openai.com/auth"]?.let { nested ->
-            runCatching { Json.parseToJsonElement(nested).jsonObject }.getOrNull()
-        }
-        val plan = authClaims?.get("chatgpt_plan_type")?.jsonPrimitive?.content ?: claims["chatgpt_plan_type"]
-        val remoteAccountId = authClaims?.get("chatgpt_account_id")?.jsonPrimitive?.content ?: claims["chatgpt_account_id"]
+        check(tokens.idToken.isNotBlank() && tokens.refreshToken.isNotBlank()) { "Token response is incomplete" }
+        val identity = api.identity(tokens.idToken)
         val localId = UUID.randomUUID().toString()
-        credentials.put(localId, ProviderCredentials(tokens.accessToken, requireNotNull(tokens.refreshToken), idToken, remoteAccountId))
+        credentials.put(
+            localId,
+            ProviderCredentials(tokens.accessToken, tokens.refreshToken, tokens.idToken, identity.accountId),
+        )
         return AuthenticationProgress.Complete(
             ProviderAccount(
                 id = ProviderAccountId(localId),
                 providerId = descriptor.id,
-                displayName = email?.substringBefore('@')?.takeIf(String::isNotBlank) ?: "Codex account",
-                identityLabel = email,
-                planLabel = plan,
-            )
+                displayName = identity.email?.substringBefore('@')?.takeIf(String::isNotBlank) ?: "Codex account",
+                identityLabel = identity.email,
+                planLabel = identity.planType,
+            ),
         )
     }
 
@@ -79,65 +70,47 @@ class CodexUsageProvider(
 
     override suspend fun fetchUsage(account: ProviderAccount): ProviderUsageSnapshot {
         val tokens = freshCredentials(account.id.value)
-        val usage = api.usage(tokens.accessToken, tokens.remoteAccountId)
-        val creditsResult = runCatching { api.resetCredits(tokens.accessToken, tokens.remoteAccountId) }
-        val available = creditsResult.getOrNull()
-        val earliest = available?.credits
-            ?.asSequence()
-            ?.filter { it.status.equals("available", ignoreCase = true) }
-            ?.mapNotNull { runCatching { Instant.parse(it.expiresAt).epochSecond }.getOrNull() }
-            ?.minOrNull()
+        val snapshot = api.snapshot(tokens.accessToken, tokens.remoteAccountId)
         return ProviderUsageSnapshot(
             descriptor.id,
             account.id,
-            listOfNotNull(
-                usage.rateLimit?.primaryWindow?.toWindow(fallbackKind = UsageMetricKind.SHORT_WINDOW),
-                usage.rateLimit?.secondaryWindow?.toWindow(fallbackKind = UsageMetricKind.LONG_WINDOW),
-            ).distinctBy { it.kind },
-            available?.let { CreditMetric(it.availableCount, it.totalEarnedCount, earliest) },
-            System.currentTimeMillis(),
+            snapshot.windows.map(GoUsageWindow::toDomain),
+            snapshot.credits?.let {
+                CreditMetric(it.availableCount, it.totalEarnedCount, it.earliestExpiryEpochSeconds)
+            },
+            snapshot.fetchedAtEpochMillis,
             DataFreshness.FRESH,
-            creditsResult.exceptionOrNull()?.let { "Reset credits unavailable" },
+            snapshot.creditsError,
         )
     }
 
     private suspend fun freshCredentials(accountId: String): ProviderCredentials {
         val current = requireNotNull(credentials.get(accountId)) { "Sign in again" }
-        if (!isExpiring(current.accessToken)) return current
-        val refreshed = api.refresh(current.refreshToken)
-        return current.copy(
-            accessToken = refreshed.accessToken,
-            refreshToken = refreshed.refreshToken ?: current.refreshToken,
-            idToken = refreshed.idToken ?: current.idToken,
-        ).also { credentials.put(accountId, it) }
-    }
-
-    private fun isExpiring(token: String): Boolean {
-        val exp = claims(token)["exp"]?.toLongOrNull() ?: return true
-        return exp <= Instant.now().epochSecond + 60
-    }
-
-    private fun claims(token: String): Map<String, String> = runCatching {
-        val part = token.split('.')[1]
-        val decoded = String(Base64.decode(part, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-        Json.parseToJsonElement(decoded).jsonObject.mapValues { (_, value) ->
-            if (value is kotlinx.serialization.json.JsonPrimitive) value.content else value.toString()
-        }
-    }.getOrDefault(emptyMap())
-
-    private fun RateLimitWindow.toWindow(fallbackKind: UsageMetricKind): UsageWindow {
-        val kind = codexWindowKind(limitWindowSeconds, fallbackKind)
-        val label = when (kind) {
-            UsageMetricKind.SHORT_WINDOW -> "5H"
-            UsageMetricKind.LONG_WINDOW -> "7D"
-            UsageMetricKind.RESET_CREDITS -> error("Credits are not a rate-limit window")
-        }
-        return UsageWindow(kind, label, usedPercent, usedPercent.remainingPercent(), resetAt, limitWindowSeconds)
+        val refresh = api.refreshCredentials(current)
+        val updated = refresh.credentials.toProviderCredentials()
+        if (refresh.changed) credentials.put(accountId, updated)
+        return updated
     }
 }
 
-internal fun codexWindowKind(seconds: Int?, fallback: UsageMetricKind): UsageMetricKind = when (seconds) {
-    null -> fallback
-    in 1..86_400 -> UsageMetricKind.SHORT_WINDOW
-    else -> UsageMetricKind.LONG_WINDOW
+private fun GoCredentials.toProviderCredentials() = ProviderCredentials(
+    accessToken,
+    refreshToken,
+    idToken,
+    accountId,
+)
+
+private fun GoUsageWindow.toDomain() = UsageWindow(
+    kind = goUsageMetricKind(kind),
+    label = label,
+    usedPercent = usedPercent,
+    remainingPercent = remainingPercent,
+    resetsAtEpochSeconds = resetAt,
+    windowSeconds = windowSeconds,
+)
+
+internal fun goUsageMetricKind(kind: String): UsageMetricKind = when (kind) {
+    "short_window" -> UsageMetricKind.SHORT_WINDOW
+    "long_window" -> UsageMetricKind.LONG_WINDOW
+    else -> error("Unknown Go usage metric kind: $kind")
 }

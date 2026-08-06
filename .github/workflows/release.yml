@@ -67,7 +67,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.builds.outputs.cli_run }}
 
-      - name: Download Android APK
+      - name: Download Android APKs
         uses: actions/download-artifact@v4
         with:
           name: ai-usage-widgets-debug
@@ -75,6 +75,27 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ steps.builds.outputs.android_run }}
+
+      - name: Verify Android release assets
+        shell: bash
+        run: |
+          expected_apks=(
+            ai-usage-widgets-universal.apk
+            ai-usage-widgets-arm64-v8a.apk
+            ai-usage-widgets-armeabi-v7a.apk
+            ai-usage-widgets-x86_64.apk
+            ai-usage-widgets-x86.apk
+          )
+
+          for apk in "${expected_apks[@]}"; do
+            test -f "release-assets/$apk"
+          done
+
+          test -f release-assets/ai-usage-widgets-SHA256SUMS.txt
+          (
+            cd release-assets
+            sha256sum -c ai-usage-widgets-SHA256SUMS.txt
+          )
 
       - name: Create release
         env:

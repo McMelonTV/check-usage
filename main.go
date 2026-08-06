@@ -15,6 +15,8 @@ func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "api":
+			os.Exit(runAPICommand(os.Args[2:]))
 		case "accounts":
 			os.Exit(runAccountsCommand(os.Args[2:]))
 		case "resets":
@@ -58,10 +60,12 @@ func printRootCommandUsage(fs *flag.FlagSet) {
 	fmt.Printf("  %s [flags]\n", os.Args[0])
 	fmt.Printf("  %s accounts <command> [flags]\n", os.Args[0])
 	fmt.Printf("  %s resets [flags] <account name/email/id>\n", os.Args[0])
+	fmt.Printf("  %s api [flags] <method|serve> [params-json|-]\n", os.Args[0])
 	fmt.Println()
 	fmt.Println(headerText("Subcommands:"))
 	fmt.Println("  accounts  manage saved accounts")
 	fmt.Println("  resets    show reset-credit details for one account")
+	fmt.Println("  api       JSON-RPC interface for applications and scripts")
 	fmt.Println()
 	fmt.Println(headerText("Flags:"))
 	printDoubleDashFlagDefaults(fs)
