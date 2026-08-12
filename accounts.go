@@ -56,8 +56,9 @@ func defaultAppSettings() appSettings {
 func normalizeAccounts(store *accountsStore) bool {
 	changed := false
 	for i := range store.Accounts {
-		if strings.TrimSpace(store.Accounts[i].Provider) == "" {
-			store.Accounts[i].Provider = inferredProvider(store.Accounts[i])
+		provider, migrated := migrateProvider(store.Accounts[i])
+		if migrated {
+			store.Accounts[i].Provider = provider
 			changed = true
 		}
 	}
@@ -65,17 +66,8 @@ func normalizeAccounts(store *accountsStore) bool {
 }
 
 func inferredProvider(account storedAccount) string {
-	switch normalizeAuthType(account.AuthData.Type) {
-	case "chatgpt":
-		return "OpenAI"
-	case "apikey":
-		return "OpenAI API"
-	default:
-		if value := strings.TrimSpace(account.AuthData.Type); value != "" {
-			return value
-		}
-		return "OpenAI"
-	}
+	provider, _ := migrateProvider(account)
+	return provider
 }
 
 func saveAccounts(path string, store *accountsStore) error {

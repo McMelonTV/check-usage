@@ -39,8 +39,13 @@ func runResetsCommand(args []string) int {
 		return 1
 	}
 	account := store.Accounts[idx]
-	if normalizeAuthType(account.AuthData.Type) != "chatgpt" {
-		fmt.Fprintf(os.Stderr, "error: account %q uses auth type %q; reset credits require a ChatGPT account\n", account.Name, account.AuthData.Type)
+	provider, err := providerFor(account.Provider)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	if !provider.ResetCredits {
+		fmt.Fprintf(os.Stderr, "error: reset credits are unavailable for %s accounts\n", provider.Name)
 		return 1
 	}
 

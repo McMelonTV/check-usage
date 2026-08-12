@@ -18,6 +18,7 @@ type storedAccount struct {
 
 type authData struct {
 	Type         string  `json:"type"`
+	APIKey       *string `json:"api_key,omitempty"`
 	IDToken      *string `json:"id_token,omitempty"`
 	AccessToken  *string `json:"access_token,omitempty"`
 	RefreshToken *string `json:"refresh_token,omitempty"`
@@ -32,21 +33,24 @@ type resetCreditsPayload = codexapi.ResetCreditsPayload
 type resetCreditDetail = codexapi.ResetCreditDetail
 
 type usageRow struct {
-	ID            string
-	Name          string
-	Provider      string
-	Email         string
-	Plan          string
-	Primary       string
-	Secondary     string
-	ResetCredits  string
-	SortName      string
-	PrimaryUsed   *float64
-	SecondaryUsed *float64
-	Loading       bool
-	AuthRequired  bool
-	Stale         bool
-	ResetsStale   bool
+	ID             string
+	Name           string
+	Provider       string
+	Email          string
+	Plan           string
+	Primary        string
+	Secondary      string
+	ResetCredits   string
+	PrimaryLabel   string
+	SecondaryLabel string
+	DetailsLabel   string
+	SortName       string
+	PrimaryUsed    *float64
+	SecondaryUsed  *float64
+	Loading        bool
+	AuthRequired   bool
+	Stale          bool
+	ResetsStale    bool
 }
 
 type appSettings struct {
@@ -64,6 +68,7 @@ type usageCacheEntry struct {
 	ResetCredits   *resetCreditsPayload `json:"reset_credits,omitempty"`
 	FetchedAt      int64                `json:"fetched_at"`
 	ResetFetchedAt int64                `json:"reset_fetched_at,omitempty"`
+	ProviderUsage  *providerUsage       `json:"provider_usage,omitempty"`
 }
 
 type accountResult struct {

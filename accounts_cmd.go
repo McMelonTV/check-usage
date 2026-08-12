@@ -19,6 +19,8 @@ func runAccountsCommand(args []string) int {
 	switch args[0] {
 	case "list":
 		return runAccountsList(args[1:])
+	case "add":
+		return runAccountsAdd(args[1:])
 	case "login":
 		return runAccountsLogin(args[1:])
 	case "reauth":
@@ -37,11 +39,75 @@ func runAccountsCommand(args []string) int {
 	}
 }
 
+func accountProviderFlag(fs *flag.FlagSet) *string {
+	return fs.String("provider", "", "provider: openai-codex, opencode-go, or deepseek")
+}
+
+func selectedProvider(id string) (providerDefinition, error) {
+	if strings.TrimSpace(id) == "" {
+		return providerDefinition{}, fmt.Errorf("--provider is required; choose: openai-codex, opencode-go, deepseek")
+	}
+	return providerFor(id)
+}
+
+func runAccountsAdd(args []string) int {
+	fs := flag.NewFlagSet("accounts add", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	setDoubleDashFlagUsage(fs)
+	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
+	providerID := accountProviderFlag(fs)
+	name := fs.String("name", "", "display name for the account")
+	key := fs.String("api-key", "", "API key for the selected provider")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "accounts add does not take positional arguments")
+		return 2
+	}
+	provider, err := selectedProvider(*providerID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	if provider.Credentials != apiKeyCredentials {
+		fmt.Fprintf(os.Stderr, "error: %s uses device login; run accounts login --provider %s\n", provider.Name, provider.ID)
+		return 2
+	}
+	if strings.TrimSpace(*key) == "" {
+		fmt.Fprintln(os.Stderr, "error: --api-key cannot be empty")
+		return 2
+	}
+	accountName := strings.TrimSpace(*name)
+	if accountName == "" {
+		accountName = provider.Name
+	}
+	store, err := loadAccountsOrEmpty(*accountsPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	for _, account := range store.Accounts {
+		if strings.EqualFold(strings.TrimSpace(account.Name), accountName) {
+			fmt.Fprintf(os.Stderr, "error: account name %q already exists\n", accountName)
+			return 1
+		}
+	}
+	store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: accountName, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(strings.TrimSpace(*key))}})
+	if err := saveAccounts(*accountsPath, store); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	fmt.Printf("Added %s account %q.\n", provider.Name, accountName)
+	return 0
+}
+
 func runAccountsReauth(args []string) int {
 	fs := flag.NewFlagSet("accounts reauth", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
+	apiKey := fs.String("api-key", "", "new API key for API-key providers")
 	timeout := fs.Int("timeout", 30, "HTTP timeout in seconds")
 	noBrowser := fs.Bool("no-browser", false, "do not open browser automatically")
 	authFlow := fs.String("auth-flow", "device", "authentication flow: device or browser")
@@ -49,7 +115,7 @@ func runAccountsReauth(args []string) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: accounts reauth [--accounts-file path] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
+		fmt.Fprintln(os.Stderr, "usage: accounts reauth [--accounts-file path] [--api-key key] <id-or-name>")
 		return 2
 	}
 
@@ -64,6 +130,31 @@ func runAccountsReauth(args []string) int {
 		return 1
 	}
 	existing := store.Accounts[index]
+
+	provider, err := providerFor(existing.Provider)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	if provider.Credentials == apiKeyCredentials {
+		key := strings.TrimSpace(*apiKey)
+		if key == "" {
+			fmt.Fprintf(os.Stderr, "error: %s requires --api-key\n", provider.Name)
+			return 2
+		}
+		existing.AuthData = authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}
+		store.Accounts[index] = existing
+		if err := saveAccounts(*accountsPath, store); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		if err := removeAccountUsageCache(existing.ID); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		fmt.Printf("Updated API key for %q (%s).\n", existing.Name, existing.ID)
+		return 0
+	}
 
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
 	var refreshed storedAccount
@@ -127,6 +218,7 @@ func runAccountsLogin(args []string) int {
 	fs.SetOutput(os.Stderr)
 	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
+	providerID := accountProviderFlag(fs)
 	name := fs.String("name", "", "display name for the account")
 	timeout := fs.Int("timeout", 30, "HTTP timeout in seconds")
 	noBrowser := fs.Bool("no-browser", false, "do not open browser automatically")
@@ -139,11 +231,19 @@ func runAccountsLogin(args []string) int {
 		return 2
 	}
 	requestedName := strings.TrimSpace(*name)
+	provider, err := selectedProvider(*providerID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	if provider.Credentials != deviceCredentials {
+		fmt.Fprintf(os.Stderr, "error: %s uses an API key; run accounts add --provider %s --api-key key\n", provider.Name, provider.ID)
+		return 2
+	}
 
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
 	flow := strings.ToLower(strings.TrimSpace(*authFlow))
 	var account storedAccount
-	var err error
 	switch flow {
 	case "device":
 		account, err = runDeviceAuthLogin(requestedName, client, !*noBrowser)
@@ -153,6 +253,7 @@ func runAccountsLogin(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
 		return 2
 	}
+	account.Provider = provider.ID
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
@@ -407,8 +508,9 @@ func findAccountForRemoval(accounts []storedAccount, target string) (int, error)
 func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  codex-usage accounts list [--accounts-file path]")
-	fmt.Println("  codex-usage accounts login [--accounts-file path] [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
-	fmt.Println("  codex-usage accounts reauth [--accounts-file path] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
+	fmt.Println("  codex-usage accounts add [--accounts-file path] --provider opencode-go|deepseek --api-key key [--name name]")
+	fmt.Println("  codex-usage accounts login [--accounts-file path] --provider openai-codex [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
+	fmt.Println("  codex-usage accounts reauth [--accounts-file path] [--api-key key] <id-or-name>")
 	fmt.Println("  codex-usage accounts remove [--accounts-file path] <id-or-name>")
 	fmt.Println("  codex-usage accounts rename [--accounts-file path] <id-or-name> <new-name>")
 }

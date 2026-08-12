@@ -132,13 +132,16 @@ type tuiModel struct {
 	nameInput    string
 	timerVersion int
 
-	authActive   bool
-	authLoading  bool
-	authSaving   bool
-	authCode     *deviceUserCodeResponse
-	authErr      error
-	authReauthID string
-	authVersion  int
+	authActive            bool
+	authLoading           bool
+	authSaving            bool
+	authCode              *deviceUserCodeResponse
+	authErr               error
+	authReauthID          string
+	authVersion           int
+	authProviderID        string
+	authSelectingProvider bool
+	authAPIKeyInput       string
 }
 
 func newTUIModel(accountsPath string, client *http.Client) tuiModel {
@@ -242,8 +245,12 @@ func loadResetCredits(accountsPath, accountID string, client *http.Client) (*res
 		return nil, err
 	}
 	account := store.Accounts[idx]
-	if normalizeAuthType(account.AuthData.Type) != "chatgpt" {
-		return nil, fmt.Errorf("reset credits are unavailable for %s accounts", account.Provider)
+	provider, err := providerFor(account.Provider)
+	if err != nil {
+		return nil, err
+	}
+	if !provider.ResetCredits {
+		return nil, fmt.Errorf("reset credits are unavailable for %s accounts", provider.Name)
 	}
 	updated, changed, err := ensureFreshTokens(account, client)
 	if err != nil {
@@ -416,7 +423,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.authErr = msg.err
 			return m, nil
 		}
-		m.authActive, m.authCode, m.authErr, m.authReauthID = false, nil, nil, ""
+		m.clearAuthentication()
 		m.notice = "Authentication finished"
 		m.loading = true
 		m.timerVersion++
@@ -443,9 +450,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 		if m.authActive {
+			if m.authSelectingProvider {
+				return m.updateProviderSelection(key)
+			}
+			if m.authProviderUsesAPIKey() {
+				return m.updateAPIKeyAuthentication(key)
+			}
 			if key == "esc" {
 				m.authVersion++
-				m.authActive, m.authLoading, m.authSaving, m.authCode, m.authErr, m.authReauthID = false, false, false, nil, nil, ""
+				m.clearAuthentication()
 			}
 			return m, nil
 		}
@@ -561,10 +574,10 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 		}
 		switch key {
 		case "a":
-			return m.startAuthentication("")
+			return m.startAccountAdd()
 		case "r":
 			if account, ok := m.selectedAccount(); ok {
-				return m.startAuthentication(account.ID)
+				return m.startAccountReauthentication(account)
 			}
 		case "e":
 			if account, ok := m.selectedAccount(); ok {
@@ -634,11 +647,101 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m tuiModel) startAuthentication(reauthID string) (tea.Model, tea.Cmd) {
+func (m tuiModel) startAccountAdd() (tea.Model, tea.Cmd) {
+	m.authVersion++
+	m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = true, true, false, false
+	m.authProviderID, m.authAPIKeyInput, m.authCode, m.authErr, m.authReauthID = "", "", nil, nil, ""
+	return m, nil
+}
+
+func (m tuiModel) startAccountReauthentication(account storedAccount) (tea.Model, tea.Cmd) {
+	provider, err := providerFor(account.Provider)
+	if err != nil {
+		provider = providerRegistry[providerOpenAICodex]
+	}
+	if provider.Credentials == apiKeyCredentials {
+		m.authVersion++
+		m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = true, false, false, false
+		m.authProviderID, m.authAPIKeyInput, m.authCode, m.authErr, m.authReauthID = provider.ID, "", nil, nil, account.ID
+		return m, nil
+	}
 	m.authVersion++
 	m.authActive, m.authLoading, m.authSaving = true, true, false
-	m.authCode, m.authErr, m.authReauthID = nil, nil, reauthID
+	m.authSelectingProvider, m.authProviderID, m.authAPIKeyInput = false, provider.ID, ""
+	m.authCode, m.authErr, m.authReauthID = nil, nil, account.ID
 	return m, m.requestDeviceAuthorization()
+}
+
+func (m tuiModel) updateProviderSelection(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" {
+		m.clearAuthentication()
+		return m, nil
+	}
+	current := 0
+	for index, provider := range providerDefinitions() {
+		if provider.ID == m.authProviderID {
+			current = index
+			break
+		}
+	}
+	if key == "left" || key == "up" || key == "h" || key == "k" {
+		current = (current - 1 + len(providerDefinitions())) % len(providerDefinitions())
+		m.authProviderID = providerDefinitions()[current].ID
+		return m, nil
+	}
+	if key == "right" || key == "down" || key == "l" || key == "j" {
+		current = (current + 1) % len(providerDefinitions())
+		m.authProviderID = providerDefinitions()[current].ID
+		return m, nil
+	}
+	if key != "enter" {
+		return m, nil
+	}
+	if m.authProviderID == "" {
+		m.authErr = fmt.Errorf("choose a provider first")
+		return m, nil
+	}
+	provider, _ := providerFor(m.authProviderID)
+	m.authSelectingProvider = false
+	if provider.Credentials == apiKeyCredentials {
+		return m, nil
+	}
+	m.authLoading = true
+	return m, m.requestDeviceAuthorization()
+}
+
+func (m tuiModel) updateAPIKeyAuthentication(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
+		m.clearAuthentication()
+	case "enter":
+		if strings.TrimSpace(m.authAPIKeyInput) == "" {
+			m.authErr = fmt.Errorf("API key cannot be empty")
+			return m, nil
+		}
+		m.authSaving = true
+		return m, m.saveAPIKeyAccount()
+	case "backspace":
+		runes := []rune(m.authAPIKeyInput)
+		if len(runes) > 0 {
+			m.authAPIKeyInput = string(runes[:len(runes)-1])
+		}
+	default:
+		if len(key) == 1 {
+			m.authAPIKeyInput += key
+		}
+	}
+	return m, nil
+}
+
+func (m *tuiModel) clearAuthentication() {
+	m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = false, false, false, false
+	m.authCode, m.authErr, m.authReauthID, m.authProviderID, m.authAPIKeyInput = nil, nil, "", "", ""
+}
+
+func (m tuiModel) authProviderUsesAPIKey() bool {
+	provider, err := providerFor(m.authProviderID)
+	return err == nil && provider.Credentials == apiKeyCredentials
 }
 
 func (m tuiModel) requestDeviceAuthorization() tea.Cmd {
@@ -669,7 +772,9 @@ func (m tuiModel) pollDeviceAuthorization(code *deviceUserCodeResponse) tea.Cmd 
 			return authCompletedMsg{err: fmt.Errorf("device auth token exchange failed: %w", err), version: version}
 		}
 		email, planType, accountID := parseIDTokenClaims(tokens.IDToken)
-		return authCompletedMsg{account: buildStoredAccount(name, email, planType, accountID, tokens), version: version}
+		account := buildStoredAccount(name, email, planType, accountID, tokens)
+		account.Provider = m.authProviderID
+		return authCompletedMsg{account: account, version: version}
 	}
 }
 
@@ -691,6 +796,7 @@ func (m tuiModel) saveAuthenticatedAccount(account storedAccount) tea.Cmd {
 				return authSavedMsg{err: fmt.Errorf("signed-in email does not match the selected account"), version: version}
 			}
 			account.ID, account.Name = existing.ID, existing.Name
+			account.Provider = existing.Provider
 			store.Accounts[index] = account
 			if err := saveAccounts(accountsPath, store); err != nil {
 				return authSavedMsg{err: err, version: version}
@@ -707,6 +813,34 @@ func (m tuiModel) saveAuthenticatedAccount(account storedAccount) tea.Cmd {
 		} else {
 			store.Accounts = append(store.Accounts, account)
 		}
+		return authSavedMsg{err: saveAccounts(accountsPath, store), version: version}
+	}
+}
+
+func (m tuiModel) saveAPIKeyAccount() tea.Cmd {
+	accountsPath, providerID, key, reauthID := m.accountsPath, m.authProviderID, m.authAPIKeyInput, m.authReauthID
+	version := m.authVersion
+	return func() tea.Msg {
+		store, err := loadAccountsOrEmpty(accountsPath)
+		if err != nil {
+			return authSavedMsg{err: err, version: version}
+		}
+		if reauthID != "" {
+			index, err := findAccountByIDNameOrEmail(store.Accounts, reauthID)
+			if err != nil {
+				return authSavedMsg{err: err, version: version}
+			}
+			store.Accounts[index].AuthData = authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}
+			if err := saveAccounts(accountsPath, store); err != nil {
+				return authSavedMsg{err: err, version: version}
+			}
+			return authSavedMsg{err: removeAccountUsageCache(store.Accounts[index].ID), version: version}
+		}
+		provider, err := providerFor(providerID)
+		if err != nil {
+			return authSavedMsg{err: err, version: version}
+		}
+		store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: provider.Name, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}})
 		return authSavedMsg{err: saveAccounts(accountsPath, store), version: version}
 	}
 }
@@ -1059,6 +1193,34 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 	if m.authReauthID != "" {
 		title = "Reauthenticate account"
 	}
+	if m.authSelectingProvider {
+		lines := []string{tuiMutedStyle.Render("Choose a provider:")}
+		for _, provider := range providerDefinitions() {
+			marker, style := "  ", tuiMutedStyle
+			if provider.ID == m.authProviderID {
+				marker, style = "› ", tuiAccentStyle
+			}
+			credential := "API key"
+			if provider.Credentials == deviceCredentials {
+				credential = "Device login"
+			}
+			lines = append(lines, marker+style.Render(provider.Name)+tuiMutedStyle.Render(" · "+credential))
+		}
+		lines = append(lines, "", tuiMutedStyle.Render("Enter select · Esc cancel"))
+		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+strings.Join(lines, "\n"))
+	}
+	if m.authProviderUsesAPIKey() {
+		provider, _ := providerFor(m.authProviderID)
+		key := strings.Repeat("•", len([]rune(m.authAPIKeyInput)))
+		if key == "" {
+			key = "API key"
+		}
+		body := tuiMutedStyle.Render("Enter API key for "+provider.Name+":") + "\n" + tuiAccentStyle.Render("> "+key+"█") + "\n\n" + tuiMutedStyle.Render("Enter save · Esc cancel")
+		if m.authErr != nil {
+			body = tuiErrorStyle.Render(m.authErr.Error()) + "\n\n" + body
+		}
+		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+	}
 	if m.authErr != nil {
 		body := tuiErrorStyle.Render("Authentication failed") + "\n" +
 			tuiMutedStyle.Render(ansi.Truncate(m.authErr.Error(), max(16, width-8), "…")) + "\n\n" +
@@ -1099,7 +1261,7 @@ func (m tuiModel) renderRefreshWarning(width int, err error) string {
 
 func (m tuiModel) renderUsageTab(width, height int) string {
 	if len(m.rows) == 0 {
-		return m.renderEmpty(width, "No accounts yet", "Open the Accounts tab and press a to sign in.")
+		return m.renderEmpty(width, "No accounts yet", "Open the Accounts tab and press a to choose a provider.")
 	}
 	accountList := m.renderAccountList(width, height)
 	if height >= tuiDetailAt {
@@ -1128,8 +1290,8 @@ func (m tuiModel) renderWideList(width, height int) string {
 	direction := strings.ToUpper(m.settings.UsageDisplay)
 	header := "  " + cell(headerStyle.Render("ACCOUNT"), nameWidth) + " " +
 		cell(headerStyle.Render("PROVIDER"), providerWidth) + " " + cell(headerStyle.Render("PLAN"), planWidth) + " " +
-		cell(headerStyle.Render("5H "+direction), usageWidth) + " " + cell(headerStyle.Render("WEEK "+direction), usageWidth) + " " +
-		cell(headerStyle.Render("RESETS"), creditWidth)
+		cell(headerStyle.Render("PRIMARY "+direction), usageWidth) + " " + cell(headerStyle.Render("SECONDARY "+direction), usageWidth) + " " +
+		cell(headerStyle.Render("DETAILS"), creditWidth)
 
 	rowStride := 1
 	if !m.settings.CompactMode {
@@ -1198,8 +1360,8 @@ func (m tuiModel) renderCompactList(width, height int) string {
 			continue
 		}
 		barWidth := max(12, width-13)
-		lines = append(lines, "  "+tuiMutedStyle.Render("5H  ")+renderUsageBar(row.PrimaryUsed, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
-		lines = append(lines, "  "+tuiMutedStyle.Render("WK  ")+renderUsageBar(row.SecondaryUsed, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
+		lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(firstNonEmpty(row.PrimaryLabel, "5H"), 8, "…")+"  ")+renderUsageBar(row.PrimaryUsed, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
+		lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(firstNonEmpty(row.SecondaryLabel, "WK"), 8, "…")+"  ")+renderUsageBar(row.SecondaryUsed, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
 		if !m.settings.CompactMode {
 			lines = append(lines, "")
 		}
@@ -1227,9 +1389,9 @@ func (m tuiModel) renderDetails(width int) string {
 	}
 	body := strings.Join([]string{
 		nameLine,
-		labelStyle.Render("5 hour") + ansi.Truncate(row.Primary, max(16, width-15), "…"),
-		labelStyle.Render("Weekly") + ansi.Truncate(row.Secondary, max(16, width-15), "…"),
-		labelStyle.Render("Resets") + ansi.Truncate(resets, max(16, width-15), "…"),
+		labelStyle.Render(ansi.Truncate(firstNonEmpty(row.PrimaryLabel, "5 hour"), 8, "…")) + ansi.Truncate(row.Primary, max(16, width-15), "…"),
+		labelStyle.Render(ansi.Truncate(firstNonEmpty(row.SecondaryLabel, "Weekly"), 8, "…")) + ansi.Truncate(row.Secondary, max(16, width-15), "…"),
+		labelStyle.Render(ansi.Truncate(firstNonEmpty(row.DetailsLabel, "Resets"), 8, "…")) + ansi.Truncate(resets, max(16, width-15), "…"),
 	}, "\n")
 	return tuiBorderStyle.Width(max(20, width-4)).Render(body)
 }
@@ -1357,7 +1519,7 @@ func (m *tuiModel) showFocusedResetCache() bool {
 
 func (m tuiModel) renderAccountsTab(width, height int) string {
 	if len(m.accounts) == 0 {
-		return m.renderEmpty(width, "No accounts yet", "Press a to start device login.")
+		return m.renderEmpty(width, "No accounts yet", "Press a to choose a provider.")
 	}
 	lines := []string{""}
 	if width >= 80 {
@@ -1469,7 +1631,7 @@ func (m tuiModel) renderFooter(width int) string {
 			help = "↑/↓ account   q quit   enter/→ open   tab focuses tabs   ? help"
 		}
 	case accountsTab:
-		help = "↑/↓ navigate   q quit   a add   r reauthenticate   e rename   d remove   ? help"
+		help = "↑/↓ navigate   q quit   a add provider   r reauthenticate   e rename   d remove   ? help"
 	case settingsTab:
 		help = "↑/↓ setting   q quit   ←/→ change   tab focuses tabs   ? help"
 	}

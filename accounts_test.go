@@ -12,8 +12,8 @@ func TestParseAccountsDefaultsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseAccounts() error = %v", err)
 	}
-	if store.Accounts[0].Provider != "OpenAI" {
-		t.Fatalf("provider = %q, want OpenAI", store.Accounts[0].Provider)
+	if store.Accounts[0].Provider != providerOpenAICodex {
+		t.Fatalf("provider = %q, want %s", store.Accounts[0].Provider, providerOpenAICodex)
 	}
 }
 

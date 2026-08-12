@@ -29,6 +29,7 @@ type Settings struct {
 
 // DeviceAuthSession contains the values an app displays after beginning login.
 type DeviceAuthSession struct {
+	Provider            string `json:"provider"`
 	SessionID           string `json:"session_id"`
 	UserCode            string `json:"user_code"`
 	VerificationURL     string `json:"verification_url"`
@@ -37,6 +38,7 @@ type DeviceAuthSession struct {
 
 // DeviceAuthPoll identifies a device flow that should be polled once.
 type DeviceAuthPoll struct {
+	Provider  string `json:"provider"`
 	SessionID string `json:"session_id"`
 	UserCode  string `json:"user_code"`
 	Name      string `json:"name,omitempty"`
@@ -70,6 +72,14 @@ type AccountMutation struct {
 	Account Account `json:"account"`
 }
 
+// APIKeyAccount creates or updates an account for a provider authenticated by API key.
+// The key is accepted only for this call and is never returned in results.
+type APIKeyAccount struct {
+	Provider string `json:"provider"`
+	Name     string `json:"name,omitempty"`
+	APIKey   string `json:"api_key"`
+}
+
 type storedAccount struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
@@ -81,6 +91,7 @@ type storedAccount struct {
 
 type authData struct {
 	Type         string  `json:"type"`
+	APIKey       *string `json:"api_key,omitempty"`
 	IDToken      *string `json:"id_token,omitempty"`
 	AccessToken  *string `json:"access_token,omitempty"`
 	RefreshToken *string `json:"refresh_token,omitempty"`

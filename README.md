@@ -25,7 +25,14 @@ go build -o codex-usage.exe .
 Sign in to your first account:
 
 ```bash
-./codex-usage accounts login --name "My Account"
+./codex-usage accounts login --provider openai-codex --name "My Account"
+```
+
+The account provider is explicit. Add OpenCode Go or DeepSeek with an API key:
+
+```bash
+./codex-usage accounts add --provider opencode-go --api-key "$OPENCODE_API_KEY"
+./codex-usage accounts add --provider deepseek --api-key "$DEEPSEEK_API_KEY"
 ```
 
 Then open the interactive usage dashboard:
@@ -70,7 +77,8 @@ An account can be identified by its name, email, or ID. Add `--show-used` to inc
 
 ```text
 codex-usage accounts list
-codex-usage accounts login [--name name] [--no-browser] [--auth-flow device|browser]
+codex-usage accounts add --provider opencode-go|deepseek --api-key key [--name name]
+codex-usage accounts login --provider openai-codex [--name name] [--no-browser] [--auth-flow device|browser]
 codex-usage accounts remove <id-or-name>
 codex-usage accounts rename <id-or-name> <new-name>
 codex-usage resets [--show-used] <account-name-email-or-id>

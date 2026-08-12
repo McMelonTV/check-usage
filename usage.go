@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -34,78 +36,22 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 			updated := account
 			tokenRefreshed := false
 			var cache *usageCacheEntry
-			switch normalizeAuthType(account.AuthData.Type) {
-			case "apikey":
-				row.Primary = "n/a"
-				row.Secondary = "n/a"
-				row.ResetCredits = "n/a"
-			case "chatgpt":
-				refreshedAcc, changed, refreshErr := ensureFreshTokens(account, client)
-				if refreshErr != nil {
-					if authenticationRequired(refreshErr) {
-						row = authenticationRequiredUsageRow(account)
-					} else {
-						row = cachedOrUnavailableUsageRow(account, previous, time.Now())
-					}
-					results <- accountResult{Index: idx, Row: row, Updated: updated}
-					return
-				}
-
-				updated = refreshedAcc
-				tokenRefreshed = changed
-
-				var usage *rateLimitStatusPayload
-				var resetCredits *resetCreditsPayload
-				var usageErr, resetCreditsErr error
-				var requestWG sync.WaitGroup
-				requestWG.Add(2)
-				go func() {
-					defer requestWG.Done()
-					usage, usageErr = fetchUsage(updated, client)
-				}()
-				go func() {
-					defer requestWG.Done()
-					resetCredits, resetCreditsErr = fetchResetCredits(updated, client)
-				}()
-				requestWG.Wait()
-				if usageErr != nil {
-					if authenticationRequired(usageErr) {
-						row = authenticationRequiredUsageRow(account)
-					} else {
-						row = cachedOrUnavailableUsageRow(account, previous, time.Now())
-					}
-					results <- accountResult{Index: idx, Row: row, Updated: updated, TokenRefreshed: tokenRefreshed}
-					return
-				}
-
-				row.Plan = firstNonEmpty(usage.PlanType, row.Plan)
-				now := time.Now()
-				row.Primary = limitSummary(usage.RateLimit, true, now)
-				row.Secondary = limitSummary(usage.RateLimit, false, now)
-				row.PrimaryUsed = windowUsedPercent(usage.RateLimit, true)
-				row.SecondaryUsed = windowUsedPercent(usage.RateLimit, false)
-				entry := usageCacheEntry{
-					PlanType:  row.Plan,
-					RateLimit: usage.RateLimit,
-					FetchedAt: now.Unix(),
-				}
-				if resetCreditsErr != nil {
-					if previous.ResetCredits != nil {
-						row.ResetCredits = resetCreditsSummary(previous.ResetCredits, now)
-						row.ResetsStale = true
-					} else {
-						row.ResetCredits = "unavailable"
-					}
+			result, fetchErr := fetchProviderUsage(context.Background(), client, account)
+			if fetchErr != nil {
+				if errors.Is(fetchErr, errMissingAPIKey) || authenticationRequired(fetchErr) {
+					row = authenticationRequiredUsageRow(account)
 				} else {
-					row.ResetCredits = resetCreditsSummary(resetCredits, now)
-					entry.ResetCredits = resetCredits
-					entry.ResetFetchedAt = now.Unix()
+					row = cachedOrUnavailableUsageRow(account, previous, time.Now())
 				}
-				cache = &entry
-			default:
-				row.Primary = "n/a"
-				row.Secondary = "n/a"
-				row.ResetCredits = "n/a"
+				results <- accountResult{Index: idx, Row: row, Updated: updated}
+				return
+			}
+			updated, tokenRefreshed = result.Account, result.AccountChanged
+			applyProviderUsage(&row, result.Usage)
+			now := time.Now()
+			cache = &usageCacheEntry{PlanType: row.Plan, ProviderUsage: &result.Usage, FetchedAt: now.Unix()}
+			if result.ResetCredits != nil {
+				cache.ResetCredits, cache.ResetFetchedAt = result.ResetCredits, now.Unix()
 			}
 
 			results <- accountResult{Index: idx, Row: row, Updated: updated, TokenRefreshed: tokenRefreshed, Cache: cache}
@@ -141,15 +87,18 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 
 func baseUsageRow(account storedAccount) usageRow {
 	return usageRow{
-		ID:           account.ID,
-		Name:         account.Name,
-		Provider:     account.Provider,
-		Email:        valueOrDash(account.Email),
-		Plan:         valueOrDash(account.PlanType),
-		Primary:      "-",
-		Secondary:    "-",
-		ResetCredits: "-",
-		SortName:     strings.ToLower(account.Name),
+		ID:             account.ID,
+		Name:           account.Name,
+		Provider:       providerName(account.Provider),
+		Email:          valueOrDash(account.Email),
+		Plan:           valueOrDash(account.PlanType),
+		Primary:        "-",
+		Secondary:      "-",
+		ResetCredits:   "-",
+		PrimaryLabel:   "PRIMARY",
+		SecondaryLabel: "SECONDARY",
+		DetailsLabel:   "DETAILS",
+		SortName:       strings.ToLower(account.Name),
 	}
 }
 
@@ -158,37 +107,45 @@ func cachedUsageRows(accounts []storedAccount, cache map[string]usageCacheEntry,
 	var newest time.Time
 	for _, account := range accounts {
 		row := baseUsageRow(account)
-		switch normalizeAuthType(account.AuthData.Type) {
-		case "apikey":
-			row.Primary, row.Secondary, row.ResetCredits = "n/a", "n/a", "n/a"
-		case "chatgpt":
-			entry, ok := cache[account.ID]
-			if !ok || entry.FetchedAt <= 0 {
-				row.Primary, row.Secondary, row.ResetCredits = "loading…", "loading…", "loading…"
-				row.Loading = true
-				break
-			}
-			row.Plan = firstNonEmpty(entry.PlanType, row.Plan)
-			row.Primary = limitSummary(entry.RateLimit, true, now)
-			row.Secondary = limitSummary(entry.RateLimit, false, now)
-			row.PrimaryUsed = windowUsedPercent(entry.RateLimit, true)
-			row.SecondaryUsed = windowUsedPercent(entry.RateLimit, false)
-			if entry.ResetCredits != nil {
-				row.ResetCredits = resetCreditsSummary(entry.ResetCredits, now)
+		entry, ok := cache[account.ID]
+		if !ok || entry.FetchedAt <= 0 {
+			row.Primary, row.Secondary, row.ResetCredits = "loading…", "loading…", "loading…"
+			row.Loading = true
+		} else {
+			if entry.ProviderUsage != nil {
+				applyProviderUsage(&row, *entry.ProviderUsage)
 			} else {
-				row.ResetCredits = "unavailable"
+				applyLegacyCodexCache(&row, entry, now)
 			}
 			fetchedAt := time.Unix(entry.FetchedAt, 0)
 			if fetchedAt.After(newest) {
 				newest = fetchedAt
 			}
-		default:
-			row.Primary, row.Secondary, row.ResetCredits = "n/a", "n/a", "n/a"
 		}
 		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].SortName < rows[j].SortName })
 	return rows, newest
+}
+
+func applyLegacyCodexCache(row *usageRow, entry usageCacheEntry, now time.Time) {
+	usage := providerUsage{
+		Plan:      entry.PlanType,
+		Primary:   providerMetric{Label: "5H", Summary: limitSummary(entry.RateLimit, true, now), Used: windowUsedPercent(entry.RateLimit, true)},
+		Secondary: providerMetric{Label: "WEEK", Summary: limitSummary(entry.RateLimit, false, now), Used: windowUsedPercent(entry.RateLimit, false)},
+		Details:   providerMetric{Label: "RESETS", Summary: "unavailable"},
+	}
+	if entry.ResetCredits != nil {
+		usage.Details.Summary = resetCreditsSummary(entry.ResetCredits, now)
+	}
+	applyProviderUsage(row, usage)
+}
+
+func applyProviderUsage(row *usageRow, usage providerUsage) {
+	row.Plan = firstNonEmpty(usage.Plan, row.Plan)
+	row.Primary, row.PrimaryLabel, row.PrimaryUsed = firstNonEmpty(usage.Primary.Summary, "n/a"), firstNonEmpty(usage.Primary.Label, "PRIMARY"), usage.Primary.Used
+	row.Secondary, row.SecondaryLabel, row.SecondaryUsed = firstNonEmpty(usage.Secondary.Summary, "n/a"), firstNonEmpty(usage.Secondary.Label, "SECONDARY"), usage.Secondary.Used
+	row.ResetCredits, row.DetailsLabel = firstNonEmpty(usage.Details.Summary, "n/a"), firstNonEmpty(usage.Details.Label, "DETAILS")
 }
 
 func cachedOrUnavailableUsageRow(account storedAccount, entry usageCacheEntry, now time.Time) usageRow {

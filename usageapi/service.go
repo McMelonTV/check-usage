@@ -144,8 +144,11 @@ func (service *Service) UpdateSettings(settings Settings) (Settings, error) {
 	return settings, nil
 }
 
-// BeginDeviceAuth starts a device authorization without opening a browser.
-func (service *Service) BeginDeviceAuth(ctx context.Context) (DeviceAuthSession, error) {
+// BeginDeviceAuth starts a device authorization for a device-auth provider.
+func (service *Service) BeginDeviceAuth(ctx context.Context, provider string) (DeviceAuthSession, error) {
+	if normalizeProvider(provider) != providerOpenAICodex {
+		return DeviceAuthSession{}, fmt.Errorf("provider %q does not support device authentication", provider)
+	}
 	response, err := codexapi.RequestDeviceUserCode(ctx, service.client)
 	if err != nil {
 		return DeviceAuthSession{}, err
@@ -155,6 +158,7 @@ func (service *Service) BeginDeviceAuth(ctx context.Context) (DeviceAuthSession,
 		interval = 5
 	}
 	return DeviceAuthSession{
+		Provider:  providerOpenAICodex,
 		SessionID: response.DeviceAuthID, UserCode: response.UserCode,
 		VerificationURL: codexapi.DeviceVerificationURL, PollIntervalSeconds: interval,
 	}, nil
@@ -162,6 +166,9 @@ func (service *Service) BeginDeviceAuth(ctx context.Context) (DeviceAuthSession,
 
 // PollDeviceAuth polls once and persists credentials when authorization completes.
 func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPoll) (DeviceAuthResult, error) {
+	if normalizeProvider(request.Provider) != providerOpenAICodex {
+		return DeviceAuthResult{}, fmt.Errorf("provider %q does not support device authentication", request.Provider)
+	}
 	if strings.TrimSpace(request.SessionID) == "" || strings.TrimSpace(request.UserCode) == "" {
 		return DeviceAuthResult{}, fmt.Errorf("session_id and user_code are required")
 	}
@@ -188,7 +195,7 @@ func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPo
 		name = defaultAccountName(identity.Email, service.now())
 	}
 	candidate := storedAccount{
-		ID: newAccountID(service.now()), Name: name, Provider: "OpenAI",
+		ID: newAccountID(service.now()), Name: name, Provider: providerOpenAICodex,
 		Email: stringPointer(identity.Email), PlanType: stringPointer(identity.PlanType),
 		AuthData: authData{
 			Type: "chatgpt", IDToken: &tokens.IDToken, AccessToken: &tokens.AccessToken,
@@ -218,6 +225,33 @@ func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPo
 	}
 	account := candidate.public()
 	return DeviceAuthResult{Status: "complete", Action: action, Account: &account}, nil
+}
+
+// SaveAPIKeyAccount creates an API-key account for a supported provider.
+func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutation, error) {
+	provider, ok := providerDefinitions[normalizeProvider(request.Provider)]
+	if !ok || provider.Credentials != apiKeyCredentials {
+		return AccountMutation{}, fmt.Errorf("provider %q does not support API-key accounts", request.Provider)
+	}
+	if strings.TrimSpace(request.APIKey) == "" {
+		return AccountMutation{}, fmt.Errorf("api_key is required")
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		name = provider.Name
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	store, err := service.loadAccounts()
+	if err != nil {
+		return AccountMutation{}, err
+	}
+	account := storedAccount{ID: newAccountID(service.now()), Name: name, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: stringPointer(strings.TrimSpace(request.APIKey))}}
+	store.Accounts = append(store.Accounts, account)
+	if err := service.saveAccounts(store); err != nil {
+		return AccountMutation{}, err
+	}
+	return AccountMutation{Action: "added", Account: account.public()}, nil
 }
 
 // Usage returns one account or all accounts when target is empty. When refresh
@@ -266,6 +300,10 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 		return ResetCreditsResult{}, err
 	}
 	account := &store.Accounts[index]
+	provider, ok := providerDefinitions[normalizeProvider(account.Provider)]
+	if !ok || !provider.ResetCredits {
+		return ResetCreditsResult{}, fmt.Errorf("reset credits are unavailable for %s", account.Provider)
+	}
 	entry, cached, err := service.loadCache(account.ID)
 	if err != nil {
 		return ResetCreditsResult{}, err
@@ -298,8 +336,19 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 }
 
 func (service *Service) usageForAccount(ctx context.Context, account *storedAccount, refresh bool) (UsageResult, bool, error) {
-	if !strings.EqualFold(account.AuthData.Type, "chatgpt") {
-		return UsageResult{}, false, fmt.Errorf("usage requires a ChatGPT account")
+	provider, ok := providerDefinitions[normalizeProvider(account.Provider)]
+	if !ok {
+		return UsageResult{}, false, fmt.Errorf("unsupported provider %q", account.Provider)
+	}
+	if provider.Credentials == apiKeyCredentials {
+		if !refresh {
+			return UsageResult{}, false, fmt.Errorf("cached usage is unavailable for account %q", account.Name)
+		}
+		snapshot, err := fetchAPIKeySnapshot(ctx, service.client, *account, service.now())
+		if err != nil {
+			return UsageResult{}, false, err
+		}
+		return UsageResult{Account: account.public(), Snapshot: snapshot}, false, nil
 	}
 	entry, cached, err := service.loadCache(account.ID)
 	if err != nil {

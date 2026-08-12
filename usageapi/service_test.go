@@ -70,7 +70,7 @@ func TestDeviceAuthPersistsTokensButReturnsPublicAccount(t *testing.T) {
 	})}
 	service := testService(t, client)
 
-	session, err := service.BeginDeviceAuth(context.Background())
+	session, err := service.BeginDeviceAuth(context.Background(), providerOpenAICodex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestDeviceAuthPersistsTokensButReturnsPublicAccount(t *testing.T) {
 		t.Fatalf("unexpected session: %#v", session)
 	}
 	result, err := service.PollDeviceAuth(context.Background(), DeviceAuthPoll{
-		SessionID: session.SessionID, UserCode: session.UserCode,
+		Provider: providerOpenAICodex, SessionID: session.SessionID, UserCode: session.UserCode,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -188,6 +188,31 @@ func TestUsageRefreshFallsBackToCompatibleCache(t *testing.T) {
 	}
 	if len(results) != 1 || !results[0].Cached || results[0].Snapshot == nil || results[0].Error == "" {
 		t.Fatalf("expected cached fallback with provider error: %#v", results)
+	}
+}
+
+func TestSaveAPIKeyAccountAndFetchDeepSeekBalance(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "https://api.deepseek.com/user/balance" {
+			t.Fatalf("URL = %s", request.URL)
+		}
+		if request.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatalf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		return jsonResponse(http.StatusOK, `{"is_available":true,"balance_infos":[{"currency":"USD","total_balance":"12.50"}]}`), nil
+	})}
+	service := testService(t, client)
+	mutation, err := service.SaveAPIKeyAccount(APIKeyAccount{Provider: providerDeepSeek, APIKey: "secret"})
+	if err != nil || mutation.Account.Provider != providerDeepSeek {
+		t.Fatalf("save account = %#v, %v", mutation, err)
+	}
+	results, err := service.Usage(context.Background(), mutation.Account.ID, true)
+	if err != nil || len(results) != 1 || results[0].Snapshot == nil || results[0].Snapshot.Windows[0].Label != "USD 12.50" {
+		t.Fatalf("usage = %#v, %v", results, err)
+	}
+	encoded, _ := json.Marshal(mutation)
+	if strings.Contains(string(encoded), "secret") {
+		t.Fatalf("mutation leaked API key: %s", encoded)
 	}
 }
 

@@ -54,8 +54,9 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 | `accounts.list` | `{}` | Public account array |
 | `accounts.rename` | `{"account":"id/name/email","new_name":"..."}` | Mutation and public account |
 | `accounts.remove` | `{"account":"id/name/email"}` | Mutation and removed public account |
-| `auth.device.begin` | `{}` | Session ID, user code, verification URL, and polling interval |
-| `auth.device.poll` | `{"session_id":"...","user_code":"...","name":"optional"}` | `pending`, or `complete` with the persisted public account |
+| `accounts.api_key.save` | `{"provider":"opencode-go/deepseek","api_key":"...","name":"optional"}` | Creates an API-key account and returns public metadata |
+| `auth.device.begin` | `{"provider":"openai-codex"}` | Session ID, user code, verification URL, and polling interval |
+| `auth.device.poll` | `{"provider":"openai-codex","session_id":"...","user_code":"...","name":"optional"}` | `pending`, or `complete` with the persisted public account |
 | `usage.get` | `{"account":"optional","refresh":true}` | One result per selected account; omitting `account` selects all |
 | `resets.get` | `{"account":"...","refresh":true,"include_unavailable":false}` | Reset-credit payload for one account |
 | `settings.get` | `{}` | Current settings |
@@ -65,9 +66,9 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 
 ### Device authentication
 
-1. Call `auth.device.begin`.
+1. Call `auth.device.begin` with `provider: "openai-codex"`.
 2. Show or open `verification_url` and display `user_code`.
-3. Poll `auth.device.poll` no faster than `poll_interval_seconds`.
+3. Poll `auth.device.poll` with the same provider no faster than `poll_interval_seconds`.
 4. Stop when the returned status is `complete`. The service exchanges the authorization code and saves the credentials itself.
 
 ## Go package
@@ -102,4 +103,4 @@ func main() {
 }
 ```
 
-The main entry points are `Service.ListAccounts`, `RenameAccount`, `RemoveAccount`, `BeginDeviceAuth`, `PollDeviceAuth`, `Usage`, `ResetCredits`, `Settings`, and `UpdateSettings`. A custom `http.Client`, clock, accounts path, cache directory, and user agent can be supplied through `usageapi.Config` for embedding and testing.
+The main entry points are `Service.ListAccounts`, `RenameAccount`, `RemoveAccount`, `SaveAPIKeyAccount`, `BeginDeviceAuth`, `PollDeviceAuth`, `Usage`, `ResetCredits`, `Settings`, and `UpdateSettings`. A custom `http.Client`, clock, accounts path, cache directory, and user agent can be supplied through `usageapi.Config` for embedding and testing.

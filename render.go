@@ -18,12 +18,13 @@ func printTable(rows []usageRow) {
 
 	var b bytes.Buffer
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ACCOUNT\tEMAIL\tPLAN\t5H LIMIT\tWEEKLY LIMIT\tRESET CREDITS")
+	fmt.Fprintln(w, "ACCOUNT\tPROVIDER\tEMAIL\tPLAN\tPRIMARY\tSECONDARY\tDETAILS")
 	for _, r := range rows {
 		fmt.Fprintf(
 			w,
-			"%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			r.Name,
+			r.Provider,
 			r.Email,
 			r.Plan,
 			r.Primary,

@@ -72,3 +72,18 @@ func TestRPCSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("settings did not round-trip: %#v", settings)
 	}
 }
+
+func TestRPCSavesAPIKeyAccount(t *testing.T) {
+	server := RPCServer{Service: testService(t, nil)}
+	response := server.Handle(context.Background(), RPCRequest{
+		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "accounts.api_key.save",
+		Params: json.RawMessage(`{"provider":"deepseek","api_key":"secret"}`),
+	})
+	if response.Error != nil {
+		t.Fatalf("accounts.api_key.save failed: %#v", response.Error)
+	}
+	accounts, err := server.Service.ListAccounts()
+	if err != nil || len(accounts) != 1 || accounts[0].Provider != providerDeepSeek {
+		t.Fatalf("accounts = %#v, %v", accounts, err)
+	}
+}
