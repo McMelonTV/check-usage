@@ -44,6 +44,9 @@ type usageRow struct {
 	PrimaryUsed   *float64
 	SecondaryUsed *float64
 	Loading       bool
+	AuthRequired  bool
+	Stale         bool
+	ResetsStale   bool
 }
 
 type appSettings struct {

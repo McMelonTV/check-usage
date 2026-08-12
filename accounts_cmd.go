@@ -21,6 +21,8 @@ func runAccountsCommand(args []string) int {
 		return runAccountsList(args[1:])
 	case "login":
 		return runAccountsLogin(args[1:])
+	case "reauth":
+		return runAccountsReauth(args[1:])
 	case "remove":
 		return runAccountsRemove(args[1:])
 	case "rename":
@@ -33,6 +35,68 @@ func runAccountsCommand(args []string) int {
 		printAccountsCommandUsage()
 		return 1
 	}
+}
+
+func runAccountsReauth(args []string) int {
+	fs := flag.NewFlagSet("accounts reauth", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	setDoubleDashFlagUsage(fs)
+	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
+	timeout := fs.Int("timeout", 30, "HTTP timeout in seconds")
+	noBrowser := fs.Bool("no-browser", false, "do not open browser automatically")
+	authFlow := fs.String("auth-flow", "device", "authentication flow: device or browser")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: accounts reauth [--accounts-file path] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
+		return 2
+	}
+
+	store, err := loadAccountsOrEmpty(*accountsPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	index, err := findAccountForRemoval(store.Accounts, strings.TrimSpace(fs.Arg(0)))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	existing := store.Accounts[index]
+
+	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
+	var refreshed storedAccount
+	switch strings.ToLower(strings.TrimSpace(*authFlow)) {
+	case "device":
+		refreshed, err = runDeviceAuthLogin(existing.Name, client, !*noBrowser)
+	case "browser", "oauth":
+		refreshed, err = runOAuthLogin(existing.Name, client, !*noBrowser)
+	default:
+		fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
+		return 2
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	if existing.Email != nil && refreshed.Email != nil && !strings.EqualFold(strings.TrimSpace(*existing.Email), strings.TrimSpace(*refreshed.Email)) {
+		fmt.Fprintln(os.Stderr, "error: signed-in email does not match the selected account")
+		return 1
+	}
+
+	refreshed.ID, refreshed.Name = existing.ID, existing.Name
+	store.Accounts[index] = refreshed
+	if err := saveAccounts(*accountsPath, store); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	if err := removeAccountUsageCache(existing.ID); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	fmt.Printf("Reauthenticated account %q (%s).\n", refreshed.Name, refreshed.ID)
+	return 0
 }
 
 func runAccountsList(args []string) int {
@@ -344,6 +408,7 @@ func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  codex-usage accounts list [--accounts-file path]")
 	fmt.Println("  codex-usage accounts login [--accounts-file path] [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
+	fmt.Println("  codex-usage accounts reauth [--accounts-file path] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
 	fmt.Println("  codex-usage accounts remove [--accounts-file path] <id-or-name>")
 	fmt.Println("  codex-usage accounts rename [--accounts-file path] <id-or-name> <new-name>")
 }

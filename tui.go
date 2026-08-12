@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,12 +74,28 @@ type storeSavedMsg struct {
 	err    error
 }
 
-type accountLoginFinishedMsg struct{ err error }
+type authCodeLoadedMsg struct {
+	code    *deviceUserCodeResponse
+	err     error
+	version int
+}
+
+type authCompletedMsg struct {
+	account storedAccount
+	err     error
+	version int
+}
+
+type authSavedMsg struct {
+	err     error
+	version int
+}
 type autoRefreshTickMsg struct{ version int }
 type spinnerTickMsg struct{}
 
 type tuiModel struct {
 	accountsPath string
+	client       *http.Client
 	loader       tuiDataLoader
 	resetLoader  resetLoader
 
@@ -117,11 +131,20 @@ type tuiModel struct {
 	editingName  bool
 	nameInput    string
 	timerVersion int
+
+	authActive   bool
+	authLoading  bool
+	authSaving   bool
+	authCode     *deviceUserCodeResponse
+	authErr      error
+	authReauthID string
+	authVersion  int
 }
 
 func newTUIModel(accountsPath string, client *http.Client) tuiModel {
 	m := tuiModel{
 		accountsPath: accountsPath,
+		client:       client,
 		loading:      true,
 		settings:     defaultAppSettings(),
 	}
@@ -194,7 +217,7 @@ func newTUIModel(accountsPath string, client *http.Client) tuiModel {
 }
 
 func runTUI(accountsPath string, client *http.Client) error {
-	program := tea.NewProgram(newTUIModel(accountsPath, client), tea.WithAltScreen())
+	program := tea.NewProgram(newTUIModel(accountsPath, client), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := program.Run()
 	return err
 }
@@ -360,12 +383,41 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.timerVersion++
 		return m, tea.Batch(m.loadDashboard(), spinnerTick())
 
-	case accountLoginFinishedMsg:
-		if msg.err != nil {
-			m.notice = "Login failed: " + msg.err.Error()
+	case authCodeLoadedMsg:
+		if msg.version != m.authVersion {
 			return m, nil
 		}
-		m.notice = "Account login finished"
+		m.authLoading = false
+		m.authCode, m.authErr = msg.code, msg.err
+		if msg.err != nil {
+			return m, nil
+		}
+		m.authLoading = true
+		return m, m.pollDeviceAuthorization(msg.code)
+
+	case authCompletedMsg:
+		if msg.version != m.authVersion {
+			return m, nil
+		}
+		m.authLoading = false
+		if msg.err != nil {
+			m.authErr = msg.err
+			return m, nil
+		}
+		m.authSaving = true
+		return m, m.saveAuthenticatedAccount(msg.account)
+
+	case authSavedMsg:
+		if msg.version != m.authVersion {
+			return m, nil
+		}
+		m.authSaving = false
+		if msg.err != nil {
+			m.authErr = msg.err
+			return m, nil
+		}
+		m.authActive, m.authCode, m.authErr, m.authReauthID = false, nil, nil, ""
+		m.notice = "Authentication finished"
 		m.loading = true
 		m.timerVersion++
 		return m, tea.Batch(m.loadDashboard(), spinnerTick())
@@ -377,13 +429,26 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case spinnerTickMsg:
-		if m.loading || m.resetLoading {
+		if m.loading || m.resetLoading || m.authActive {
 			m.spinnerStep++
 			return m, spinnerTick()
 		}
 
+	case tea.MouseMsg:
+		if m.authActive {
+			return m, nil
+		}
+		return m.updateMouse(msg)
+
 	case tea.KeyMsg:
 		key := msg.String()
+		if m.authActive {
+			if key == "esc" {
+				m.authVersion++
+				m.authActive, m.authLoading, m.authSaving, m.authCode, m.authErr, m.authReauthID = false, false, false, nil, nil, ""
+			}
+			return m, nil
+		}
 		switch key {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -496,8 +561,11 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 		}
 		switch key {
 		case "a":
-			command := exec.Command(os.Args[0], "accounts", "login", "--accounts-file", m.accountsPath)
-			return m, tea.ExecProcess(command, func(err error) tea.Msg { return accountLoginFinishedMsg{err: err} })
+			return m.startAuthentication("")
+		case "r":
+			if account, ok := m.selectedAccount(); ok {
+				return m.startAuthentication(account.ID)
+			}
 		case "e":
 			if account, ok := m.selectedAccount(); ok {
 				m.editingName = true
@@ -564,6 +632,183 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m tuiModel) startAuthentication(reauthID string) (tea.Model, tea.Cmd) {
+	m.authVersion++
+	m.authActive, m.authLoading, m.authSaving = true, true, false
+	m.authCode, m.authErr, m.authReauthID = nil, nil, reauthID
+	return m, m.requestDeviceAuthorization()
+}
+
+func (m tuiModel) requestDeviceAuthorization() tea.Cmd {
+	client := m.client
+	version := m.authVersion
+	return func() tea.Msg {
+		code, err := requestDeviceUserCode(client)
+		return authCodeLoadedMsg{code: code, err: err, version: version}
+	}
+}
+
+func (m tuiModel) pollDeviceAuthorization(code *deviceUserCodeResponse) tea.Cmd {
+	client := m.client
+	version := m.authVersion
+	name := ""
+	if m.authReauthID != "" {
+		if index, err := findAccountByIDNameOrEmail(m.accounts, m.authReauthID); err == nil {
+			name = m.accounts[index].Name
+		}
+	}
+	return func() tea.Msg {
+		poll, err := pollDeviceToken(client, code)
+		if err != nil {
+			return authCompletedMsg{err: err, version: version}
+		}
+		tokens, err := exchangeAuthorizationCode(client, poll.AuthorizationCode, deviceAuthRedirectURI, poll.CodeVerifier)
+		if err != nil {
+			return authCompletedMsg{err: fmt.Errorf("device auth token exchange failed: %w", err), version: version}
+		}
+		email, planType, accountID := parseIDTokenClaims(tokens.IDToken)
+		return authCompletedMsg{account: buildStoredAccount(name, email, planType, accountID, tokens), version: version}
+	}
+}
+
+func (m tuiModel) saveAuthenticatedAccount(account storedAccount) tea.Cmd {
+	accountsPath, reauthID := m.accountsPath, m.authReauthID
+	version := m.authVersion
+	return func() tea.Msg {
+		store, err := loadAccountsOrEmpty(accountsPath)
+		if err != nil {
+			return authSavedMsg{err: err, version: version}
+		}
+		if reauthID != "" {
+			index, err := findAccountByIDNameOrEmail(store.Accounts, reauthID)
+			if err != nil {
+				return authSavedMsg{err: err, version: version}
+			}
+			existing := store.Accounts[index]
+			if existing.Email != nil && account.Email != nil && !strings.EqualFold(strings.TrimSpace(*existing.Email), strings.TrimSpace(*account.Email)) {
+				return authSavedMsg{err: fmt.Errorf("signed-in email does not match the selected account"), version: version}
+			}
+			account.ID, account.Name = existing.ID, existing.Name
+			store.Accounts[index] = account
+			if err := saveAccounts(accountsPath, store); err != nil {
+				return authSavedMsg{err: err, version: version}
+			}
+			return authSavedMsg{err: removeAccountUsageCache(account.ID), version: version}
+		}
+
+		if index := findMatchingAccount(store.Accounts, account); index >= 0 {
+			account.ID = store.Accounts[index].ID
+			if strings.TrimSpace(store.Accounts[index].Name) != "" {
+				account.Name = store.Accounts[index].Name
+			}
+			store.Accounts[index] = account
+		} else {
+			store.Accounts = append(store.Accounts, account)
+		}
+		return authSavedMsg{err: saveAccounts(accountsPath, store), version: version}
+	}
+}
+
+func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.showHelp {
+		return m, nil
+	}
+	if msg.Button == tea.MouseButtonWheelUp {
+		return m.updateActiveTab("up")
+	}
+	if msg.Button == tea.MouseButtonWheelDown {
+		return m.updateActiveTab("down")
+	}
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+
+	x := msg.X - tuiContentOrigin(m.width)
+	if msg.Y == 2 {
+		for i, right := range []int{8, 17, 28, 38} {
+			if x < right {
+				m.tab = tuiTab(i)
+				m.tabRowFocused = false
+				m.clampCursor()
+				if m.tab == resetsTab && len(m.accounts) > 0 {
+					m.resetRowsFocused = false
+					m.showFocusedResetCache()
+					m.resetLoading = true
+					return m, tea.Batch(m.loadSelectedResets(), spinnerTick())
+				}
+				return m, nil
+			}
+		}
+	}
+
+	switch m.tab {
+	case usageTab:
+		if index, ok := m.mouseRowIndex(msg.Y, len(m.rows), m.width >= tuiWideAt, 7, 5); ok {
+			m.cursor = index
+		}
+	case resetsTab:
+		sidebarWidth := max(10, min(24, tuiContentWidth(m.width)/3))
+		if x < sidebarWidth {
+			if index, ok := m.mouseRowIndex(msg.Y, len(m.accounts), false, 7, 7); ok {
+				m.cursor = index
+				m.resetRowsFocused = false
+				m.showFocusedResetCache()
+				m.resetLoading = true
+				return m, tea.Batch(m.loadSelectedResets(), spinnerTick())
+			}
+		}
+	case accountsTab:
+		if index, ok := m.mouseRowIndex(msg.Y, len(m.accounts), m.width >= 80, 7, 5); ok {
+			m.cursor = index
+		}
+	case settingsTab:
+		if index := (msg.Y - 5) / 2; msg.Y >= 5 && index >= 0 && index < 6 {
+			m.settingsCursor = index
+			return m.updateActiveTab("right")
+		}
+	}
+	return m, nil
+}
+
+func tuiContentWidth(width int) int {
+	if width <= 0 {
+		width = 92
+	}
+	contentWidth := min(tuiMaxWidth, max(20, width-4))
+	if width < 24 {
+		return max(10, width)
+	}
+	return contentWidth
+}
+
+func tuiContentOrigin(width int) int {
+	contentWidth := tuiContentWidth(width)
+	if width > contentWidth {
+		return (width - contentWidth) / 2
+	}
+	return 0
+}
+
+func (m tuiModel) mouseRowIndex(y, total int, wide bool, wideStart, compactStart int) (int, bool) {
+	if total == 0 {
+		return 0, false
+	}
+	startY, stride := compactStart, 3
+	if wide {
+		startY, stride = wideStart, 1
+	}
+	if !m.settings.CompactMode {
+		stride++
+	}
+	if y < startY || (y-startY)%stride != 0 {
+		return 0, false
+	}
+	maxRows := max(tuiMinListLen, (m.height-15)/stride)
+	start, end := visibleRange(total, m.cursor, maxRows)
+	index := start + (y-startY)/stride
+	return index, index < end
 }
 
 func (m tuiModel) updateNameEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -742,6 +987,8 @@ func (m tuiModel) View() string {
 
 	sections := []string{m.renderHeader(contentWidth)}
 	switch {
+	case m.authActive:
+		sections = append(sections, m.renderAuthentication(contentWidth, innerHeight))
 	case m.showHelp:
 		sections = append(sections, m.renderHelp(contentWidth))
 	case m.loading && !m.initialized:
@@ -807,6 +1054,38 @@ func (m tuiModel) renderLoading(width, height int) string {
 	return strings.Repeat("\n", space/2) + lipgloss.PlaceHorizontal(width, lipgloss.Center, message) + strings.Repeat("\n", space-space/2)
 }
 
+func (m tuiModel) renderAuthentication(width, height int) string {
+	title := "Add account"
+	if m.authReauthID != "" {
+		title = "Reauthenticate account"
+	}
+	if m.authErr != nil {
+		body := tuiErrorStyle.Render("Authentication failed") + "\n" +
+			tuiMutedStyle.Render(ansi.Truncate(m.authErr.Error(), max(16, width-8), "…")) + "\n\n" +
+			tuiMutedStyle.Render("Press Esc to return to Accounts.")
+		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+	}
+	if m.authCode == nil {
+		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+tuiAccentStyle.Render(spinnerFrame(m.spinnerStep))+"  Requesting authorization code…")
+	}
+	status := tuiAccentStyle.Render(spinnerFrame(m.spinnerStep) + "  Waiting for approval…")
+	if m.authSaving {
+		status = tuiAccentStyle.Render(spinnerFrame(m.spinnerStep) + "  Saving account…")
+	}
+	code := lipgloss.NewStyle().Bold(true).Foreground(accentColor).Render(m.authCode.UserCode)
+	body := strings.Join([]string{
+		tuiMutedStyle.Render("Open this address in your browser:"),
+		tuiAccentStyle.Render(deviceAuthVerificationURL),
+		"",
+		tuiMutedStyle.Render("Enter this code:"),
+		code,
+		"",
+		status,
+		tuiMutedStyle.Render("Esc cancels"),
+	}, "\n")
+	return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+}
+
 func (m tuiModel) renderError(width int, err error) string {
 	title := tuiErrorStyle.Render("Couldn’t load usage")
 	body := tuiMutedStyle.Render(ansi.Truncate(err.Error(), max(16, width-8), "…"))
@@ -865,11 +1144,22 @@ func (m tuiModel) renderWideList(width, height int) string {
 		if i == m.cursor {
 			marker, nameStyle = selectedRowVisual(m.tabRowFocused)
 		}
-		line := marker + cell(nameStyle.Render(row.Name), nameWidth) + " " +
+		name := row.Name
+		if row.Stale || row.ResetsStale {
+			name += " " + lipgloss.NewStyle().Foreground(amberColor).Render("(Stale)")
+		}
+		primary, secondary, resets := "", "", ""
+		if row.AuthRequired {
+			primary = tuiErrorStyle.Render("sign in required")
+			secondary, resets = tuiMutedStyle.Render("—"), tuiMutedStyle.Render("—")
+		} else {
+			primary = renderUsageBar(row.PrimaryUsed, usageWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme)
+			secondary = renderUsageBar(row.SecondaryUsed, usageWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme)
+			resets = renderCreditCount(row.ResetCredits, row.ResetsStale, m.settings.ColorTheme)
+		}
+		line := marker + cell(nameStyle.Render(name), nameWidth) + " " +
 			cell(tuiMutedStyle.Render(row.Provider), providerWidth) + " " + cell(tuiMutedStyle.Render(row.Plan), planWidth) + " " +
-			cell(renderUsageBar(row.PrimaryUsed, usageWidth, m.showRemaining(), row.Loading, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme), usageWidth) + " " +
-			cell(renderUsageBar(row.SecondaryUsed, usageWidth, m.showRemaining(), row.Loading, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme), usageWidth) + " " +
-			cell(renderCreditCount(row.ResetCredits, m.settings.ColorTheme), creditWidth)
+			cell(primary, usageWidth) + " " + cell(secondary, usageWidth) + " " + cell(resets, creditWidth)
 		lines = append(lines, line)
 		if !m.settings.CompactMode {
 			lines = append(lines, "")
@@ -895,13 +1185,21 @@ func (m tuiModel) renderCompactList(width, height int) string {
 		if i == m.cursor {
 			marker, nameStyle = selectedRowVisual(m.tabRowFocused)
 		}
-		meta := tuiMutedStyle.Render(strings.ToUpper(row.Provider) + " · " + strings.ToUpper(row.Plan))
+		metaText := strings.ToUpper(row.Provider) + " · " + strings.ToUpper(row.Plan)
+		if row.Stale || row.ResetsStale {
+			metaText += " · STALE"
+		}
+		meta := tuiMutedStyle.Render(metaText)
 		visibleName := ansi.Truncate(row.Name, max(8, width-lipgloss.Width(meta)-6), "…")
 		gap := max(1, width-2-lipgloss.Width(visibleName)-lipgloss.Width(meta))
 		lines = append(lines, marker+nameStyle.Render(visibleName)+strings.Repeat(" ", gap)+meta)
+		if row.AuthRequired {
+			lines = append(lines, "  "+tuiErrorStyle.Render("Sign in required. Open Accounts to reconnect."))
+			continue
+		}
 		barWidth := max(12, width-13)
-		lines = append(lines, "  "+tuiMutedStyle.Render("5H  ")+renderUsageBar(row.PrimaryUsed, barWidth, m.showRemaining(), row.Loading, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
-		lines = append(lines, "  "+tuiMutedStyle.Render("WK  ")+renderUsageBar(row.SecondaryUsed, barWidth, m.showRemaining(), row.Loading, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
+		lines = append(lines, "  "+tuiMutedStyle.Render("5H  ")+renderUsageBar(row.PrimaryUsed, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
+		lines = append(lines, "  "+tuiMutedStyle.Render("WK  ")+renderUsageBar(row.SecondaryUsed, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
 		if !m.settings.CompactMode {
 			lines = append(lines, "")
 		}
@@ -915,12 +1213,23 @@ func (m tuiModel) renderDetails(width int) string {
 	}
 	row := m.rows[m.cursor]
 	labelStyle := lipgloss.NewStyle().Foreground(mutedColor).Width(9)
-	nameLine := tuiTitleStyle.Render(row.Name) + "  " + tuiMutedStyle.Render(row.Email+" · "+row.Provider+" · "+row.Plan)
+	name := tuiTitleStyle.Render(row.Name)
+	if row.Stale || row.ResetsStale {
+		name += "  " + lipgloss.NewStyle().Bold(true).Foreground(amberColor).Render("(Stale)")
+	}
+	nameLine := name + "  " + tuiMutedStyle.Render(row.Email+" · "+row.Provider+" · "+row.Plan)
+	if row.AuthRequired {
+		return tuiBorderStyle.Width(max(20, width-4)).Render(nameLine + "\n" + tuiErrorStyle.Render("Sign in required. Open Accounts and press a to reconnect."))
+	}
+	resets := row.ResetCredits
+	if row.ResetsStale {
+		resets += " (stale)"
+	}
 	body := strings.Join([]string{
 		nameLine,
 		labelStyle.Render("5 hour") + ansi.Truncate(row.Primary, max(16, width-15), "…"),
 		labelStyle.Render("Weekly") + ansi.Truncate(row.Secondary, max(16, width-15), "…"),
-		labelStyle.Render("Resets") + ansi.Truncate(row.ResetCredits, max(16, width-15), "…"),
+		labelStyle.Render("Resets") + ansi.Truncate(resets, max(16, width-15), "…"),
 	}, "\n")
 	return tuiBorderStyle.Width(max(20, width-4)).Render(body)
 }
@@ -1148,6 +1457,9 @@ func (m tuiModel) renderHelp(width int) string {
 }
 
 func (m tuiModel) renderFooter(width int) string {
+	if m.authActive {
+		return "\n" + tuiMutedStyle.Render(ansi.Truncate("Complete sign in in your browser   esc cancel", width, "…"))
+	}
 	help := "↑/↓ navigate   q quit   tab focuses tabs   r refresh   ? help"
 	switch m.tab {
 	case resetsTab:
@@ -1157,7 +1469,7 @@ func (m tuiModel) renderFooter(width int) string {
 			help = "↑/↓ account   q quit   enter/→ open   tab focuses tabs   ? help"
 		}
 	case accountsTab:
-		help = "↑/↓ navigate   q quit   a add   e rename   d remove   ? help"
+		help = "↑/↓ navigate   q quit   a add   r reauthenticate   e rename   d remove   ? help"
 	case settingsTab:
 		help = "↑/↓ setting   q quit   ←/→ change   tab focuses tabs   ? help"
 	}
@@ -1181,13 +1493,16 @@ func selectedRowVisual(tabFocused bool) (string, lipgloss.Style) {
 	return markerStyle.Render("› "), lipgloss.NewStyle().Foreground(color).Bold(true)
 }
 
-func renderUsageBar(used *float64, width int, showRemaining, loading bool, barFill, percentagePosition, colorTheme string) string {
+func renderUsageBar(used *float64, width int, showRemaining, loading, authRequired, stale bool, barFill, percentagePosition, colorTheme string) string {
 	if loading {
 		skeleton := strings.Repeat("·", max(3, width-5))
 		if percentagePosition == "left" {
 			return tuiMutedStyle.Render("…  " + skeleton)
 		}
 		return tuiMutedStyle.Render(skeleton + "  …")
+	}
+	if authRequired {
+		return tuiErrorStyle.Render(cell("sign in required", width))
 	}
 	if used == nil {
 		return tuiMutedStyle.Render(cell("n/a", width))
@@ -1203,7 +1518,11 @@ func renderUsageBar(used *float64, width int, showRemaining, loading bool, barFi
 	if displayValue > 0 && filled == 0 {
 		filled = 1
 	}
-	barStyle := lipgloss.NewStyle().Foreground(usageLipglossColor(usedValue, colorTheme))
+	barColor := usageLipglossColor(usedValue, colorTheme)
+	if stale {
+		barColor = semanticPaletteFor(colorTheme).warning
+	}
+	barStyle := lipgloss.NewStyle().Foreground(barColor)
 	trackStyle := lipgloss.NewStyle().Foreground(dimTrackColor)
 	filledBar := barStyle.Render(strings.Repeat("━", filled))
 	emptyTrack := trackStyle.Render(strings.Repeat("─", trackWidth-filled))
@@ -1246,7 +1565,7 @@ func usageLipglossColor(used float64, theme string) lipgloss.TerminalColor {
 	}
 }
 
-func renderCreditCount(summary, theme string) string {
+func renderCreditCount(summary string, stale bool, theme string) string {
 	palette := semanticPaletteFor(theme)
 	countText, _, _ := strings.Cut(summary, ",")
 	count, err := strconv.Atoi(strings.TrimSpace(countText))
@@ -1257,6 +1576,9 @@ func renderCreditCount(summary, theme string) string {
 		return tuiMutedStyle.Render(summary)
 	}
 	style := lipgloss.NewStyle().Foreground(palette.good).Bold(true)
+	if stale {
+		style = style.Foreground(palette.warning)
+	}
 	if count == 0 {
 		style = style.Foreground(palette.bad)
 	}

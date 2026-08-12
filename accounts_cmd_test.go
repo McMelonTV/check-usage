@@ -44,3 +44,9 @@ func TestShouldUpsertMatchedAccount_PlanMismatchAfterRecheckSkipsUpsert(t *testi
 		t.Fatalf("unexpected reason: %q", reason)
 	}
 }
+
+func TestReauthRequiresAnAccountTarget(t *testing.T) {
+	if code := runAccountsReauth(nil); code != 2 {
+		t.Fatalf("runAccountsReauth() = %d, want 2", code)
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -9,9 +10,11 @@ import (
 	"github.com/McMelonTV/codex-usage/codexapi"
 )
 
+var errMissingCredentials = errors.New("missing access/refresh token")
+
 func ensureFreshTokens(acc storedAccount, client *http.Client) (storedAccount, bool, error) {
 	if acc.AuthData.AccessToken == nil || acc.AuthData.RefreshToken == nil {
-		return acc, false, fmt.Errorf("missing access/refresh token")
+		return acc, false, errMissingCredentials
 	}
 	credentials := codexapi.Credentials{AccessToken: *acc.AuthData.AccessToken, RefreshToken: *acc.AuthData.RefreshToken}
 	if acc.AuthData.IDToken != nil {
@@ -33,6 +36,10 @@ func ensureFreshTokens(acc storedAccount, client *http.Client) (storedAccount, b
 		acc.AuthData.IDToken = strPtr(updated.IDToken)
 	}
 	return acc, true, nil
+}
+
+func authenticationRequired(err error) bool {
+	return errors.Is(err, errMissingCredentials) || codexapi.IsAuthenticationError(err)
 }
 
 func fetchUsage(acc storedAccount, client *http.Client) (*rateLimitStatusPayload, error) {

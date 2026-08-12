@@ -1,12 +1,20 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+type usageRoundTripper func(*http.Request) (*http.Response, error)
+
+func (fn usageRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestUsageCacheUsesOneFilePerAccount(t *testing.T) {
 	cacheRoot := t.TempDir()
@@ -77,6 +85,18 @@ func TestCachedUsageRowsRendersPersistedSnapshot(t *testing.T) {
 	}
 }
 
+func TestCachedFallbackUsageRowIsMarkedStale(t *testing.T) {
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	account := storedAccount{ID: "one", Name: "Personal", Provider: "OpenAI", AuthData: authData{Type: "chatgpt"}}
+	row := cachedOrUnavailableUsageRow(account, usageCacheEntry{
+		RateLimit: &rateLimitDetails{PrimaryWindow: &rateLimitWindow{UsedPercent: 25}},
+		FetchedAt: now.Add(-time.Minute).Unix(),
+	}, now)
+	if !row.Stale || row.PrimaryUsed == nil || *row.PrimaryUsed != 25 {
+		t.Fatalf("cached fallback row = %#v", row)
+	}
+}
+
 func TestNewTUIModelBootstrapsFromCacheBeforeNetworkInit(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "accounts.json")
@@ -121,5 +141,39 @@ func TestResetCachePreservesZeroAvailableAcrossDiskRoundTrip(t *testing.T) {
 	cached := resetPayloadCache(map[string]usageCacheEntry{"one": entry})
 	if cached["one"] == nil || cached["one"].AvailableCount != 0 {
 		t.Fatalf("zero available resets were not cached: %#v", cached)
+	}
+}
+
+func TestCollectUsageRowsDoesNotShowCachedQuotaWhenAuthenticationExpires(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	accountsPath := filepath.Join(t.TempDir(), "accounts.json")
+	expiredToken := "header.eyJleHAiOjF9.signature"
+	store := &accountsStore{Accounts: []storedAccount{{
+		ID:       "one",
+		Name:     "Personal",
+		Provider: "OpenAI",
+		AuthData: authData{Type: "chatgpt", AccessToken: &expiredToken, RefreshToken: strPtr("expired-refresh-token")},
+	}}}
+	if err := saveAccounts(accountsPath, store); err != nil {
+		t.Fatalf("save accounts: %v", err)
+	}
+	if err := saveAccountUsageCache("one", usageCacheEntry{RateLimit: &rateLimitDetails{PrimaryWindow: &rateLimitWindow{UsedPercent: 0}}, FetchedAt: time.Now().Unix()}); err != nil {
+		t.Fatalf("save cache: %v", err)
+	}
+	client := &http.Client{Transport: usageRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Status:     "400 Bad Request",
+			Body:       io.NopCloser(strings.NewReader(`{"error":"invalid_grant"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	rows, err := collectUsageRows(accountsPath, client)
+	if err != nil {
+		t.Fatalf("collect usage: %v", err)
+	}
+	if len(rows) != 1 || !rows[0].AuthRequired || rows[0].Primary != "sign in required" || rows[0].PrimaryUsed != nil {
+		t.Fatalf("expired authentication row = %#v", rows)
 	}
 }

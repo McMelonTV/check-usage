@@ -225,10 +225,10 @@ func TestTUISettingsToggleUsageAndRefreshInterval(t *testing.T) {
 
 func TestUsageBarFillAndPercentagePlacementAreIndependent(t *testing.T) {
 	used := 40.0
-	leftFillRightPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, "left", "right", "default"))
-	rightFillRightPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, "right", "right", "default"))
-	leftFillLeftPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, "left", "left", "default"))
-	rightFillLeftPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, "right", "left", "default"))
+	leftFillRightPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, "left", "right", "default"))
+	rightFillRightPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, "right", "right", "default"))
+	leftFillLeftPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, "left", "left", "default"))
+	rightFillLeftPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, "right", "left", "default"))
 	if !strings.HasPrefix(leftFillRightPercentage, "━") || !strings.HasSuffix(leftFillRightPercentage, " 40%") {
 		t.Fatalf("left fill/right percentage bar = %q", leftFillRightPercentage)
 	}
@@ -240,6 +240,48 @@ func TestUsageBarFillAndPercentagePlacementAreIndependent(t *testing.T) {
 	}
 	if !strings.HasPrefix(rightFillLeftPercentage, " 40%") || !strings.HasSuffix(rightFillLeftPercentage, "━") {
 		t.Fatalf("right fill/left percentage bar = %q", rightFillLeftPercentage)
+	}
+}
+
+func TestUsageListLabelsStaleFallbackRows(t *testing.T) {
+	used := 25.0
+	m := tuiModel{
+		width:    110,
+		height:   24,
+		settings: defaultAppSettings(),
+		rows:     []usageRow{{Name: "Personal", Provider: "OpenAI", Plan: "free", PrimaryUsed: &used, SecondaryUsed: &used, Stale: true}},
+	}
+	if view := ansi.Strip(m.renderUsageTab(106, 22)); !strings.Contains(view, "(Stale)") {
+		t.Fatalf("stale usage row is not labeled:\n%s", view)
+	}
+}
+
+func TestUsageListShowsAuthenticationFailureOnce(t *testing.T) {
+	m := tuiModel{
+		width: 110, height: 24, settings: defaultAppSettings(),
+		rows: []usageRow{{Name: "Personal", Provider: "OpenAI", Plan: "free", AuthRequired: true}},
+	}
+	view := ansi.Strip(m.renderUsageTab(106, 22))
+	if count := strings.Count(view, "sign in required"); count != 1 {
+		t.Fatalf("authentication status appears %d times:\n%s", count, view)
+	}
+	if !strings.Contains(view, "Open Accounts and press a to reconnect.") {
+		t.Fatalf("authentication recovery instruction missing:\n%s", view)
+	}
+}
+
+func TestTUIMouseClickChangesTabAndSelectsUsageRow(t *testing.T) {
+	m := tuiModel{width: 100, height: 24, settings: defaultAppSettings(), rows: []usageRow{{Name: "One"}, {Name: "Two"}}}
+	updated, _ := m.Update(tea.MouseMsg{X: 12, Y: 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if m.tab != resetsTab {
+		t.Fatalf("mouse tab = %d, want resets", m.tab)
+	}
+	m.tab = usageTab
+	updated, _ = m.Update(tea.MouseMsg{X: 4, Y: 9, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if m.cursor != 1 {
+		t.Fatalf("mouse row = %d, want 1", m.cursor)
 	}
 }
 
@@ -357,6 +399,41 @@ func TestEveryTabFooterShowsQuitBinding(t *testing.T) {
 	m := tuiModel{tab: resetsTab, resetRowsFocused: true}
 	if footer := ansi.Strip(m.renderFooter(44)); !strings.Contains(footer, "q quit") {
 		t.Fatalf("focused reset footer hides quit binding: %s", footer)
+	}
+}
+
+func TestAccountsTabSupportsReauthentication(t *testing.T) {
+	m := tuiModel{tab: accountsTab, accounts: []storedAccount{{ID: "one", Name: "Personal"}}}
+	if footer := ansi.Strip(m.renderFooter(100)); !strings.Contains(footer, "r reauthenticate") {
+		t.Fatalf("accounts footer does not document reauthentication: %s", footer)
+	}
+	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(tuiModel)
+	if command == nil || !m.authActive || !m.authLoading || m.authReauthID != "one" {
+		t.Fatal("r did not start reauthentication")
+	}
+	if m.tab != accountsTab {
+		t.Fatalf("tab changed to %d", m.tab)
+	}
+}
+
+func TestTUIAuthenticationRendersDeviceCodeAndCancels(t *testing.T) {
+	m := tuiModel{width: 80, height: 24, authActive: true, authLoading: true, authVersion: 1}
+	updated, command := m.Update(authCodeLoadedMsg{code: &deviceUserCodeResponse{UserCode: "ABCD-EFGH"}, version: 1})
+	m = updated.(tuiModel)
+	if command == nil || !m.authLoading || m.authCode == nil {
+		t.Fatalf("authorization code state = %#v", m)
+	}
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"Add account", deviceAuthVerificationURL, "ABCD-EFGH", "Waiting for approval", "Esc cancels"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("authentication view missing %q:\n%s", want, view)
+		}
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(tuiModel)
+	if m.authActive || m.authVersion != 2 {
+		t.Fatalf("authentication was not cancelled: %#v", m)
 	}
 }
 

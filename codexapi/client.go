@@ -48,7 +48,7 @@ func IsAuthenticationError(err error) bool {
 	if !errors.As(err, &httpErr) {
 		return false
 	}
-	return httpErr.StatusCode == http.StatusUnauthorized ||
+	return httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden ||
 		(httpErr.Operation == "token refresh" && httpErr.StatusCode >= 400 && httpErr.StatusCode < 500)
 }
 

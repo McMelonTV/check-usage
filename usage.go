@@ -34,7 +34,6 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 			updated := account
 			tokenRefreshed := false
 			var cache *usageCacheEntry
-
 			switch normalizeAuthType(account.AuthData.Type) {
 			case "apikey":
 				row.Primary = "n/a"
@@ -43,7 +42,11 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 			case "chatgpt":
 				refreshedAcc, changed, refreshErr := ensureFreshTokens(account, client)
 				if refreshErr != nil {
-					row = cachedOrUnavailableUsageRow(account, previous, time.Now())
+					if authenticationRequired(refreshErr) {
+						row = authenticationRequiredUsageRow(account)
+					} else {
+						row = cachedOrUnavailableUsageRow(account, previous, time.Now())
+					}
 					results <- accountResult{Index: idx, Row: row, Updated: updated}
 					return
 				}
@@ -66,7 +69,11 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 				}()
 				requestWG.Wait()
 				if usageErr != nil {
-					row = cachedOrUnavailableUsageRow(account, previous, time.Now())
+					if authenticationRequired(usageErr) {
+						row = authenticationRequiredUsageRow(account)
+					} else {
+						row = cachedOrUnavailableUsageRow(account, previous, time.Now())
+					}
 					results <- accountResult{Index: idx, Row: row, Updated: updated, TokenRefreshed: tokenRefreshed}
 					return
 				}
@@ -85,6 +92,7 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 				if resetCreditsErr != nil {
 					if previous.ResetCredits != nil {
 						row.ResetCredits = resetCreditsSummary(previous.ResetCredits, now)
+						row.ResetsStale = true
 					} else {
 						row.ResetCredits = "unavailable"
 					}
@@ -186,9 +194,18 @@ func cachedUsageRows(accounts []storedAccount, cache map[string]usageCacheEntry,
 func cachedOrUnavailableUsageRow(account storedAccount, entry usageCacheEntry, now time.Time) usageRow {
 	if entry.FetchedAt > 0 {
 		rows, _ := cachedUsageRows([]storedAccount{account}, map[string]usageCacheEntry{account.ID: entry}, now)
-		return rows[0]
+		row := rows[0]
+		row.Stale = true
+		return row
 	}
 	row := baseUsageRow(account)
 	row.Primary, row.Secondary, row.ResetCredits = "n/a", "n/a", "n/a"
+	return row
+}
+
+func authenticationRequiredUsageRow(account storedAccount) usageRow {
+	row := baseUsageRow(account)
+	row.Primary, row.Secondary, row.ResetCredits = "sign in required", "sign in required", "sign in required"
+	row.AuthRequired = true
 	return row
 }
