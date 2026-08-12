@@ -235,10 +235,10 @@ func TestUsageBarFillAndPercentagePlacementAreIndependent(t *testing.T) {
 	if !strings.HasPrefix(rightFillRightPercentage, "─") || !strings.HasSuffix(rightFillRightPercentage, " 40%") {
 		t.Fatalf("right fill/right percentage bar = %q", rightFillRightPercentage)
 	}
-	if !strings.HasPrefix(leftFillLeftPercentage, " 40%") || !strings.HasSuffix(leftFillLeftPercentage, "─") {
+	if !strings.HasPrefix(leftFillLeftPercentage, "40% ") || !strings.HasSuffix(leftFillLeftPercentage, "─") {
 		t.Fatalf("left fill/left percentage bar = %q", leftFillLeftPercentage)
 	}
-	if !strings.HasPrefix(rightFillLeftPercentage, " 40%") || !strings.HasSuffix(rightFillLeftPercentage, "━") {
+	if !strings.HasPrefix(rightFillLeftPercentage, "40% ") || !strings.HasSuffix(rightFillLeftPercentage, "━") {
 		t.Fatalf("right fill/left percentage bar = %q", rightFillLeftPercentage)
 	}
 }

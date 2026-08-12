@@ -1674,7 +1674,7 @@ func renderUsageBar(used *float64, width int, showRemaining, loading, authRequir
 	if showRemaining {
 		displayValue = 100 - usedValue
 	}
-	percentage := fmt.Sprintf("%3.0f%%", displayValue)
+	percentage := fmt.Sprintf("%.0f%%", displayValue)
 	trackWidth := max(3, width-lipgloss.Width(percentage)-1)
 	filled := int((displayValue/100)*float64(trackWidth) + 0.5)
 	if displayValue > 0 && filled == 0 {
