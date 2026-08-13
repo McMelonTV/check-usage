@@ -28,11 +28,12 @@ Sign in to your first account:
 ./check-usage accounts login --provider codex --name "My Account"
 ```
 
-The account provider is always explicit. Add OpenCode or DeepSeek with an API key:
+The account provider is always explicit. Add OpenCode, DeepSeek, or CrofAI with an API key:
 
 ```bash
 ./check-usage accounts add --provider opencode-go --api-key-env OPENCODE_API_KEY
 ./check-usage accounts add --provider deepseek --api-key-env DEEPSEEK_API_KEY
+./check-usage accounts add --provider crof --api-key-env CROF_API_KEY
 ```
 
 Then open the interactive usage dashboard:
@@ -77,7 +78,7 @@ An account can be identified by its name, email, or ID. Add `--show-used` to inc
 
 ```text
 check-usage accounts list
-check-usage accounts add --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]
+check-usage accounts add --provider opencode-go|deepseek|crof (--api-key key|--api-key-env name) [--name name]
 check-usage accounts login --provider codex [--name name] [--no-browser] [--auth-flow device|browser]
 check-usage accounts reauth [--api-key key|--api-key-env name] <account-name-email-or-id>
 check-usage accounts remove <id-or-name>

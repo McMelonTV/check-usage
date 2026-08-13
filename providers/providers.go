@@ -15,6 +15,7 @@ const (
 	Codex      = "codex"
 	OpenCodeGo = "opencode-go"
 	DeepSeek   = "deepseek"
+	Crof       = "crof"
 )
 
 type CredentialMode string
@@ -36,6 +37,7 @@ var definitions = []Definition{
 	{ID: Codex, Name: "Codex", Credentials: Device, SupportsResetCredits: true},
 	{ID: OpenCodeGo, Name: "OpenCode", Plan: "Go", Credentials: APIKey},
 	{ID: DeepSeek, Name: "DeepSeek", Credentials: APIKey},
+	{ID: Crof, Name: "CrofAI", Credentials: APIKey},
 }
 
 type MetricKind string
@@ -106,6 +108,8 @@ func FetchAPIKeyUsage(ctx context.Context, client *http.Client, providerID, key,
 		return fetchOpenCodeGo(ctx, client, key, userAgent)
 	case DeepSeek:
 		return fetchDeepSeek(ctx, client, key, userAgent)
+	case Crof:
+		return fetchCrof(ctx, client, key, userAgent)
 	default:
 		return Usage{}, fmt.Errorf("provider %q does not support API-key usage", providerID)
 	}
@@ -189,6 +193,23 @@ func fetchDeepSeek(ctx context.Context, client *http.Client, key, userAgent stri
 		plan = "no balance reported"
 	}
 	return Usage{Plan: plan}, nil
+}
+
+func fetchCrof(ctx context.Context, client *http.Client, key, userAgent string) (Usage, error) {
+	req, err := providerRequest(ctx, "https://crof.ai/usage_api/", key, userAgent)
+	if err != nil {
+		return Usage{}, err
+	}
+	var payload struct {
+		Credits *float64 `json:"credits"`
+	}
+	if err := doJSON(client, req, "CrofAI usage request", &payload); err != nil {
+		return Usage{}, err
+	}
+	if payload.Credits == nil {
+		return Usage{}, fmt.Errorf("CrofAI usage response is missing required fields")
+	}
+	return Usage{Plan: fmt.Sprintf("USD %.2f", *payload.Credits)}, nil
 }
 
 func providerRequest(ctx context.Context, endpoint, key, userAgent string) (*http.Request, error) {

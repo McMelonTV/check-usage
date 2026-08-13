@@ -54,7 +54,7 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 | `accounts.list` | `{}` | Public account array |
 | `accounts.rename` | `{"account":"id/name/email","new_name":"..."}` | Mutation and public account |
 | `accounts.remove` | `{"account":"id/name/email"}` | Mutation and removed public account |
-| `accounts.api_key.save` | `{"account":"optional id/name","provider":"opencode-go/deepseek","api_key":"...","name":"optional"}` | Creates or updates an API-key account and returns public metadata |
+| `accounts.api_key.save` | `{"account":"optional id/name","provider":"opencode-go/deepseek/crof","api_key":"...","name":"optional"}` | Creates or updates an API-key account and returns public metadata |
 | `auth.device.begin` | `{"provider":"codex"}` | Session ID, user code, verification URL, and polling interval |
 | `auth.device.poll` | `{"provider":"codex","session_id":"...","user_code":"...","name":"optional"}` | `pending`, or `complete` with the persisted public account |
 | `usage.get` | `{"account":"optional","refresh":true}` | One result per selected account with typed provider metrics; omitting `account` selects all |

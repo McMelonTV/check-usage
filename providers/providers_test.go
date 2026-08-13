@@ -65,6 +65,25 @@ func TestUnauthorizedIsCredentialError(t *testing.T) {
 	}
 }
 
+func TestCrofReportsUSDCredits(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return response(http.StatusOK, `{"credits":1.2}`), nil
+	})}
+	usage, err := FetchAPIKeyUsage(t.Context(), client, Crof, "key", "test")
+	if err != nil || usage.Plan != "USD 1.20" || len(usage.Metrics) != 0 {
+		t.Fatalf("usage = %#v, error = %v", usage, err)
+	}
+}
+
+func TestCrofRequiresCreditsField(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return response(http.StatusOK, `{}`), nil
+	})}
+	if _, err := FetchAPIKeyUsage(t.Context(), client, Crof, "key", "test"); err == nil {
+		t.Fatal("incomplete usage response was accepted")
+	}
+}
+
 func response(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }

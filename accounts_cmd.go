@@ -40,12 +40,12 @@ func runAccountsCommand(args []string) int {
 }
 
 func accountProviderFlag(fs *flag.FlagSet) *string {
-	return fs.String("provider", "", "provider: codex, opencode-go, or deepseek")
+	return fs.String("provider", "", "provider: codex, opencode-go, deepseek, or crof")
 }
 
 func selectedProvider(id string) (providerDefinition, error) {
 	if strings.TrimSpace(id) == "" {
-		return providerDefinition{}, fmt.Errorf("--provider is required; choose: codex, opencode-go, deepseek")
+		return providerDefinition{}, fmt.Errorf("--provider is required; choose: codex, opencode-go, deepseek, crof")
 	}
 	return providerFor(id)
 }
@@ -562,7 +562,7 @@ func findAccountForRemoval(accounts []storedAccount, target string) (int, error)
 func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  check-usage accounts list [--accounts-file path]")
-	fmt.Println("  check-usage accounts add [--accounts-file path] --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]")
+	fmt.Println("  check-usage accounts add [--accounts-file path] --provider opencode-go|deepseek|crof (--api-key key|--api-key-env name) [--name name]")
 	fmt.Println("  check-usage accounts login [--accounts-file path] --provider codex [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
 	fmt.Println("  check-usage accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
 	fmt.Println("  check-usage accounts remove [--accounts-file path] <id-or-name>")

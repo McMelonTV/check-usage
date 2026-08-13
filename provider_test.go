@@ -33,6 +33,22 @@ func TestOpenCodeMetricFormatsResetTime(t *testing.T) {
 	}
 }
 
+func TestFetchCrofUsage(t *testing.T) {
+	client := &http.Client{Transport: usageRoundTripper(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "https://crof.ai/usage_api/" {
+			t.Fatalf("URL = %s", request.URL)
+		}
+		if request.Header.Get("Authorization") != "Bearer key" {
+			t.Fatalf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"credits":1.2}`))}, nil
+	})}
+	result, err := fetchProviderUsage(t.Context(), client, storedAccount{Provider: providerCrof, AuthData: authData{APIKey: strPtr("key")}})
+	if err != nil || result.Usage.Plan != "USD 1.20" || len(result.Usage.Metrics) != 0 || !result.AccountChanged || stringValue(result.Account.PlanType) != "USD 1.20" {
+		t.Fatalf("result = %#v, %v", result, err)
+	}
+}
+
 func TestFetchDeepSeekUsage(t *testing.T) {
 	client := &http.Client{Transport: usageRoundTripper(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"is_available":false,"balance_infos":[{"currency":"CNY","total_balance":"100.00"}]}`))}, nil

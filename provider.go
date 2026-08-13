@@ -12,6 +12,7 @@ const (
 	providerCodex      = providers.Codex
 	providerOpenCodeGo = providers.OpenCodeGo
 	providerDeepSeek   = providers.DeepSeek
+	providerCrof       = providers.Crof
 )
 
 type credentialMode = providers.CredentialMode
@@ -89,6 +90,8 @@ func emptyProviderMetrics(providerID string) []providerMetric {
 	case providerOpenCodeGo:
 		return []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION"}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}, {Kind: percentageMetric, Slot: monthlySlot, Label: "MONTHLY"}}
 	case providerDeepSeek:
+		return nil
+	case providerCrof:
 		return nil
 	default:
 		return nil
