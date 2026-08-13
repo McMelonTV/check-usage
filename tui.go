@@ -129,6 +129,7 @@ type tuiModel struct {
 
 	editingName  bool
 	nameInput    string
+	nameCursor   int
 	timerVersion int
 
 	authActive            bool
@@ -285,6 +286,32 @@ func (m tuiModel) loadDashboard() tea.Cmd {
 	}
 }
 
+// applyLocalReload rebuilds the account list from the saved store and usage
+// cache without any network traffic, so renames, removals, and new accounts
+// appear immediately while the background refresh is still in flight.
+func (m *tuiModel) applyLocalReload() {
+	store, err := loadAccountsOrEmpty(m.accountsPath)
+	if err != nil {
+		return
+	}
+	cache, err := loadUsageCache(store.Accounts)
+	if err != nil {
+		return
+	}
+	accounts := append([]storedAccount(nil), store.Accounts...)
+	sort.SliceStable(accounts, func(i, j int) bool {
+		return strings.ToLower(accounts[i].Name) < strings.ToLower(accounts[j].Name)
+	})
+	rows, newest := cachedUsageRows(store.Accounts, cache, time.Now())
+	m.accounts = accounts
+	m.rows = rows
+	m.resetCache = resetPayloadCache(cache)
+	if !newest.IsZero() {
+		m.lastUpdated = newest
+	}
+	m.clampCursor()
+}
+
 func (m tuiModel) loadSelectedResets() tea.Cmd {
 	account, ok := m.selectedAccount()
 	if !ok || m.resetLoader == nil {
@@ -385,6 +412,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = ""
 			return m, nil
 		}
+		m.applyLocalReload()
 		m.notice = msg.action
 		m.removeArmed = ""
 		m.loading = true
@@ -426,6 +454,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clearAuthentication()
 		m.notice = "Authentication finished"
+		m.applyLocalReload()
 		m.loading = true
 		m.timerVersion++
 		return m, tea.Batch(m.loadDashboard(), spinnerTick())
@@ -544,6 +573,7 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 			if account, ok := m.selectedRowAccount(); ok {
 				m.editingName = true
 				m.nameInput = account.Name
+				m.nameCursor = len([]rune(account.Name))
 				m.notice = ""
 			}
 		case "d":
@@ -1080,11 +1110,13 @@ func (m tuiModel) updateNameEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	runes := []rune(m.nameInput)
+	clampCursor := func(pos int) int { return max(0, min(len(runes), pos)) }
 	switch key.String() {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
-		m.editingName, m.nameInput = false, ""
+		m.editingName, m.nameInput, m.nameCursor = false, "", 0
 	case "enter":
 		name := strings.TrimSpace(m.nameInput)
 		account, selected := m.selectedRowAccount()
@@ -1092,16 +1124,34 @@ func (m tuiModel) updateNameEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Account name cannot be empty"
 			return m, nil
 		}
-		m.editingName = false
+		m.editingName, m.nameInput, m.nameCursor = false, "", 0
 		return m, renameAccountCmd(m.accountsPath, account.ID, name)
+	case "left":
+		m.nameCursor = max(0, m.nameCursor-1)
+	case "right":
+		m.nameCursor = clampCursor(m.nameCursor + 1)
+	case "home":
+		m.nameCursor = 0
+	case "end":
+		m.nameCursor = len(runes)
 	case "backspace":
-		runes := []rune(m.nameInput)
-		if len(runes) > 0 {
-			m.nameInput = string(runes[:len(runes)-1])
+		if m.nameCursor > 0 {
+			m.nameInput = string(runes[:m.nameCursor-1]) + string(runes[m.nameCursor:])
+			m.nameCursor--
+		}
+	case "delete":
+		if m.nameCursor < len(runes) {
+			m.nameInput = string(runes[:m.nameCursor]) + string(runes[m.nameCursor+1:])
 		}
 	default:
-		if key.Type == tea.KeyRunes {
-			m.nameInput += string(key.Runes)
+		insert := key.Runes
+		if key.Type == tea.KeySpace {
+			insert = []rune(" ")
+		}
+		if len(insert) > 0 {
+			runes = []rune(m.nameInput)
+			m.nameInput = string(runes[:m.nameCursor]) + string(insert) + string(runes[m.nameCursor:])
+			m.nameCursor += len(insert)
 		}
 	}
 	return m, nil
@@ -1462,7 +1512,13 @@ func (m tuiModel) renderUsageTab(width, height int) string {
 }
 
 func (m tuiModel) renderNameEditor(width int) string {
-	return tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render("Rename account") + "\n\n" + tuiAccentStyle.Render("> ") + m.nameInput + "█\n\n" + tuiMutedStyle.Render("Enter save · Esc cancel"))
+	runes := []rune(m.nameInput)
+	pos := max(0, min(len(runes), m.nameCursor))
+	body := tuiAccentStyle.Render("> ") + string(runes[:pos]) + "█" + string(runes[pos:])
+	if m.notice != "" {
+		body += "\n\n" + noticeStyle(m.notice).Render(ansi.Truncate(m.notice, max(8, width-6), "…"))
+	}
+	return tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render("Rename account") + "\n\n" + body + "\n\n" + tuiMutedStyle.Render("Enter save · Esc cancel"))
 }
 
 func (m tuiModel) renderEmpty(width int, title, body string) string {

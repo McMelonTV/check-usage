@@ -146,6 +146,92 @@ func TestUsageTabRenameTargetsRowAccountNotIndex(t *testing.T) {
 	}
 }
 
+func TestRenameUpdatesDisplayImmediately(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "accounts.json")
+	store := &accountsStore{Accounts: []storedAccount{{ID: "one", Name: "Old", Provider: providerCodex, AuthData: authData{Type: "api_key", APIKey: strPtr("k")}}}}
+	if err := saveAccounts(path, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveAccountUsageCache("one", usageCacheEntry{FetchedAt: time.Now().Unix(), ProviderUsage: &providerUsage{Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	m := newTUIModel(path, nil)
+	if len(m.rows) != 1 || m.rows[0].Name != "Old" {
+		t.Fatalf("initial rows: %#v", m.rows)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = updated.(tuiModel)
+	m.nameInput, m.nameCursor = "New", 3
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(tuiModel)
+	if cmd == nil {
+		t.Fatal("no rename command")
+	}
+	msg := cmd().(storeSavedMsg)
+	updated, _ = m.Update(msg)
+	m = updated.(tuiModel)
+	if m.rows[0].Name != "New" {
+		t.Fatalf("rows did not update immediately after rename: %#v", m.rows)
+	}
+	if m.notice != "Account renamed" {
+		t.Fatalf("notice = %q", m.notice)
+	}
+}
+
+func TestNameEditorSupportsCursorMovementAndSpace(t *testing.T) {
+	m := tuiModel{tab: usageTab, editingName: true, nameInput: "MyName", nameCursor: 6}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(tuiModel)
+	if m.nameInput != "MyName " || m.nameCursor != 7 {
+		t.Fatalf("space insert = %q cursor %d", m.nameInput, m.nameCursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(tuiModel)
+	if m.nameCursor != 6 {
+		t.Fatalf("left cursor = %d", m.nameCursor)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	m = updated.(tuiModel)
+	if m.nameInput != "MyNameX " || m.nameCursor != 7 {
+		t.Fatalf("mid insert = %q cursor %d", m.nameInput, m.nameCursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(tuiModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(tuiModel)
+	if m.nameInput != "MyNaeX " || m.nameCursor != 4 {
+		t.Fatalf("backspace = %q cursor %d", m.nameInput, m.nameCursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	m = updated.(tuiModel)
+	if m.nameInput != "MyNaX " || m.nameCursor != 4 {
+		t.Fatalf("delete = %q cursor %d", m.nameInput, m.nameCursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = updated.(tuiModel)
+	if m.nameCursor != 0 {
+		t.Fatalf("home cursor = %d", m.nameCursor)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	m = updated.(tuiModel)
+	if m.nameCursor != len([]rune(m.nameInput)) {
+		t.Fatalf("end cursor = %d", m.nameCursor)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(tuiModel)
+	if m.editingName || m.nameInput != "" || m.nameCursor != 0 {
+		t.Fatalf("esc did not reset editor: %#v", m)
+	}
+}
+
 func TestTUIUpDoesNotFocusTabsAndTabPreservesSelection(t *testing.T) {
 	m := tuiModel{tab: usageTab, cursor: 2, rows: []usageRow{{}, {}, {}}}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
