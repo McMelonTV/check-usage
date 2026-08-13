@@ -16,6 +16,8 @@ import (
 const (
 	tuiMaxWidth     = 120
 	tuiWideAt       = 98
+	tuiMinWidth     = 102
+	tuiMinHeight    = 12
 	tuiMinListLen   = 1
 	tuiSettingsRows = 9
 )
@@ -987,7 +989,8 @@ func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				}
 				m.settingsCursor = index
 				contentWidth := tuiContentWidth(m.width)
-				valueWidth := lipgloss.Width(tuiAccentStyle.Render("‹ " + items[index].value + " ›"))
+				layout := settingsValueLayoutFor(items[index].label, items[index].value, contentWidth)
+				valueWidth := lipgloss.Width(tuiAccentStyle.Render(layout.value))
 				valueMid := contentWidth - valueWidth/2
 				direction := "left"
 				if x >= valueMid {
@@ -1072,9 +1075,13 @@ func tuiContentWidth(width int) int {
 	}
 	contentWidth := min(tuiMaxWidth, max(20, width-4))
 	if width < 24 {
-		return max(10, width)
+		return max(4, width)
 	}
 	return contentWidth
+}
+
+func dialogWidth(width int) int {
+	return max(2, width-4)
 }
 
 func tuiContentOrigin(width int) int {
@@ -1321,11 +1328,11 @@ func (m tuiModel) View() string {
 	if height <= 0 {
 		height = 24
 	}
-	innerHeight := max(1, height-2)
-	contentWidth := min(tuiMaxWidth, max(20, width-4))
-	if width < 24 {
-		contentWidth = max(10, width)
+	if width < tuiMinWidth || height < tuiMinHeight {
+		return m.renderSizeHint(width, height)
 	}
+	innerHeight := max(1, height-2)
+	contentWidth := tuiContentWidth(width)
 
 	sections := []string{m.renderHeader(contentWidth)}
 	switch {
@@ -1358,8 +1365,15 @@ func (m tuiModel) View() string {
 	return "\n" + view + "\n"
 }
 
+func (m tuiModel) renderSizeHint(width, height int) string {
+	box := tuiBorderStyle.Width(dialogWidth(width)).Render(
+		tuiTitleStyle.Render("CHECK USAGE") + "\n\n" +
+			tuiMutedStyle.Render(fmt.Sprintf("Terminal too small.\nResize to at least %d×%d.", tuiMinWidth, tuiMinHeight)))
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+}
+
 func (m tuiModel) renderHeader(width int) string {
-	brand := tuiTitleStyle.Render("AI") + " " + tuiAccentStyle.Render("USAGE")
+	brand := ansi.Truncate(tuiTitleStyle.Render("AI")+" "+tuiAccentStyle.Render("USAGE"), max(4, width), "…")
 	status := ""
 	if m.loading {
 		status = tuiAccentStyle.Render(spinnerFrame(m.spinnerStep) + " refreshing")
@@ -1389,7 +1403,7 @@ func (m tuiModel) renderHeader(width int) string {
 }
 
 func (m tuiModel) renderLoading(width, height int) string {
-	message := tuiAccentStyle.Render(spinnerFrame(m.spinnerStep)) + "  " + ansi.Truncate("Fetching usage across your accounts…", max(8, width-4), "…")
+	message := tuiAccentStyle.Render(spinnerFrame(m.spinnerStep)) + "  " + ansi.Truncate("Fetching usage across your accounts…", max(2, width-4), "…")
 	space := max(2, min(8, height-8))
 	return strings.Repeat("\n", space/2) + lipgloss.PlaceHorizontal(width, lipgloss.Center, message) + strings.Repeat("\n", space-space/2)
 }
@@ -1416,7 +1430,7 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 			lines = append(lines, "", tuiErrorStyle.Render(m.authErr.Error()))
 		}
 		lines = append(lines, "", tuiMutedStyle.Render("Enter select · Esc cancel"))
-		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+strings.Join(lines, "\n"))
+		return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+strings.Join(lines, "\n"))
 	}
 	if m.authProviderUsesAPIKey() {
 		provider, _ := providerFor(m.authProviderID)
@@ -1445,16 +1459,16 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 		if m.authErr != nil {
 			body = tuiErrorStyle.Render(m.authErr.Error()) + "\n\n" + body
 		}
-		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+		return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
 	}
 	if m.authErr != nil {
 		body := tuiErrorStyle.Render("Authentication failed") + "\n" +
 			tuiMutedStyle.Render(ansi.Truncate(m.authErr.Error(), max(16, width-8), "…")) + "\n\n" +
 			tuiMutedStyle.Render("Press Esc to return to Accounts.")
-		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+		return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
 	}
 	if m.authCode == nil {
-		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+tuiAccentStyle.Render(spinnerFrame(m.spinnerStep))+"  Requesting authorization code…")
+		return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+tuiAccentStyle.Render(spinnerFrame(m.spinnerStep))+"  Requesting authorization code…")
 	}
 	status := tuiAccentStyle.Render(spinnerFrame(m.spinnerStep) + "  Waiting for approval…")
 	if m.authSaving {
@@ -1471,7 +1485,7 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 		status,
 		tuiMutedStyle.Render("Esc cancels"),
 	}, "\n")
-	return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+	return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
 }
 
 func apiKeyCursorVisible(spinnerStep int) bool {
@@ -1481,7 +1495,7 @@ func apiKeyCursorVisible(spinnerStep int) bool {
 func (m tuiModel) renderError(width int, err error) string {
 	title := tuiErrorStyle.Render("Couldn’t load usage")
 	body := tuiMutedStyle.Render(ansi.Truncate(err.Error(), max(16, width-8), "…"))
-	return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(title+"\n"+body+"\n\nPress r to try again.")
+	return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(title+"\n"+body+"\n\nPress r to try again.")
 }
 
 func (m tuiModel) renderRefreshWarning(width int, err error) string {
@@ -1518,11 +1532,11 @@ func (m tuiModel) renderNameEditor(width int) string {
 	if m.notice != "" {
 		body += "\n\n" + noticeStyle(m.notice).Render(ansi.Truncate(m.notice, max(8, width-6), "…"))
 	}
-	return tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render("Rename account") + "\n\n" + body + "\n\n" + tuiMutedStyle.Render("Enter save · Esc cancel"))
+	return tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render("Rename account") + "\n\n" + body + "\n\n" + tuiMutedStyle.Render("Enter save · Esc cancel"))
 }
 
 func (m tuiModel) renderEmpty(width int, title, body string) string {
-	return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n"+tuiMutedStyle.Render(body))
+	return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n"+tuiMutedStyle.Render(body))
 }
 
 func (m tuiModel) renderAccountList(width, height int) string {
@@ -1600,14 +1614,15 @@ func (m tuiModel) renderCompactList(width, height int) string {
 		if row.Stale || row.ResetsStale {
 			metaText += " · STALE"
 		}
+		metaText = ansi.Truncate(metaText, max(1, width-2-4), "…")
 		meta := tuiMutedStyle.Render(metaText)
-		visibleName := ansi.Truncate(row.Name, max(8, width-lipgloss.Width(meta)-6), "…")
-		gap := max(1, width-2-lipgloss.Width(visibleName)-lipgloss.Width(meta))
+		visibleName := ansi.Truncate(row.Name, max(1, width-2-lipgloss.Width(meta)), "…")
+		gap := max(0, width-2-lipgloss.Width(visibleName)-lipgloss.Width(meta))
 		lines = append(lines, marker+nameStyle.Render(visibleName)+strings.Repeat(" ", gap)+meta)
 		for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
 			lines = append(lines, m.renderCompactSlot(row, slot, width))
 		}
-		lines = append(lines, "  "+tuiMutedStyle.Render("RESETS  ")+m.renderResetSlot(row))
+		lines = append(lines, ansi.Truncate("  "+tuiMutedStyle.Render("RESETS  ")+m.renderResetSlot(row), width, "…"))
 		if !m.settings.CompactMode {
 			now := time.Now()
 			parts := make([]string, 0, 3)
@@ -1617,7 +1632,7 @@ func (m tuiModel) renderCompactList(width, height int) string {
 				}
 			}
 			if len(parts) > 0 {
-				lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(strings.Join(parts, " · "), max(10, width-2), "…")))
+				lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(strings.Join(parts, " · "), max(2, width-2), "…")))
 			} else {
 				lines = append(lines, "")
 			}
@@ -1662,8 +1677,9 @@ func resetSubtitleText(row usageRow, slot metricSlot, now time.Time) string {
 }
 
 func (m tuiModel) renderCompactSlot(row usageRow, slot metricSlot, width int) string {
-	label := tuiMutedStyle.Render(cell(strings.ToUpper(string(slot)), 8))
-	valueWidth := min(max(10, width-12), 30)
+	labelWidth := min(8, max(3, width-13))
+	label := tuiMutedStyle.Render(cell(strings.ToUpper(string(slot)), labelWidth))
+	valueWidth := min(30, max(3, width-2-labelWidth-2))
 	return "  " + label + "  " + m.renderUsageSlot(row, slot, valueWidth, true)
 }
 
@@ -1685,8 +1701,8 @@ func (m tuiModel) renderResetsTab(width, height int) string {
 	if len(m.resetAccounts()) == 0 {
 		return m.renderEmpty(width, "No reset-capable accounts", "Reset credits are available only for providers that support them.")
 	}
-	sidebarWidth := max(10, min(24, width/3))
-	mainWidth := max(8, width-sidebarWidth-2)
+	sidebarWidth := max(3, min(24, width/3))
+	mainWidth := max(4, width-sidebarWidth-2)
 	sidebar := lipgloss.NewStyle().Width(sidebarWidth).MaxWidth(sidebarWidth).Render(m.renderResetSidebar(sidebarWidth, height))
 	main := lipgloss.NewStyle().Width(mainWidth).MaxWidth(mainWidth).Render(m.renderResetMain(mainWidth, height))
 	paneHeight := max(lipgloss.Height(sidebar), lipgloss.Height(main))
@@ -1730,21 +1746,21 @@ func (m tuiModel) renderResetMain(width, height int) string {
 	}
 	lines := []string{tuiTitleStyle.Render(ansi.Truncate(account.Name, width, "…")), tuiMutedStyle.Render(ansi.Truncate(providerName(account.Provider), width, "…")), ""}
 	if m.resetLoading && m.resetPayload == nil {
-		lines = append(lines, tuiAccentStyle.Render(spinnerFrame(m.spinnerStep))+"  Loading reset credits…")
+		lines = append(lines, ansi.Truncate(tuiAccentStyle.Render(spinnerFrame(m.spinnerStep))+"  Loading reset credits…", width, "…"))
 		return strings.Join(lines, "\n")
 	}
 	if m.resetLoading {
-		lines = append(lines, tuiAccentStyle.Render(spinnerFrame(m.spinnerStep))+"  Refreshing cached resets…", "")
+		lines = append(lines, ansi.Truncate(tuiAccentStyle.Render(spinnerFrame(m.spinnerStep))+"  Refreshing cached resets…", width, "…"), "")
 	}
 	if m.resetErr != nil && m.resetPayload == nil {
-		lines = append(lines, tuiErrorStyle.Render("Couldn’t load reset credits"), tuiMutedStyle.Render(ansi.Truncate(m.resetErr.Error(), width, "…")))
+		lines = append(lines, ansi.Truncate(tuiErrorStyle.Render("Couldn’t load reset credits"), width, "…"), tuiMutedStyle.Render(ansi.Truncate(m.resetErr.Error(), width, "…")))
 		return strings.Join(lines, "\n")
 	}
 	if m.resetErr != nil {
-		lines = append(lines, tuiErrorStyle.Render("Refresh failed · showing cache"), "")
+		lines = append(lines, ansi.Truncate(tuiErrorStyle.Render("Refresh failed · showing cache"), width, "…"), "")
 	}
 	if m.resetPayload == nil {
-		lines = append(lines, tuiMutedStyle.Render("No cached resets."), tuiMutedStyle.Render("Press Enter or → to load."))
+		lines = append(lines, tuiMutedStyle.Render(ansi.Truncate("No cached resets.", width, "…")), tuiMutedStyle.Render(ansi.Truncate("Press Enter or → to load.", width, "…")))
 		return strings.Join(lines, "\n")
 	}
 	availableColor := semanticPaletteFor(m.settings.ColorTheme).good
@@ -1752,7 +1768,7 @@ func (m tuiModel) renderResetMain(width, height int) string {
 		availableColor = semanticPaletteFor(m.settings.ColorTheme).bad
 	}
 	available := lipgloss.NewStyle().Bold(true).Foreground(availableColor).Render(fmt.Sprintf("%d available", m.resetPayload.AvailableCount))
-	lines = append(lines, available+tuiMutedStyle.Render(fmt.Sprintf(" · %d earned", m.resetPayload.TotalEarnedCount)), "")
+	lines = append(lines, ansi.Truncate(available+tuiMutedStyle.Render(fmt.Sprintf(" · %d earned", m.resetPayload.TotalEarnedCount)), width, "…"), "")
 	credits := m.resetPayload.Credits
 	maxRows := max(1, (height-8)/3)
 	start, end := visibleRange(len(credits), m.creditCursor, maxRows)
@@ -1769,7 +1785,7 @@ func (m tuiModel) renderResetMain(width, height int) string {
 		lines = append(lines, tuiMutedStyle.Render(ansi.Truncate(timing, width-2, "…")), "")
 	}
 	if len(credits) == 0 {
-		lines = append(lines, tuiMutedStyle.Render("No reset credits found."))
+		lines = append(lines, ansi.Truncate(tuiMutedStyle.Render("No reset credits found."), width, "…"))
 	}
 	if m.notice != "" {
 		lines = append(lines, noticeStyle(m.notice).Render(ansi.Truncate(m.notice, width, "…")))
@@ -1825,6 +1841,19 @@ func (m tuiModel) settingsItems() []settingsItem {
 	}
 }
 
+type settingsValueLayout struct {
+	label, value string
+}
+
+func settingsValueLayoutFor(label, value string, width int) settingsValueLayout {
+	valueMax := max(1, width-2-lipgloss.Width(label))
+	if valueMax < 4 {
+		label = ansi.Truncate(label, max(1, width-6), "…")
+		valueMax = max(1, width-2-lipgloss.Width(label))
+	}
+	return settingsValueLayout{label: label, value: ansi.Truncate("‹ "+value+" ›", valueMax, "…")}
+}
+
 func (m tuiModel) renderSettingsTab(width, height int) string {
 	items := m.settingsItems()
 	maxRows := max(1, (height-8)/2)
@@ -1836,13 +1865,14 @@ func (m tuiModel) renderSettingsTab(width, height int) string {
 		if i == m.settingsCursor {
 			marker, labelStyle = selectedRowVisual(m.tabRowFocused)
 		}
-		value := tuiAccentStyle.Render("‹ " + item.value + " ›")
-		gap := max(1, width-2-lipgloss.Width(item.label)-lipgloss.Width(value))
-		lines = append(lines, marker+labelStyle.Render(item.label)+strings.Repeat(" ", gap)+value)
-		lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(item.description, width-2, "…")))
+		layout := settingsValueLayoutFor(item.label, item.value, width)
+		value := tuiAccentStyle.Render(layout.value)
+		gap := max(0, width-2-lipgloss.Width(layout.label)-lipgloss.Width(value))
+		lines = append(lines, marker+labelStyle.Render(layout.label)+strings.Repeat(" ", gap)+value)
+		lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(item.description, max(1, width-2), "…")))
 	}
 	if start > 0 || end < len(items) {
-		lines = append(lines, tuiMutedStyle.Render("  showing "+strconv.Itoa(start+1)+"–"+strconv.Itoa(end)+" of "+strconv.Itoa(len(items))))
+		lines = append(lines, ansi.Truncate(tuiMutedStyle.Render("  showing "+strconv.Itoa(start+1)+"–"+strconv.Itoa(end)+" of "+strconv.Itoa(len(items))), width, "…"))
 	}
 	if m.notice != "" {
 		lines = append(lines, noticeStyle(m.notice).Render(m.notice))
@@ -1866,7 +1896,7 @@ func (m tuiModel) renderHelp(width int) string {
 		key.Render("q") + "Quit",
 	}
 	title := tuiTitleStyle.Render("Keyboard shortcuts")
-	return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(title+"\n\n"+strings.Join(rows, "\n"))
+	return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(title+"\n\n"+strings.Join(rows, "\n"))
 }
 
 func (m tuiModel) renderFooter(width int) string {
@@ -1983,7 +2013,7 @@ func resetCountdownText(resetAt *int64, now time.Time) string {
 
 func renderUsageBar(used *float64, width int, showRemaining, loading, authRequired, stale bool, settings appSettings, resetAt *int64, now time.Time, includeReset bool) string {
 	if loading {
-		skeleton := strings.Repeat("·", max(3, width-5))
+		skeleton := strings.Repeat("·", max(0, width-5))
 		if barOrderStartsWithPercent(settings.BarOrder) {
 			return tuiMutedStyle.Render("…  " + skeleton)
 		}
@@ -2056,7 +2086,13 @@ func renderUsageBar(used *float64, width int, showRemaining, loading, authRequir
 			}
 		}
 	}
-	return strings.Join(parts, " ")
+	nonEmpty := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			nonEmpty = append(nonEmpty, part)
+		}
+	}
+	return strings.Join(nonEmpty, " ")
 }
 
 func renderBarTrack(displayValue float64, trackWidth int, barFill string, barStyle lipgloss.Style) string {

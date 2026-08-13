@@ -310,7 +310,7 @@ func TestTUIResetSidebarEnterSelectsAccountAndFocusesRows(t *testing.T) {
 
 func TestTUIResetSidebarDoesNotRenderSelectedLabel(t *testing.T) {
 	m := tuiModel{
-		tab: resetsTab, width: 80, height: 24,
+		tab: resetsTab, width: 110, height: 24,
 		accounts:       []storedAccount{{ID: "one", Name: "One", Provider: providerCodex}},
 		resetAccountID: "one",
 		resetPayload:   &resetCreditsPayload{},
@@ -321,7 +321,7 @@ func TestTUIResetSidebarDoesNotRenderSelectedLabel(t *testing.T) {
 }
 
 func TestTUIUsageLoadedPreservesRowsOnRefreshError(t *testing.T) {
-	m := tuiModel{rows: []usageRow{{Name: "Existing"}}, loading: true, initialized: true}
+	m := tuiModel{rows: []usageRow{{Name: "Existing"}}, loading: true, initialized: true, width: 110, height: 24}
 	updated, _ := m.Update(dashboardLoadedMsg{err: errors.New("offline"), at: time.Now()})
 	m = updated.(tuiModel)
 
@@ -706,7 +706,7 @@ func TestResetConsumptionRequiresSecondConfirmationWithoutMutation(t *testing.T)
 }
 
 func TestTUIHelpDoesNotAdvertiseScriptCommands(t *testing.T) {
-	m := tuiModel{showHelp: true, width: 90, height: 24}
+	m := tuiModel{showHelp: true, width: 110, height: 24}
 	view := m.View()
 	if strings.Contains(view, "scriptable") || strings.Contains(view, "accounts login") {
 		t.Fatalf("help still contains script command information:\n%s", view)
@@ -757,7 +757,7 @@ func TestUsageTabSupportsReauthentication(t *testing.T) {
 }
 
 func TestTUIAuthenticationRendersDeviceCodeAndCancels(t *testing.T) {
-	m := tuiModel{width: 80, height: 24, authActive: true, authLoading: true, authVersion: 1}
+	m := tuiModel{width: 110, height: 24, authActive: true, authLoading: true, authVersion: 1}
 	updated, command := m.Update(authCodeLoadedMsg{code: &deviceUserCodeResponse{UserCode: "ABCD-EFGH"}, version: 1})
 	m = updated.(tuiModel)
 	if command == nil || !m.authLoading || m.authCode == nil {
@@ -785,8 +785,29 @@ func TestTUIAPIKeyInputAcceptsPastedRunes(t *testing.T) {
 	}
 }
 
+func TestTUISizeHintRendersWhenTerminalTooSmall(t *testing.T) {
+	for _, width := range []int{20, 60, 101} {
+		m := tuiModel{width: width, height: 11, settings: defaultAppSettings(), rows: []usageRow{{Name: "One"}}}
+		view := m.View()
+		if !strings.Contains(view, "Terminal too") || !strings.Contains(view, "102×12") {
+			t.Fatalf("width %d, height 11: missing size hint:\n%s", width, view)
+		}
+		for _, line := range strings.Split(view, "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Fatalf("width %d: hint line width = %d: %q", width, got, line)
+			}
+		}
+	}
+
+	m := tuiModel{width: tuiMinWidth, height: tuiMinHeight, settings: defaultAppSettings()}
+	view := m.View()
+	if strings.Contains(view, "Terminal too small") {
+		t.Fatalf("minimum terminal size still shows the size hint:\n%s", view)
+	}
+}
+
 func TestTUIViewHasOneRowShellMargin(t *testing.T) {
-	m := tuiModel{width: 80, height: 24, settings: defaultAppSettings()}
+	m := tuiModel{width: 110, height: 24, settings: defaultAppSettings()}
 	view := m.View()
 	if !strings.HasPrefix(view, "\n") || !strings.HasSuffix(view, "\n") {
 		t.Fatalf("View() does not have a one-row vertical shell margin: %q", view)
@@ -795,7 +816,7 @@ func TestTUIViewHasOneRowShellMargin(t *testing.T) {
 
 func TestTUIViewFitsCommonTerminalWidths(t *testing.T) {
 	used := 99.0
-	for _, width := range []int{44, 64, 100} {
+	for _, width := range []int{20, 24, 32, 44, 64, 100} {
 		m := tuiModel{
 			width: width, height: 24,
 			settings: defaultAppSettings(),
@@ -838,11 +859,11 @@ func TestTUIViewRendersDashboardAndCompactLayout(t *testing.T) {
 			Metrics:      []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &primary}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &secondary}},
 			ResetCredits: "2, earliest exp. in 1d", SupportsResetCredits: true,
 		}},
-		width: 64, height: 24,
+		width: 110, height: 24,
 	}
 
 	view := m.View()
-	for _, want := range []string{"AI", "USAGE", "Personal", "CODEX", "SESSION", "WEEKLY", "MONTHLY", "42%", "73%"} {
+	for _, want := range []string{"AI", "USAGE", "Personal", "Codex", "SESSION", "WEEKLY", "MONTHLY", "42%", "73%"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q:\n%s", want, view)
 		}
