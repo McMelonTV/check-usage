@@ -15,25 +15,81 @@ func printTable(rows []usageRow) {
 		fmt.Println("No accounts found.")
 		return
 	}
+	fmt.Print(renderTable(rows, time.Now()))
+}
 
+func renderTable(rows []usageRow, now time.Time) string {
 	var b bytes.Buffer
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ACCOUNT\tPROVIDER\tEMAIL\tPLAN\tPRIMARY\tSECONDARY\tDETAILS")
-	for _, r := range rows {
-		fmt.Fprintf(
-			w,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			r.Name,
-			r.Provider,
-			r.Email,
-			r.Plan,
-			r.Primary,
-			r.Secondary,
-			r.ResetCredits,
+	fmt.Fprintln(w, "ACCOUNT\tPROVIDER\tEMAIL\tPLAN\tSESSION\tWEEKLY\tMONTHLY\tRESETS")
+	for _, row := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Name, row.Provider, row.Email, row.Plan,
+			usageSlotText(row, sessionSlot, now), usageSlotText(row, weeklySlot, now), usageSlotText(row, monthlySlot, now), resetSlotText(row),
 		)
 	}
 	_ = w.Flush()
-	fmt.Print(colorizeTableOutput(applyUsageColors(b.String(), rows)))
+	return colorizeTableOutput(applyUsageColors(b.String(), rows, now))
+}
+
+func metricText(metric providerMetric, now time.Time) string {
+	switch metric.Kind {
+	case percentageMetric:
+		if metric.Used == nil {
+			return "-"
+		}
+		used := percentValue(*metric.Used)
+		text := fmt.Sprintf("%.0f%% used / %.0f%% left", used, 100-used)
+		if metric.ResetAt != nil {
+			relative, absolute := resetTimesText(metric.ResetAt, now)
+			if relative != "-" && absolute != "-" {
+				text += fmt.Sprintf(" - resets in %s (%s)", relative, absolute)
+			}
+		}
+		return text
+	default:
+		return "-"
+	}
+}
+
+func colorizeMetric(text string, metric providerMetric) string {
+	if metric.Kind != percentageMetric {
+		return text
+	}
+	return colorizeUsage(text, metric.Used)
+}
+
+func applyUsageColors(tableText string, rows []usageRow, now time.Time) string {
+	trimmed := strings.TrimRight(tableText, "\n")
+	if trimmed == "" {
+		return tableText
+	}
+	lines := strings.Split(trimmed, "\n")
+	for index, row := range rows {
+		lineIndex := index + 1
+		if lineIndex >= len(lines) {
+			break
+		}
+		line := lines[lineIndex]
+		resetText := resetSlotText(row)
+		line = replaceLast(line, resetText, colorizeResetCreditsSummary(resetText))
+		end := len(line)
+		for _, slot := range []metricSlot{monthlySlot, weeklySlot, sessionSlot} {
+			metric, ok := usageMetricForSlot(row, slot)
+			if !ok {
+				continue
+			}
+			text := metricText(metric, now)
+			position := strings.LastIndex(line[:end], text)
+			if position < 0 {
+				continue
+			}
+			line = line[:position] + colorizeMetric(text, metric) + line[position+len(text):]
+			end = position
+		}
+		lines[lineIndex] = line
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func limitSummary(rl *rateLimitDetails, primary bool, now time.Time) string {
@@ -235,36 +291,12 @@ func windowUsedPercent(rl *rateLimitDetails, primary bool) *float64 {
 }
 
 func colorizeUsage(text string, used *float64) string {
-	if used == nil || text == "-" || text == "n/a" {
+	if used == nil || text == "-" {
 		return text
 	}
 	usedText := fmt.Sprintf("%.0f%%", percentValue(*used))
 	coloredUsedText := usageColor(*used) + usedText + ansiReset
 	return strings.Replace(text, usedText, coloredUsedText, 1)
-}
-
-func applyUsageColors(tableText string, rows []usageRow) string {
-	trimmed := strings.TrimRight(tableText, "\n")
-	if trimmed == "" {
-		return tableText
-	}
-
-	lines := strings.Split(trimmed, "\n")
-	rowCount := len(lines) - 1
-	if rowCount > len(rows) {
-		rowCount = len(rows)
-	}
-
-	for i := 0; i < rowCount; i++ {
-		lineIndex := i + 1
-		line := lines[lineIndex]
-		line = strings.Replace(line, rows[i].Primary, colorizeUsage(rows[i].Primary, rows[i].PrimaryUsed), 1)
-		line = strings.Replace(line, rows[i].Secondary, colorizeUsage(rows[i].Secondary, rows[i].SecondaryUsed), 1)
-		line = replaceLast(line, rows[i].ResetCredits, colorizeResetCreditsSummary(rows[i].ResetCredits))
-		lines[lineIndex] = line
-	}
-
-	return strings.Join(lines, "\n") + "\n"
 }
 
 func replaceLast(text, old, replacement string) string {
@@ -276,7 +308,7 @@ func replaceLast(text, old, replacement string) string {
 }
 
 func colorizeResetCreditsSummary(text string) string {
-	if text == "-" || text == "n/a" {
+	if text == "-" {
 		return text
 	}
 	if text == "unavailable" {

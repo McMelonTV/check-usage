@@ -28,11 +28,11 @@ Sign in to your first account:
 ./codex-usage accounts login --provider openai-codex --name "My Account"
 ```
 
-The account provider is explicit. Add OpenCode Go or DeepSeek with an API key:
+The account provider is always explicit. Add OpenCode Go or DeepSeek with an API key:
 
 ```bash
-./codex-usage accounts add --provider opencode-go --api-key "$OPENCODE_API_KEY"
-./codex-usage accounts add --provider deepseek --api-key "$DEEPSEEK_API_KEY"
+./codex-usage accounts add --provider opencode-go --api-key-env OPENCODE_API_KEY
+./codex-usage accounts add --provider deepseek --api-key-env DEEPSEEK_API_KEY
 ```
 
 Then open the interactive usage dashboard:
@@ -77,8 +77,9 @@ An account can be identified by its name, email, or ID. Add `--show-used` to inc
 
 ```text
 codex-usage accounts list
-codex-usage accounts add --provider opencode-go|deepseek --api-key key [--name name]
+codex-usage accounts add --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]
 codex-usage accounts login --provider openai-codex [--name name] [--no-browser] [--auth-flow device|browser]
+codex-usage accounts reauth [--api-key key|--api-key-env name] <account-name-email-or-id>
 codex-usage accounts remove <id-or-name>
 codex-usage accounts rename <id-or-name> <new-name>
 codex-usage resets [--show-used] <account-name-email-or-id>
@@ -86,6 +87,8 @@ codex-usage api [--accounts-file path] [--cache-dir path] <method|serve> [params
 ```
 
 Use `--accounts-file path` to choose a different accounts file or `--timeout seconds` to change the request timeout. By default, accounts are stored in `~/.config/codex-usage/accounts.json`.
+
+API keys are stored in that file with owner-only permissions. Prefer `--api-key-env` over `--api-key` so secrets are not exposed in process arguments or shell history.
 
 ## Android app ("AI Usage Widgets")
 

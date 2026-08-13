@@ -58,6 +58,7 @@ func runAccountsAdd(args []string) int {
 	providerID := accountProviderFlag(fs)
 	name := fs.String("name", "", "display name for the account")
 	key := fs.String("api-key", "", "API key for the selected provider")
+	keyEnv := fs.String("api-key-env", "", "environment variable containing the API key")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -74,7 +75,12 @@ func runAccountsAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %s uses device login; run accounts login --provider %s\n", provider.Name, provider.ID)
 		return 2
 	}
-	if strings.TrimSpace(*key) == "" {
+	resolvedKey, err := resolveAPIKey(*key, *keyEnv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	if resolvedKey == "" {
 		fmt.Fprintln(os.Stderr, "error: --api-key cannot be empty")
 		return 2
 	}
@@ -93,7 +99,7 @@ func runAccountsAdd(args []string) int {
 			return 1
 		}
 	}
-	store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: accountName, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(strings.TrimSpace(*key))}})
+	store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: accountName, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(resolvedKey)}})
 	if err := saveAccounts(*accountsPath, store); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
@@ -108,6 +114,7 @@ func runAccountsReauth(args []string) int {
 	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
 	apiKey := fs.String("api-key", "", "new API key for API-key providers")
+	apiKeyEnv := fs.String("api-key-env", "", "environment variable containing the new API key")
 	timeout := fs.Int("timeout", 30, "HTTP timeout in seconds")
 	noBrowser := fs.Bool("no-browser", false, "do not open browser automatically")
 	authFlow := fs.String("auth-flow", "device", "authentication flow: device or browser")
@@ -115,7 +122,7 @@ func runAccountsReauth(args []string) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: accounts reauth [--accounts-file path] [--api-key key] <id-or-name>")
+		fmt.Fprintln(os.Stderr, "usage: accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
 		return 2
 	}
 
@@ -137,7 +144,15 @@ func runAccountsReauth(args []string) int {
 		return 1
 	}
 	if provider.Credentials == apiKeyCredentials {
-		key := strings.TrimSpace(*apiKey)
+		if flagsSet(fs, "timeout", "no-browser", "auth-flow") {
+			fmt.Fprintf(os.Stderr, "error: browser authentication flags do not apply to %s\n", provider.Name)
+			return 2
+		}
+		key, keyErr := resolveAPIKey(*apiKey, *apiKeyEnv)
+		if keyErr != nil {
+			fmt.Fprintln(os.Stderr, "error:", keyErr)
+			return 2
+		}
 		if key == "" {
 			fmt.Fprintf(os.Stderr, "error: %s requires --api-key\n", provider.Name)
 			return 2
@@ -154,6 +169,10 @@ func runAccountsReauth(args []string) int {
 		}
 		fmt.Printf("Updated API key for %q (%s).\n", existing.Name, existing.ID)
 		return 0
+	}
+	if flagsSet(fs, "api-key", "api-key-env") {
+		fmt.Fprintf(os.Stderr, "error: API-key flags do not apply to %s\n", provider.Name)
+		return 2
 	}
 
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
@@ -175,8 +194,17 @@ func runAccountsReauth(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: signed-in email does not match the selected account")
 		return 1
 	}
+	if existing.Email != nil && refreshed.Email == nil {
+		fmt.Fprintln(os.Stderr, "error: signed-in account did not provide the expected email")
+		return 1
+	}
+	if existing.AuthData.AccountID != nil && (refreshed.AuthData.AccountID == nil || strings.TrimSpace(*existing.AuthData.AccountID) != strings.TrimSpace(*refreshed.AuthData.AccountID)) {
+		fmt.Fprintln(os.Stderr, "error: signed-in account does not match the selected account ID")
+		return 1
+	}
 
 	refreshed.ID, refreshed.Name = existing.ID, existing.Name
+	refreshed.Provider = existing.Provider
 	store.Accounts[index] = refreshed
 	if err := saveAccounts(*accountsPath, store); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -188,6 +216,32 @@ func runAccountsReauth(args []string) int {
 	}
 	fmt.Printf("Reauthenticated account %q (%s).\n", refreshed.Name, refreshed.ID)
 	return 0
+}
+
+func resolveAPIKey(value, environmentVariable string) (string, error) {
+	value, environmentVariable = strings.TrimSpace(value), strings.TrimSpace(environmentVariable)
+	if value != "" && environmentVariable != "" {
+		return "", fmt.Errorf("use only one of --api-key or --api-key-env")
+	}
+	if environmentVariable != "" {
+		value = strings.TrimSpace(os.Getenv(environmentVariable))
+		if value == "" {
+			return "", fmt.Errorf("environment variable %s is empty or unset", environmentVariable)
+		}
+	}
+	return value, nil
+}
+
+func flagsSet(set *flag.FlagSet, names ...string) bool {
+	selected := make(map[string]bool, len(names))
+	for _, name := range names {
+		selected[name] = true
+	}
+	found := false
+	set.Visit(func(flag *flag.Flag) {
+		found = found || selected[flag.Name]
+	})
+	return found
 }
 
 func runAccountsList(args []string) int {
@@ -416,7 +470,7 @@ func findMatchingAccount(accounts []storedAccount, candidate storedAccount) int 
 		email := strings.ToLower(strings.TrimSpace(*candidate.Email))
 		if email != "" {
 			for i := range accounts {
-				if accounts[i].Email != nil && strings.EqualFold(strings.TrimSpace(*accounts[i].Email), email) {
+				if accounts[i].Provider == candidate.Provider && accounts[i].Email != nil && strings.EqualFold(strings.TrimSpace(*accounts[i].Email), email) {
 					return i
 				}
 			}
@@ -508,9 +562,9 @@ func findAccountForRemoval(accounts []storedAccount, target string) (int, error)
 func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  codex-usage accounts list [--accounts-file path]")
-	fmt.Println("  codex-usage accounts add [--accounts-file path] --provider opencode-go|deepseek --api-key key [--name name]")
+	fmt.Println("  codex-usage accounts add [--accounts-file path] --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]")
 	fmt.Println("  codex-usage accounts login [--accounts-file path] --provider openai-codex [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
-	fmt.Println("  codex-usage accounts reauth [--accounts-file path] [--api-key key] <id-or-name>")
+	fmt.Println("  codex-usage accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
 	fmt.Println("  codex-usage accounts remove [--accounts-file path] <id-or-name>")
 	fmt.Println("  codex-usage accounts rename [--accounts-file path] <id-or-name> <new-name>")
 }

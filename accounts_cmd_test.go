@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"net/http"
 	"testing"
 )
@@ -23,6 +24,29 @@ func TestShouldUpsertMatchedAccount_NameMismatchSkipsUpsert(t *testing.T) {
 	}
 	if called {
 		t.Fatalf("did not expect plan re-check for name mismatch")
+	}
+}
+
+func TestResolveAPIKeyFromEnvironment(t *testing.T) {
+	t.Setenv("TEST_PROVIDER_KEY", "secret")
+	key, err := resolveAPIKey("", "TEST_PROVIDER_KEY")
+	if err != nil || key != "secret" {
+		t.Fatalf("key = %q, error = %v", key, err)
+	}
+	if _, err := resolveAPIKey("direct", "TEST_PROVIDER_KEY"); err == nil {
+		t.Fatal("simultaneous API-key sources were accepted")
+	}
+}
+
+func TestFlagsSetOnlyReportsExplicitFlags(t *testing.T) {
+	set := flag.NewFlagSet("test", flag.ContinueOnError)
+	set.String("api-key", "", "")
+	set.Int("timeout", 30, "")
+	if err := set.Parse([]string{"--api-key", "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if !flagsSet(set, "api-key") || flagsSet(set, "timeout") {
+		t.Fatal("explicit flag detection is incorrect")
 	}
 }
 

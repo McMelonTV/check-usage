@@ -103,7 +103,7 @@ func (service *Service) RenameAccount(target, newName string) (AccountMutation, 
 	return AccountMutation{Action: "renamed", Account: store.Accounts[index].public()}, nil
 }
 
-// RemoveAccount deletes an account and its compatible CLI usage cache.
+// RemoveAccount deletes an account and its CLI usage cache.
 func (service *Service) RemoveAccount(target string) (AccountMutation, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
@@ -144,9 +144,9 @@ func (service *Service) UpdateSettings(settings Settings) (Settings, error) {
 	return settings, nil
 }
 
-// BeginDeviceAuth starts a device authorization for a device-auth provider.
+// BeginDeviceAuth starts device authorization for an explicit provider.
 func (service *Service) BeginDeviceAuth(ctx context.Context, provider string) (DeviceAuthSession, error) {
-	if normalizeProvider(provider) != providerOpenAICodex {
+	if provider != providerOpenAICodex {
 		return DeviceAuthSession{}, fmt.Errorf("provider %q does not support device authentication", provider)
 	}
 	response, err := codexapi.RequestDeviceUserCode(ctx, service.client)
@@ -166,7 +166,7 @@ func (service *Service) BeginDeviceAuth(ctx context.Context, provider string) (D
 
 // PollDeviceAuth polls once and persists credentials when authorization completes.
 func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPoll) (DeviceAuthResult, error) {
-	if normalizeProvider(request.Provider) != providerOpenAICodex {
+	if request.Provider != providerOpenAICodex {
 		return DeviceAuthResult{}, fmt.Errorf("provider %q does not support device authentication", request.Provider)
 	}
 	if strings.TrimSpace(request.SessionID) == "" || strings.TrimSpace(request.UserCode) == "" {
@@ -229,7 +229,7 @@ func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPo
 
 // SaveAPIKeyAccount creates an API-key account for a supported provider.
 func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutation, error) {
-	provider, ok := providerDefinitions[normalizeProvider(request.Provider)]
+	provider, ok := providerDefinitions[request.Provider]
 	if !ok || provider.Credentials != apiKeyCredentials {
 		return AccountMutation{}, fmt.Errorf("provider %q does not support API-key accounts", request.Provider)
 	}
@@ -246,6 +246,25 @@ func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutatio
 	if err != nil {
 		return AccountMutation{}, err
 	}
+	if strings.TrimSpace(request.Account) != "" {
+		index, err := findAccount(store.Accounts, request.Account)
+		if err != nil {
+			return AccountMutation{}, err
+		}
+		if store.Accounts[index].Provider != provider.ID {
+			return AccountMutation{}, fmt.Errorf("account %q does not use provider %s", store.Accounts[index].Name, provider.Name)
+		}
+		store.Accounts[index].AuthData = authData{Type: string(apiKeyCredentials), APIKey: stringPointer(strings.TrimSpace(request.APIKey))}
+		if err := service.saveAccounts(store); err != nil {
+			return AccountMutation{}, err
+		}
+		return AccountMutation{Action: "updated", Account: store.Accounts[index].public()}, nil
+	}
+	for _, existing := range store.Accounts {
+		if strings.EqualFold(strings.TrimSpace(existing.Name), name) {
+			return AccountMutation{}, fmt.Errorf("account name %q already exists", name)
+		}
+	}
 	account := storedAccount{ID: newAccountID(service.now()), Name: name, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: stringPointer(strings.TrimSpace(request.APIKey))}}
 	store.Accounts = append(store.Accounts, account)
 	if err := service.saveAccounts(store); err != nil {
@@ -255,7 +274,7 @@ func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutatio
 }
 
 // Usage returns one account or all accounts when target is empty. When refresh
-// is false it performs no provider requests and only reads compatible cache data.
+// is false it performs no provider requests and only reads cached data.
 func (service *Service) Usage(ctx context.Context, target string, refresh bool) ([]UsageResult, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
@@ -273,7 +292,7 @@ func (service *Service) Usage(ctx context.Context, target string, refresh bool) 
 		account := &store.Accounts[index]
 		result, changed, err := service.usageForAccount(ctx, account, refresh)
 		if err != nil {
-			result = UsageResult{Account: account.public(), Cached: !refresh, Error: err.Error()}
+			result = UsageResult{Account: account.public(), Error: err.Error()}
 		}
 		accountsChanged = accountsChanged || changed
 		results = append(results, result)
@@ -300,7 +319,7 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 		return ResetCreditsResult{}, err
 	}
 	account := &store.Accounts[index]
-	provider, ok := providerDefinitions[normalizeProvider(account.Provider)]
+	provider, ok := providerDefinitions[account.Provider]
 	if !ok || !provider.ResetCredits {
 		return ResetCreditsResult{}, fmt.Errorf("reset credits are unavailable for %s", account.Provider)
 	}
@@ -336,19 +355,49 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 }
 
 func (service *Service) usageForAccount(ctx context.Context, account *storedAccount, refresh bool) (UsageResult, bool, error) {
-	provider, ok := providerDefinitions[normalizeProvider(account.Provider)]
+	provider, ok := providerDefinitions[account.Provider]
 	if !ok {
 		return UsageResult{}, false, fmt.Errorf("unsupported provider %q", account.Provider)
 	}
 	if provider.Credentials == apiKeyCredentials {
-		if !refresh {
-			return UsageResult{}, false, fmt.Errorf("cached usage is unavailable for account %q", account.Name)
-		}
-		snapshot, err := fetchAPIKeySnapshot(ctx, service.client, *account, service.now())
+		entry, cached, err := service.loadCache(account.ID)
 		if err != nil {
 			return UsageResult{}, false, err
 		}
-		return UsageResult{Account: account.public(), Snapshot: snapshot}, false, nil
+		if !refresh {
+			if !cached || entry.ProviderUsage == nil {
+				return UsageResult{}, false, fmt.Errorf("no cached usage for account %q", account.Name)
+			}
+			usage := *entry.ProviderUsage
+			resultAccount := account.public()
+			if usage.Plan != "" {
+				resultAccount.PlanType = usage.Plan
+			}
+			return UsageResult{Account: resultAccount, Metrics: usage.Metrics, Cached: true}, false, nil
+		}
+		usage, err := fetchAPIKeyUsage(ctx, service.client, *account, service.userAgent)
+		if err != nil {
+			if cached && entry.ProviderUsage != nil {
+				cachedUsage := *entry.ProviderUsage
+				resultAccount := account.public()
+				if cachedUsage.Plan != "" {
+					resultAccount.PlanType = cachedUsage.Plan
+				}
+				return UsageResult{Account: resultAccount, Metrics: cachedUsage.Metrics, Cached: true, Error: err.Error()}, false, nil
+			}
+			return UsageResult{}, false, err
+		}
+		now := service.now()
+		entry.ProviderUsage, entry.FetchedAt = &usage, now.Unix()
+		changed := false
+		if usage.Plan != "" && stringValue(account.PlanType) != usage.Plan {
+			account.PlanType = &usage.Plan
+			changed = true
+		}
+		if err := service.saveCache(account.ID, entry); err != nil {
+			return UsageResult{}, false, err
+		}
+		return UsageResult{Account: account.public(), Metrics: usage.Metrics}, changed, nil
 	}
 	entry, cached, err := service.loadCache(account.ID)
 	if err != nil {
@@ -402,6 +451,8 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 		snapshot.CreditsError = "Reset credits unavailable"
 	}
 	entry.PlanType, entry.RateLimit, entry.FetchedAt = usage.PlanType, usage.RateLimit, now.Unix()
+	providerUsage := codexProviderUsage(usage)
+	entry.ProviderUsage = &providerUsage
 	if creditsErr == nil {
 		entry.ResetCredits, entry.ResetFetchedAt = credits, now.Unix()
 	}
@@ -412,11 +463,11 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 		account.PlanType = &usage.PlanType
 		changed = true
 	}
-	return UsageResult{Account: account.public(), Snapshot: snapshot}, changed, nil
+	return UsageResult{Account: account.public(), Snapshot: snapshot, Metrics: providerUsage.Metrics}, changed, nil
 }
 
 func cachedUsageResult(account *storedAccount, entry cacheEntry, exists bool) (UsageResult, bool) {
-	if !exists || entry.FetchedAt <= 0 || entry.RateLimit == nil {
+	if !exists || entry.FetchedAt <= 0 || entry.ProviderUsage == nil {
 		return UsageResult{}, false
 	}
 	creditsErr := error(nil)
@@ -427,7 +478,8 @@ func cachedUsageResult(account *storedAccount, entry cacheEntry, exists bool) (U
 		&codexapi.RateLimitStatusPayload{PlanType: entry.PlanType, RateLimit: entry.RateLimit},
 		entry.ResetCredits, creditsErr, time.Unix(entry.FetchedAt, 0),
 	)
-	return UsageResult{Account: account.public(), Snapshot: snapshot, Cached: true}, true
+	usage := *entry.ProviderUsage
+	return UsageResult{Account: account.public(), Snapshot: snapshot, Metrics: usage.Metrics, Cached: true}, true
 }
 
 func (service *Service) refreshCredentials(ctx context.Context, account *storedAccount) (bool, error) {

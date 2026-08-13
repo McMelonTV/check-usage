@@ -2,7 +2,10 @@
 // requiring callers to parse terminal output or manage credential files.
 package usageapi
 
-import "github.com/McMelonTV/codex-usage/codexapi"
+import (
+	"github.com/McMelonTV/codex-usage/codexapi"
+	"github.com/McMelonTV/codex-usage/providers"
+)
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.
 const ProtocolVersion = "1.0"
@@ -55,6 +58,7 @@ type DeviceAuthResult struct {
 type UsageResult struct {
 	Account  Account                 `json:"account"`
 	Snapshot *codexapi.UsageSnapshot `json:"snapshot,omitempty"`
+	Metrics  []providers.Metric      `json:"metrics,omitempty"`
 	Cached   bool                    `json:"cached"`
 	Error    string                  `json:"error,omitempty"`
 }
@@ -75,6 +79,7 @@ type AccountMutation struct {
 // APIKeyAccount creates or updates an account for a provider authenticated by API key.
 // The key is accepted only for this call and is never returned in results.
 type APIKeyAccount struct {
+	Account  string `json:"account,omitempty"`
 	Provider string `json:"provider"`
 	Name     string `json:"name,omitempty"`
 	APIKey   string `json:"api_key"`
@@ -108,6 +113,7 @@ type cacheEntry struct {
 	ResetCredits   *codexapi.ResetCreditsPayload `json:"reset_credits,omitempty"`
 	FetchedAt      int64                         `json:"fetched_at"`
 	ResetFetchedAt int64                         `json:"reset_fetched_at,omitempty"`
+	ProviderUsage  *providers.Usage              `json:"provider_usage,omitempty"`
 }
 
 func (account storedAccount) public() Account {

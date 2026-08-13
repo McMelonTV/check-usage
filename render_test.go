@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestResetCreditsSummaryShowsAvailableCountAndEarliestExpiry(t *testing.T) {
@@ -117,5 +119,48 @@ func TestSelectWindowClassifiesBothWindowsByDuration(t *testing.T) {
 	}
 	if got := selectWindow(rl, false); got != weekly {
 		t.Fatalf("weekly window = %#v, want secondary weekly window", got)
+	}
+}
+
+func TestUsageSlotTextUsesFixedProviderSemantics(t *testing.T) {
+	deepSeek := usageRow{ProviderID: providerDeepSeek, Provider: "DeepSeek", Plan: "USD 12.50"}
+	if got := usageSlotText(deepSeek, sessionSlot, time.Now()); got != "-" {
+		t.Fatalf("DeepSeek session = %q", got)
+	}
+	if got := usageSlotText(deepSeek, weeklySlot, time.Now()); got != "-" {
+		t.Fatalf("DeepSeek weekly = %q", got)
+	}
+	if got := resetSlotText(deepSeek); got != "-" {
+		t.Fatalf("DeepSeek resets = %q", got)
+	}
+
+	codex := usageRow{ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", SupportsResetCredits: true, ResetCredits: "2"}
+	if got := usageSlotText(codex, monthlySlot, time.Now()); got != "-" {
+		t.Fatalf("Codex monthly = %q", got)
+	}
+	if got := usageSlotText(codex, sessionSlot, time.Now()); got != "-" {
+		t.Fatalf("Codex session = %q", got)
+	}
+	if got := resetSlotText(codex); got != "2" {
+		t.Fatalf("Codex resets = %q", got)
+	}
+}
+
+func TestRenderTableUsesFixedUsageColumns(t *testing.T) {
+	used := 25.0
+	rows := []usageRow{
+		{Name: "Codex", ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", Email: "-", Plan: "plus", Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "2", SupportsResetCredits: true},
+		{Name: "DeepSeek", ProviderID: providerDeepSeek, Provider: "DeepSeek", Email: "-", Plan: "USD 12.50"},
+	}
+	output := ansi.Strip(renderTable(rows, time.Now()))
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if got := strings.Join(strings.Fields(lines[0]), " "); got != "ACCOUNT PROVIDER EMAIL PLAN SESSION WEEKLY MONTHLY RESETS" {
+		t.Fatalf("table header = %q", got)
+	}
+	if !strings.Contains(output, "USD 12.50  -") || !strings.Contains(output, "25% used / 75% left") {
+		t.Fatalf("fixed table values are missing:\n%s", output)
+	}
+	if strings.Count(renderTable(rows[:1], time.Now()), ansiGreen+"25%") != 2 {
+		t.Fatalf("identical usage percentages were not colored independently")
 	}
 }

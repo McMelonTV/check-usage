@@ -33,24 +33,20 @@ type resetCreditsPayload = codexapi.ResetCreditsPayload
 type resetCreditDetail = codexapi.ResetCreditDetail
 
 type usageRow struct {
-	ID             string
-	Name           string
-	Provider       string
-	Email          string
-	Plan           string
-	Primary        string
-	Secondary      string
-	ResetCredits   string
-	PrimaryLabel   string
-	SecondaryLabel string
-	DetailsLabel   string
-	SortName       string
-	PrimaryUsed    *float64
-	SecondaryUsed  *float64
-	Loading        bool
-	AuthRequired   bool
-	Stale          bool
-	ResetsStale    bool
+	ID                   string
+	Name                 string
+	ProviderID           string
+	Provider             string
+	Email                string
+	Plan                 string
+	Metrics              []providerMetric
+	ResetCredits         string
+	SupportsResetCredits bool
+	SortName             string
+	Loading              bool
+	AuthRequired         bool
+	Stale                bool
+	ResetsStale          bool
 }
 
 type appSettings struct {

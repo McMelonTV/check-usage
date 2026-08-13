@@ -224,7 +224,7 @@ func discoverResult() any {
 			{"accounts.list", "List accounts without credentials.", "{}"},
 			{"accounts.rename", "Rename an account.", `{"account":"id|name|email","new_name":"name"}`},
 			{"accounts.remove", "Remove an account and its cache.", `{"account":"id|name|email"}`},
-			{"accounts.api_key.save", "Create an API-key account.", `{"provider":"opencode-go|deepseek","api_key":"...","name":"optional"}`},
+			{"accounts.api_key.save", "Create or update an API-key account.", `{"account":"optional id|name","provider":"opencode-go|deepseek","api_key":"...","name":"optional"}`},
 			{"auth.device.begin", "Begin device authorization for a provider.", `{"provider":"openai-codex"}`},
 			{"auth.device.poll", "Poll and persist a device authorization.", `{"provider":"openai-codex","session_id":"...","user_code":"...","name":"optional"}`},
 			{"usage.get", "Get usage for one or all accounts; refresh defaults to true.", `{"account":"optional","refresh":true}`},

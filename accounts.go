@@ -41,7 +41,6 @@ func parseAccounts(content []byte) (*accountsStore, error) {
 	if store.Accounts == nil {
 		store.Accounts = []storedAccount{}
 	}
-	store.needsSave = normalizeAccounts(&store)
 	return &store, nil
 }
 
@@ -53,23 +52,6 @@ func defaultAppSettings() appSettings {
 	return appSettings{UsageDisplay: "used", BarFill: "left", PercentagePosition: "right", ColorTheme: "default", AutoRefreshSeconds: 60, CompactMode: false}
 }
 
-func normalizeAccounts(store *accountsStore) bool {
-	changed := false
-	for i := range store.Accounts {
-		provider, migrated := migrateProvider(store.Accounts[i])
-		if migrated {
-			store.Accounts[i].Provider = provider
-			changed = true
-		}
-	}
-	return changed
-}
-
-func inferredProvider(account storedAccount) string {
-	provider, _ := migrateProvider(account)
-	return provider
-}
-
 func saveAccounts(path string, store *accountsStore) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -79,6 +61,9 @@ func saveAccounts(path string, store *accountsStore) error {
 		return err
 	}
 	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
 		return err
 	}
 	store.needsSave = false

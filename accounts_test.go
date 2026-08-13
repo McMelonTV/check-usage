@@ -7,16 +7,6 @@ import (
 	"testing"
 )
 
-func TestParseAccountsDefaultsProvider(t *testing.T) {
-	store, err := parseAccounts([]byte(`{"accounts":[{"id":"one","name":"Personal","auth_data":{"type":"chatgpt"}}]}`))
-	if err != nil {
-		t.Fatalf("parseAccounts() error = %v", err)
-	}
-	if store.Accounts[0].Provider != providerOpenAICodex {
-		t.Fatalf("provider = %q, want %s", store.Accounts[0].Provider, providerOpenAICodex)
-	}
-}
-
 func TestSettingsUseSeparateFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounts.json")
 	settings := appSettings{UsageDisplay: "remaining", BarFill: "right", PercentagePosition: "left", ColorTheme: "colorblind", AutoRefreshSeconds: 0, CompactMode: true}
@@ -61,21 +51,11 @@ func TestAccountsFileDoesNotContainSettingsOrCache(t *testing.T) {
 	}
 }
 
-func TestProviderMigrationIsMarkedForPersistence(t *testing.T) {
-	store, err := parseAccounts([]byte(`{"accounts":[{"id":"one","name":"Personal","auth_data":{"type":"chatgpt"}}]}`))
-	if err != nil {
-		t.Fatalf("parseAccounts() error = %v", err)
-	}
-	if !store.needsSave {
-		t.Fatal("provider migration was not marked for persistence")
-	}
-}
-
 func TestTUIAccountRenameAndRemoveCommands(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "accounts.json")
 	store := &accountsStore{
-		Accounts: []storedAccount{{ID: "one", Name: "Old name", Provider: "OpenAI", AuthData: authData{Type: "chatgpt"}}},
+		Accounts: []storedAccount{{ID: "one", Name: "Old name", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}},
 	}
 	if err := saveAccounts(path, store); err != nil {
 		t.Fatalf("saveAccounts() error = %v", err)

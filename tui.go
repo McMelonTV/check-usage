@@ -142,6 +142,8 @@ type tuiModel struct {
 	authProviderID        string
 	authSelectingProvider bool
 	authAPIKeyInput       string
+	lastMouseTarget       string
+	lastMouseAt           time.Time
 }
 
 func newTUIModel(accountsPath string, client *http.Client) tuiModel {
@@ -347,7 +349,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.initialized = true
 			m.lastUpdated = msg.at
 			m.clampCursor()
-			if m.tab == resetsTab && m.resetAccountID == "" && len(m.accounts) > 0 {
+			if m.tab == resetsTab && m.resetAccountID == "" && len(m.resetAccounts()) > 0 {
 				m.showFocusedResetCache()
 				m.resetLoading = true
 				return m, tea.Batch(m.scheduleAutoRefresh(), m.loadSelectedResets(), spinnerTick())
@@ -443,7 +445,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		if m.authActive {
-			return m, nil
+			return m.updateAuthMouse(msg)
 		}
 		return m.updateMouse(msg)
 
@@ -454,7 +456,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.updateProviderSelection(key)
 			}
 			if m.authProviderUsesAPIKey() {
-				return m.updateAPIKeyAuthentication(key)
+				return m.updateAPIKeyAuthentication(msg)
 			}
 			if key == "esc" {
 				m.authVersion++
@@ -495,7 +497,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.tabCursors[m.tab]
 			m.clampCursor()
 			m.consumeArmed, m.removeArmed, m.notice = "", "", ""
-			if m.tab == resetsTab && len(m.accounts) > 0 {
+			if m.tab == resetsTab && len(m.resetAccounts()) > 0 {
 				m.resetRowsFocused = false
 				m.showFocusedResetCache()
 				m.resetLoading = true
@@ -532,7 +534,7 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 	case resetsTab:
 		if !m.resetRowsFocused {
 			before := m.cursor
-			m.cursor = moveCursor(m.cursor, len(m.accounts), key)
+			m.cursor = moveCursor(m.cursor, len(m.resetAccounts()), key)
 			if before != m.cursor {
 				m.showFocusedResetCache()
 			}
@@ -657,7 +659,8 @@ func (m tuiModel) startAccountAdd() (tea.Model, tea.Cmd) {
 func (m tuiModel) startAccountReauthentication(account storedAccount) (tea.Model, tea.Cmd) {
 	provider, err := providerFor(account.Provider)
 	if err != nil {
-		provider = providerRegistry[providerOpenAICodex]
+		m.notice = err.Error()
+		return m, nil
 	}
 	if provider.Credentials == apiKeyCredentials {
 		m.authVersion++
@@ -677,7 +680,7 @@ func (m tuiModel) updateProviderSelection(key string) (tea.Model, tea.Cmd) {
 		m.clearAuthentication()
 		return m, nil
 	}
-	current := 0
+	current := -1
 	for index, provider := range providerDefinitions() {
 		if provider.ID == m.authProviderID {
 			current = index
@@ -685,6 +688,9 @@ func (m tuiModel) updateProviderSelection(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	if key == "left" || key == "up" || key == "h" || key == "k" {
+		if current < 0 {
+			current = len(providerDefinitions())
+		}
 		current = (current - 1 + len(providerDefinitions())) % len(providerDefinitions())
 		m.authProviderID = providerDefinitions()[current].ID
 		return m, nil
@@ -710,8 +716,15 @@ func (m tuiModel) updateProviderSelection(key string) (tea.Model, tea.Cmd) {
 	return m, m.requestDeviceAuthorization()
 }
 
-func (m tuiModel) updateAPIKeyAuthentication(key string) (tea.Model, tea.Cmd) {
-	switch key {
+func (m tuiModel) updateAPIKeyAuthentication(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.authSaving {
+		if key.String() == "esc" {
+			m.authVersion++
+			m.clearAuthentication()
+		}
+		return m, nil
+	}
+	switch key.String() {
 	case "esc":
 		m.clearAuthentication()
 	case "enter":
@@ -727,8 +740,8 @@ func (m tuiModel) updateAPIKeyAuthentication(key string) (tea.Model, tea.Cmd) {
 			m.authAPIKeyInput = string(runes[:len(runes)-1])
 		}
 	default:
-		if len(key) == 1 {
-			m.authAPIKeyInput += key
+		if key.Type == tea.KeyRunes {
+			m.authAPIKeyInput += string(key.Runes)
 		}
 	}
 	return m, nil
@@ -795,6 +808,12 @@ func (m tuiModel) saveAuthenticatedAccount(account storedAccount) tea.Cmd {
 			if existing.Email != nil && account.Email != nil && !strings.EqualFold(strings.TrimSpace(*existing.Email), strings.TrimSpace(*account.Email)) {
 				return authSavedMsg{err: fmt.Errorf("signed-in email does not match the selected account"), version: version}
 			}
+			if existing.Email != nil && account.Email == nil {
+				return authSavedMsg{err: fmt.Errorf("signed-in account did not provide the expected email"), version: version}
+			}
+			if existing.AuthData.AccountID != nil && (account.AuthData.AccountID == nil || strings.TrimSpace(*existing.AuthData.AccountID) != strings.TrimSpace(*account.AuthData.AccountID)) {
+				return authSavedMsg{err: fmt.Errorf("signed-in account does not match the selected account ID"), version: version}
+			}
 			account.ID, account.Name = existing.ID, existing.Name
 			account.Provider = existing.Provider
 			store.Accounts[index] = account
@@ -840,13 +859,29 @@ func (m tuiModel) saveAPIKeyAccount() tea.Cmd {
 		if err != nil {
 			return authSavedMsg{err: err, version: version}
 		}
-		store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: provider.Name, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}})
+		name := provider.Name
+		for suffix := 2; accountNameExists(store.Accounts, name); suffix++ {
+			name = fmt.Sprintf("%s %d", provider.Name, suffix)
+		}
+		store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: name, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}})
 		return authSavedMsg{err: saveAccounts(accountsPath, store), version: version}
 	}
 }
 
+func accountNameExists(accounts []storedAccount, name string) bool {
+	for _, account := range accounts {
+		if strings.EqualFold(strings.TrimSpace(account.Name), strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.showHelp {
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			m.showHelp = false
+		}
 		return m, nil
 	}
 	if msg.Button == tea.MouseButtonWheelUp {
@@ -868,9 +903,11 @@ func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.clampCursor()
 				if m.tab == resetsTab && len(m.accounts) > 0 {
 					m.resetRowsFocused = false
-					m.showFocusedResetCache()
-					m.resetLoading = true
-					return m, tea.Batch(m.loadSelectedResets(), spinnerTick())
+					if len(m.resetAccounts()) > 0 {
+						m.showFocusedResetCache()
+						m.resetLoading = true
+						return m, tea.Batch(m.loadSelectedResets(), spinnerTick())
+					}
 				}
 				return m, nil
 			}
@@ -879,31 +916,115 @@ func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	switch m.tab {
 	case usageTab:
-		if index, ok := m.mouseRowIndex(msg.Y, len(m.rows), m.width >= tuiWideAt, 7, 5); ok {
+		if index, ok := m.usageMouseRowIndex(msg.Y); ok {
 			m.cursor = index
 		}
 	case resetsTab:
 		sidebarWidth := max(10, min(24, tuiContentWidth(m.width)/3))
 		if x < sidebarWidth {
-			if index, ok := m.mouseRowIndex(msg.Y, len(m.accounts), false, 7, 7); ok {
+			if index, ok := m.mouseResetAccountIndex(msg.Y); ok {
 				m.cursor = index
 				m.resetRowsFocused = false
 				m.showFocusedResetCache()
 				m.resetLoading = true
 				return m, tea.Batch(m.loadSelectedResets(), spinnerTick())
 			}
+		} else if index, ok := m.mouseResetCreditIndex(msg.Y); ok {
+			doubleClick := m.registerMouseClick("reset:" + resetCreditKey(m.resetPayload.Credits[index]))
+			m.creditCursor, m.resetRowsFocused = index, true
+			if doubleClick {
+				m.armResetConsumption()
+			} else {
+				m.consumeArmed, m.notice = "", ""
+			}
 		}
 	case accountsTab:
+		if len(m.accounts) == 0 && msg.Y >= 5 {
+			return m.startAccountAdd()
+		}
 		if index, ok := m.mouseRowIndex(msg.Y, len(m.accounts), m.width >= 80, 7, 5); ok {
 			m.cursor = index
+			if m.registerMouseClick("account:" + m.accounts[index].ID) {
+				return m.startAccountReauthentication(m.accounts[index])
+			}
 		}
 	case settingsTab:
 		if index := (msg.Y - 5) / 2; msg.Y >= 5 && index >= 0 && index < 6 {
 			m.settingsCursor = index
-			return m.updateActiveTab("right")
+			direction := "left"
+			if x >= tuiContentWidth(m.width)/2 {
+				direction = "right"
+			}
+			return m.updateActiveTab(direction)
 		}
 	}
 	return m, nil
+}
+
+func (m *tuiModel) registerMouseClick(target string) bool {
+	now := time.Now()
+	doubleClick := m.lastMouseTarget == target && now.Sub(m.lastMouseAt) <= 500*time.Millisecond
+	m.lastMouseTarget, m.lastMouseAt = target, now
+	return doubleClick
+}
+
+func (m tuiModel) updateAuthMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.authSelectingProvider && msg.Button == tea.MouseButtonWheelUp {
+		return m.updateProviderSelection("up")
+	}
+	if m.authSelectingProvider && msg.Button == tea.MouseButtonWheelDown {
+		return m.updateProviderSelection("down")
+	}
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	if m.authSelectingProvider {
+		index := msg.Y - 9
+		definitions := providerDefinitions()
+		if index >= 0 && index < len(definitions) {
+			m.authProviderID = definitions[index].ID
+			return m.updateProviderSelection("enter")
+		}
+	}
+	return m, nil
+}
+
+func (m tuiModel) usageMouseRowIndex(y int) (int, bool) {
+	if m.width >= tuiWideAt {
+		return m.mouseRowIndex(y, len(m.rows), true, 7, 5)
+	}
+	currentY := 5
+	for index := range m.rows {
+		height := 5
+		if !m.settings.CompactMode {
+			height++
+		}
+		if y >= currentY && y < currentY+height {
+			return index, true
+		}
+		currentY += height
+	}
+	return 0, false
+}
+
+func (m tuiModel) mouseResetAccountIndex(y int) (int, bool) {
+	stride := 1
+	if !m.settings.CompactMode {
+		stride = 3
+	}
+	if y < 7 {
+		return 0, false
+	}
+	index := (y - 7) / stride
+	return index, index >= 0 && index < len(m.resetAccounts())
+}
+
+func (m tuiModel) mouseResetCreditIndex(y int) (int, bool) {
+	if m.resetPayload == nil || y < 10 {
+		return 0, false
+	}
+	index := (y - 10) / 3
+	return index, index >= 0 && index < len(m.resetPayload.Credits)
 }
 
 func tuiContentWidth(width int) int {
@@ -998,16 +1119,34 @@ func (m *tuiModel) armResetConsumption() {
 }
 
 func (m tuiModel) selectedAccount() (storedAccount, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.accounts) {
+	accounts := m.accounts
+	if m.tab == resetsTab {
+		accounts = m.resetAccounts()
+	}
+	if m.cursor < 0 || m.cursor >= len(accounts) {
 		return storedAccount{}, false
 	}
-	return m.accounts[m.cursor], true
+	return accounts[m.cursor], true
+}
+
+func (m tuiModel) resetAccounts() []storedAccount {
+	accounts := make([]storedAccount, 0, len(m.accounts))
+	for _, account := range m.accounts {
+		provider, err := providerFor(account.Provider)
+		if err == nil && provider.ResetCredits {
+			accounts = append(accounts, account)
+		}
+	}
+	return accounts
 }
 
 func (m *tuiModel) clampCursor() {
 	count := len(m.rows)
 	if m.tab == resetsTab || m.tab == accountsTab {
 		count = len(m.accounts)
+		if m.tab == resetsTab {
+			count = len(m.resetAccounts())
+		}
 	}
 	if m.cursor >= count {
 		m.cursor = max(0, count-1)
@@ -1153,7 +1292,7 @@ func (m tuiModel) View() string {
 }
 
 func (m tuiModel) renderHeader(width int) string {
-	brand := tuiTitleStyle.Render("CODEX") + " " + tuiAccentStyle.Render("USAGE")
+	brand := tuiTitleStyle.Render("AI") + " " + tuiAccentStyle.Render("USAGE")
 	status := ""
 	if m.loading {
 		status = tuiAccentStyle.Render(spinnerFrame(m.spinnerStep) + " refreshing")
@@ -1206,16 +1345,36 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 			}
 			lines = append(lines, marker+style.Render(provider.Name)+tuiMutedStyle.Render(" · "+credential))
 		}
+		if m.authErr != nil {
+			lines = append(lines, "", tuiErrorStyle.Render(m.authErr.Error()))
+		}
 		lines = append(lines, "", tuiMutedStyle.Render("Enter select · Esc cancel"))
 		return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+strings.Join(lines, "\n"))
 	}
 	if m.authProviderUsesAPIKey() {
 		provider, _ := providerFor(m.authProviderID)
 		key := strings.Repeat("•", len([]rune(m.authAPIKeyInput)))
+		input := tuiAccentStyle.Render("> ")
 		if key == "" {
-			key = "API key"
+			placeholder := "API Key"
+			if apiKeyCursorVisible(m.spinnerStep) {
+				cursorStyle := lipgloss.NewStyle().Foreground(textColor).Background(accentColor)
+				input += cursorStyle.Render(placeholder[:1]) + tuiMutedStyle.Render(placeholder[1:])
+			} else {
+				input += tuiMutedStyle.Render(placeholder)
+			}
+		} else {
+			input += tuiAccentStyle.Render(key)
+			if apiKeyCursorVisible(m.spinnerStep) {
+				input += lipgloss.NewStyle().Background(accentColor).Render(" ")
+			} else {
+				input += " "
+			}
 		}
-		body := tuiMutedStyle.Render("Enter API key for "+provider.Name+":") + "\n" + tuiAccentStyle.Render("> "+key+"█") + "\n\n" + tuiMutedStyle.Render("Enter save · Esc cancel")
+		body := tuiMutedStyle.Render("Enter API key for "+provider.Name+":") + "\n" + input + "\n\n" + tuiMutedStyle.Render("Enter save · Esc cancel")
+		if m.authSaving {
+			body = tuiAccentStyle.Render(spinnerFrame(m.spinnerStep)+"  Saving account…") + "\n\n" + body
+		}
 		if m.authErr != nil {
 			body = tuiErrorStyle.Render(m.authErr.Error()) + "\n\n" + body
 		}
@@ -1246,6 +1405,10 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 		tuiMutedStyle.Render("Esc cancels"),
 	}, "\n")
 	return "\n" + tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+}
+
+func apiKeyCursorVisible(spinnerStep int) bool {
+	return (spinnerStep/5)%2 == 0
 }
 
 func (m tuiModel) renderError(width int, err error) string {
@@ -1282,16 +1445,14 @@ func (m tuiModel) renderAccountList(width, height int) string {
 }
 
 func (m tuiModel) renderWideList(width, height int) string {
-	nameWidth := min(21, max(14, width/6))
-	providerWidth, planWidth := 11, 9
-	usageWidth := min(21, max(16, (width-nameWidth-providerWidth-planWidth-17)/2))
-	creditWidth := max(8, width-nameWidth-providerWidth-planWidth-usageWidth*2-9)
+	nameWidth := min(18, max(12, width/8))
+	providerWidth, planWidth, creditWidth := 11, 10, 8
+	usageWidth := max(12, (width-nameWidth-providerWidth-planWidth-creditWidth-8)/3)
 	headerStyle := lipgloss.NewStyle().Foreground(mutedColor).Bold(true)
-	direction := strings.ToUpper(m.settings.UsageDisplay)
 	header := "  " + cell(headerStyle.Render("ACCOUNT"), nameWidth) + " " +
 		cell(headerStyle.Render("PROVIDER"), providerWidth) + " " + cell(headerStyle.Render("PLAN"), planWidth) + " " +
-		cell(headerStyle.Render("PRIMARY "+direction), usageWidth) + " " + cell(headerStyle.Render("SECONDARY "+direction), usageWidth) + " " +
-		cell(headerStyle.Render("DETAILS"), creditWidth)
+		cell(headerStyle.Render("SESSION"), usageWidth) + " " + cell(headerStyle.Render("WEEKLY"), usageWidth) + " " +
+		cell(headerStyle.Render("MONTHLY"), usageWidth) + " " + cell(headerStyle.Render("RESETS"), creditWidth)
 
 	rowStride := 1
 	if !m.settings.CompactMode {
@@ -1310,18 +1471,13 @@ func (m tuiModel) renderWideList(width, height int) string {
 		if row.Stale || row.ResetsStale {
 			name += " " + lipgloss.NewStyle().Foreground(amberColor).Render("(Stale)")
 		}
-		primary, secondary, resets := "", "", ""
-		if row.AuthRequired {
-			primary = tuiErrorStyle.Render("sign in required")
-			secondary, resets = tuiMutedStyle.Render("—"), tuiMutedStyle.Render("—")
-		} else {
-			primary = renderUsageBar(row.PrimaryUsed, usageWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme)
-			secondary = renderUsageBar(row.SecondaryUsed, usageWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme)
-			resets = renderCreditCount(row.ResetCredits, row.ResetsStale, m.settings.ColorTheme)
-		}
+		session := m.renderUsageSlot(row, sessionSlot, usageWidth)
+		weekly := m.renderUsageSlot(row, weeklySlot, usageWidth)
+		monthly := m.renderUsageSlot(row, monthlySlot, usageWidth)
+		resets := m.renderResetSlot(row)
 		line := marker + cell(nameStyle.Render(name), nameWidth) + " " +
 			cell(tuiMutedStyle.Render(row.Provider), providerWidth) + " " + cell(tuiMutedStyle.Render(row.Plan), planWidth) + " " +
-			cell(primary, usageWidth) + " " + cell(secondary, usageWidth) + " " + cell(resets, creditWidth)
+			cell(session, usageWidth) + " " + cell(weekly, usageWidth) + " " + cell(monthly, usageWidth) + " " + cell(resets, creditWidth)
 		lines = append(lines, line)
 		if !m.settings.CompactMode {
 			lines = append(lines, "")
@@ -1334,9 +1490,9 @@ func (m tuiModel) renderWideList(width, height int) string {
 }
 
 func (m tuiModel) renderCompactList(width, height int) string {
-	rowStride := 3
+	rowStride := 5
 	if !m.settings.CompactMode {
-		rowStride = 4
+		rowStride++
 	}
 	maxRows := max(tuiMinListLen, (height-15)/rowStride)
 	start, end := visibleRange(len(m.rows), m.cursor, maxRows)
@@ -1355,13 +1511,10 @@ func (m tuiModel) renderCompactList(width, height int) string {
 		visibleName := ansi.Truncate(row.Name, max(8, width-lipgloss.Width(meta)-6), "…")
 		gap := max(1, width-2-lipgloss.Width(visibleName)-lipgloss.Width(meta))
 		lines = append(lines, marker+nameStyle.Render(visibleName)+strings.Repeat(" ", gap)+meta)
-		if row.AuthRequired {
-			lines = append(lines, "  "+tuiErrorStyle.Render("Sign in required. Open Accounts to reconnect."))
-			continue
+		for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
+			lines = append(lines, m.renderCompactSlot(row, slot, width))
 		}
-		barWidth := max(12, width-13)
-		lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(firstNonEmpty(row.PrimaryLabel, "5H"), 8, "…")+"  ")+renderUsageBar(row.PrimaryUsed, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
-		lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(firstNonEmpty(row.SecondaryLabel, "WK"), 8, "…")+"  ")+renderUsageBar(row.SecondaryUsed, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme))
+		lines = append(lines, "  "+tuiMutedStyle.Render("RESETS  ")+m.renderResetSlot(row))
 		if !m.settings.CompactMode {
 			lines = append(lines, "")
 		}
@@ -1381,24 +1534,56 @@ func (m tuiModel) renderDetails(width int) string {
 	}
 	nameLine := name + "  " + tuiMutedStyle.Render(row.Email+" · "+row.Provider+" · "+row.Plan)
 	if row.AuthRequired {
-		return tuiBorderStyle.Width(max(20, width-4)).Render(nameLine + "\n" + tuiErrorStyle.Render("Sign in required. Open Accounts and press a to reconnect."))
+		return tuiBorderStyle.Width(max(20, width-4)).Render(nameLine + "\n" + tuiErrorStyle.Render(credentialRequiredText(row)+". Open Accounts and press r to reconnect."))
 	}
-	resets := row.ResetCredits
+	lines := []string{nameLine}
+	now := time.Now()
+	for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
+		label := strings.ToUpper(string(slot))
+		lines = append(lines, labelStyle.Render(label)+ansi.Truncate(usageSlotText(row, slot, now), max(16, width-15), "…"))
+	}
+	resets := resetSlotText(row)
 	if row.ResetsStale {
 		resets += " (stale)"
 	}
-	body := strings.Join([]string{
-		nameLine,
-		labelStyle.Render(ansi.Truncate(firstNonEmpty(row.PrimaryLabel, "5 hour"), 8, "…")) + ansi.Truncate(row.Primary, max(16, width-15), "…"),
-		labelStyle.Render(ansi.Truncate(firstNonEmpty(row.SecondaryLabel, "Weekly"), 8, "…")) + ansi.Truncate(row.Secondary, max(16, width-15), "…"),
-		labelStyle.Render(ansi.Truncate(firstNonEmpty(row.DetailsLabel, "Resets"), 8, "…")) + ansi.Truncate(resets, max(16, width-15), "…"),
-	}, "\n")
-	return tuiBorderStyle.Width(max(20, width-4)).Render(body)
+	lines = append(lines, labelStyle.Render("RESETS")+ansi.Truncate(resets, max(16, width-15), "…"))
+	return tuiBorderStyle.Width(max(20, width-4)).Render(strings.Join(lines, "\n"))
+}
+
+func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int) string {
+	if metric, ok := usageMetricForSlot(row, slot); ok && metric.Kind == percentageMetric {
+		return renderUsageBar(metric.Used, width, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme)
+	}
+	text := usageSlotText(row, slot, time.Now())
+	if row.AuthRequired && slot == sessionSlot {
+		return tuiErrorStyle.Render(ansi.Truncate(text, width, "…"))
+	}
+	return tuiMutedStyle.Render(ansi.Truncate(text, width, "…"))
+}
+
+func (m tuiModel) renderCompactSlot(row usageRow, slot metricSlot, width int) string {
+	label := tuiMutedStyle.Render(cell(strings.ToUpper(string(slot)), 8))
+	valueWidth := max(10, width-12)
+	return "  " + label + "  " + m.renderUsageSlot(row, slot, valueWidth)
+}
+
+func (m tuiModel) renderResetSlot(row usageRow) string {
+	if row.SupportsResetCredits {
+		return renderCreditCount(resetSlotText(row), row.ResetsStale, m.settings.ColorTheme)
+	}
+	return tuiMutedStyle.Render("-")
+}
+
+func credentialRequiredText(row usageRow) string {
+	if row.ProviderID == providerOpenAICodex {
+		return "Sign in required"
+	}
+	return "API key required or invalid"
 }
 
 func (m tuiModel) renderResetsTab(width, height int) string {
-	if len(m.accounts) == 0 {
-		return m.renderEmpty(width, "No accounts yet", "Add an account from the Accounts tab first.")
+	if len(m.resetAccounts()) == 0 {
+		return m.renderEmpty(width, "No reset-capable accounts", "Reset credits are available only for providers that support them.")
 	}
 	sidebarWidth := max(10, min(24, width/3))
 	mainWidth := max(8, width-sidebarWidth-2)
@@ -1410,26 +1595,27 @@ func (m tuiModel) renderResetsTab(width, height int) string {
 }
 
 func (m tuiModel) renderResetSidebar(width, height int) string {
+	accounts := m.resetAccounts()
 	lines := []string{tuiTitleStyle.Render("Accounts"), ""}
 	stride := 1
 	if !m.settings.CompactMode {
 		stride = 3
 	}
 	maxRows := max(1, (height-4)/stride)
-	start, end := visibleRange(len(m.accounts), m.cursor, maxRows)
+	start, end := visibleRange(len(accounts), m.cursor, maxRows)
 	for i := start; i < end; i++ {
-		account := m.accounts[i]
+		account := accounts[i]
 		marker, nameStyle := "  ", lipgloss.NewStyle().Foreground(textColor)
 		if i == m.cursor {
 			marker, nameStyle = selectedRowVisual(m.tabRowFocused || m.resetRowsFocused)
 		}
 		if m.settings.CompactMode {
-			line := marker + nameStyle.Render(account.Name) + tuiMutedStyle.Render(" · "+account.Provider)
+			line := marker + nameStyle.Render(account.Name) + tuiMutedStyle.Render(" · "+providerName(account.Provider))
 			lines = append(lines, ansi.Truncate(line, width, "…"))
 			continue
 		}
 		lines = append(lines, ansi.Truncate(marker+nameStyle.Render(account.Name), width, "…"))
-		lines = append(lines, tuiMutedStyle.Render(ansi.Truncate("  "+account.Provider, width, "…")))
+		lines = append(lines, tuiMutedStyle.Render(ansi.Truncate("  "+providerName(account.Provider), width, "…")))
 		if !m.settings.CompactMode {
 			lines = append(lines, "")
 		}
@@ -1442,7 +1628,7 @@ func (m tuiModel) renderResetMain(width, height int) string {
 	if !ok {
 		account, _ = m.selectedAccount()
 	}
-	lines := []string{tuiTitleStyle.Render(ansi.Truncate(account.Name, width, "…")), tuiMutedStyle.Render(ansi.Truncate(account.Provider, width, "…")), ""}
+	lines := []string{tuiTitleStyle.Render(ansi.Truncate(account.Name, width, "…")), tuiMutedStyle.Render(ansi.Truncate(providerName(account.Provider), width, "…")), ""}
 	if m.resetLoading && m.resetPayload == nil {
 		lines = append(lines, tuiAccentStyle.Render(spinnerFrame(m.spinnerStep))+"  Loading reset credits…")
 		return strings.Join(lines, "\n")
@@ -1492,7 +1678,7 @@ func (m tuiModel) renderResetMain(width, height int) string {
 }
 
 func (m tuiModel) resetAccount() (storedAccount, bool) {
-	for _, account := range m.accounts {
+	for _, account := range m.resetAccounts() {
 		if account.ID == m.resetAccountID {
 			return account, true
 		}
@@ -1539,7 +1725,7 @@ func (m tuiModel) renderAccountsTab(width, height int) string {
 			if i == m.cursor {
 				marker, nameStyle = selectedRowVisual(m.tabRowFocused)
 			}
-			lines = append(lines, marker+cell(nameStyle.Render(account.Name), nameW)+" "+cell(tuiMutedStyle.Render(account.Provider), providerW)+" "+cell(tuiMutedStyle.Render(valueOrDash(account.PlanType)), planW)+" "+cell(tuiMutedStyle.Render(valueOrDash(account.Email)), emailW))
+			lines = append(lines, marker+cell(nameStyle.Render(account.Name), nameW)+" "+cell(tuiMutedStyle.Render(providerName(account.Provider)), providerW)+" "+cell(tuiMutedStyle.Render(valueOrDash(account.PlanType)), planW)+" "+cell(tuiMutedStyle.Render(valueOrDash(account.Email)), emailW))
 			if !m.settings.CompactMode {
 				lines = append(lines, "")
 			}
@@ -1557,7 +1743,7 @@ func (m tuiModel) renderAccountsTab(width, height int) string {
 			if i == m.cursor {
 				marker, nameStyle = selectedRowVisual(m.tabRowFocused)
 			}
-			accountLine := marker + nameStyle.Render(account.Name) + "  " + tuiMutedStyle.Render(account.Provider+" · "+valueOrDash(account.PlanType))
+			accountLine := marker + nameStyle.Render(account.Name) + "  " + tuiMutedStyle.Render(providerName(account.Provider)+" · "+valueOrDash(account.PlanType))
 			lines = append(lines, ansi.Truncate(accountLine, width, "…"))
 			lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(valueOrDash(account.Email), width-2, "…")))
 			if !m.settings.CompactMode {
@@ -1620,7 +1806,13 @@ func (m tuiModel) renderHelp(width int) string {
 
 func (m tuiModel) renderFooter(width int) string {
 	if m.authActive {
-		return "\n" + tuiMutedStyle.Render(ansi.Truncate("Complete sign in in your browser   esc cancel", width, "…"))
+		message := "Complete sign in in your browser   esc cancel"
+		if m.authSelectingProvider {
+			message = "↑/↓ choose provider   enter select   esc cancel"
+		} else if m.authProviderUsesAPIKey() {
+			message = "type or paste API key   enter save   esc cancel"
+		}
+		return "\n" + tuiMutedStyle.Render(ansi.Truncate(message, width, "…"))
 	}
 	help := "↑/↓ navigate   q quit   tab focuses tabs   r refresh   ? help"
 	switch m.tab {
@@ -1667,7 +1859,7 @@ func renderUsageBar(used *float64, width int, showRemaining, loading, authRequir
 		return tuiErrorStyle.Render(cell("sign in required", width))
 	}
 	if used == nil {
-		return tuiMutedStyle.Render(cell("n/a", width))
+		return tuiMutedStyle.Render(cell("-", width))
 	}
 	usedValue := percentValue(*used)
 	displayValue := usedValue

@@ -66,9 +66,15 @@ func mergeAccountUsageCache(accountID string, update usageCacheEntry) error {
 	if err != nil {
 		return err
 	}
-	current.PlanType = update.PlanType
-	current.RateLimit = update.RateLimit
-	current.FetchedAt = update.FetchedAt
+	if update.PlanType != "" {
+		current.PlanType = update.PlanType
+	}
+	if update.RateLimit != nil {
+		current.RateLimit = update.RateLimit
+	}
+	if update.FetchedAt > 0 {
+		current.FetchedAt = update.FetchedAt
+	}
 	if update.ProviderUsage != nil {
 		current.ProviderUsage = update.ProviderUsage
 	}

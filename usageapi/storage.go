@@ -52,13 +52,6 @@ func (service *Service) loadAccounts() (*accountsStore, error) {
 	if store.Accounts == nil {
 		store.Accounts = []storedAccount{}
 	}
-	for index := range store.Accounts {
-		if strings.TrimSpace(store.Accounts[index].Provider) == "" && strings.EqualFold(store.Accounts[index].AuthData.Type, "chatgpt") {
-			store.Accounts[index].Provider = providerOpenAICodex
-		} else {
-			store.Accounts[index].Provider = normalizeProvider(store.Accounts[index].Provider)
-		}
-	}
 	return &store, nil
 }
 

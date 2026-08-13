@@ -123,7 +123,7 @@ func TestTUIResetSidebarEnterSelectsAccountAndFocusesRows(t *testing.T) {
 	cached := &resetCreditsPayload{AvailableCount: 2}
 	m := tuiModel{
 		tab:            resetsTab,
-		accounts:       []storedAccount{{ID: "one", Name: "One"}, {ID: "two", Name: "Two"}},
+		accounts:       []storedAccount{{ID: "one", Name: "One", Provider: providerOpenAICodex}, {ID: "two", Name: "Two", Provider: providerOpenAICodex}},
 		resetAccountID: "one",
 		resetPayload:   &resetCreditsPayload{},
 		resetCache:     map[string]*resetCreditsPayload{"two": cached},
@@ -145,7 +145,7 @@ func TestTUIResetSidebarEnterSelectsAccountAndFocusesRows(t *testing.T) {
 func TestTUIResetSidebarDoesNotRenderSelectedLabel(t *testing.T) {
 	m := tuiModel{
 		tab: resetsTab, width: 80, height: 24,
-		accounts:       []storedAccount{{ID: "one", Name: "One", Provider: "OpenAI"}},
+		accounts:       []storedAccount{{ID: "one", Name: "One", Provider: providerOpenAICodex}},
 		resetAccountID: "one",
 		resetPayload:   &resetCreditsPayload{},
 	}
@@ -249,23 +249,23 @@ func TestUsageListLabelsStaleFallbackRows(t *testing.T) {
 		width:    110,
 		height:   24,
 		settings: defaultAppSettings(),
-		rows:     []usageRow{{Name: "Personal", Provider: "OpenAI", Plan: "free", PrimaryUsed: &used, SecondaryUsed: &used, Stale: true}},
+		rows:     []usageRow{{Name: "Personal", ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", Plan: "free", Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, Stale: true}},
 	}
 	if view := ansi.Strip(m.renderUsageTab(106, 22)); !strings.Contains(view, "(Stale)") {
 		t.Fatalf("stale usage row is not labeled:\n%s", view)
 	}
 }
 
-func TestUsageListShowsAuthenticationFailureOnce(t *testing.T) {
+func TestUsageListShowsAuthenticationRecovery(t *testing.T) {
 	m := tuiModel{
 		width: 110, height: 24, settings: defaultAppSettings(),
-		rows: []usageRow{{Name: "Personal", Provider: "OpenAI", Plan: "free", AuthRequired: true}},
+		rows: []usageRow{{Name: "Personal", ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", Plan: "free", AuthRequired: true}},
 	}
 	view := ansi.Strip(m.renderUsageTab(106, 22))
-	if count := strings.Count(view, "sign in required"); count != 1 {
-		t.Fatalf("authentication status appears %d times:\n%s", count, view)
+	if !strings.Contains(strings.ToLower(view), "sign in required") {
+		t.Fatalf("authentication status is missing:\n%s", view)
 	}
-	if !strings.Contains(view, "Open Accounts and press a to reconnect.") {
+	if !strings.Contains(view, "Open Accounts and press r to reconnect.") {
 		t.Fatalf("authentication recovery instruction missing:\n%s", view)
 	}
 }
@@ -285,10 +285,129 @@ func TestTUIMouseClickChangesTabAndSelectsUsageRow(t *testing.T) {
 	}
 }
 
+func TestTUIMouseSettingsUsesClickedDirection(t *testing.T) {
+	m := tuiModel{tab: settingsTab, width: 100, height: 24, settings: defaultAppSettings()}
+	updated, _ := m.Update(tea.MouseMsg{X: 5, Y: 11, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if m.settingsCursor != 3 || m.settings.ColorTheme != "monochrome" {
+		t.Fatalf("left settings click = cursor %d, theme %q", m.settingsCursor, m.settings.ColorTheme)
+	}
+}
+
+func TestTUIMouseSelectsProvider(t *testing.T) {
+	m := tuiModel{width: 80, height: 24, authActive: true, authSelectingProvider: true}
+	updated, command := m.Update(tea.MouseMsg{X: 6, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if m.authProviderID != providerOpenCodeGo || m.authSelectingProvider || command != nil {
+		t.Fatalf("provider click = %#v, command=%v", m, command)
+	}
+}
+
+func TestTUIMouseWheelNavigatesProviderPicker(t *testing.T) {
+	m := tuiModel{authActive: true, authSelectingProvider: true}
+	updated, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	m = updated.(tuiModel)
+	if m.authProviderID != providerOpenAICodex {
+		t.Fatalf("provider after wheel = %q", m.authProviderID)
+	}
+}
+
+func TestTUIMouseSelectsResetCredit(t *testing.T) {
+	m := tuiModel{
+		tab: resetsTab, width: 100, height: 24, resetRowsFocused: false,
+		accounts:       []storedAccount{{ID: "one", Name: "One", Provider: providerOpenAICodex}},
+		resetAccountID: "one", resetPayload: &resetCreditsPayload{Credits: []resetCreditDetail{{Title: "One"}, {Title: "Two"}}},
+	}
+	updated, _ := m.Update(tea.MouseMsg{X: 50, Y: 13, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if !m.resetRowsFocused || m.creditCursor != 1 {
+		t.Fatalf("reset click = focused %v, cursor %d", m.resetRowsFocused, m.creditCursor)
+	}
+}
+
+func TestTUIMouseSecondClickArmsResetCredit(t *testing.T) {
+	credit := resetCreditDetail{Status: "available", Title: "One", GrantedAt: "2026-08-01T00:00:00Z"}
+	m := tuiModel{
+		tab: resetsTab, width: 100, height: 24, resetRowsFocused: true,
+		accounts:       []storedAccount{{ID: "one", Name: "One", Provider: providerOpenAICodex}},
+		resetAccountID: "one", resetPayload: &resetCreditsPayload{Credits: []resetCreditDetail{credit}},
+	}
+	m.lastMouseTarget = "reset:" + resetCreditKey(credit)
+	m.lastMouseAt = time.Now()
+	updated, _ := m.Update(tea.MouseMsg{X: 50, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if m.consumeArmed != resetCreditKey(credit) {
+		t.Fatalf("reset click did not arm credit: %#v", m)
+	}
+}
+
+func TestTUIMouseDoubleClickReauthenticatesAccount(t *testing.T) {
+	account := storedAccount{ID: "one", Name: "One", Provider: providerDeepSeek}
+	m := tuiModel{tab: accountsTab, width: 100, height: 24, accounts: []storedAccount{account}, lastMouseTarget: "account:one", lastMouseAt: time.Now()}
+	updated, _ := m.Update(tea.MouseMsg{X: 3, Y: 7, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if !m.authActive || m.authProviderID != providerDeepSeek || m.authReauthID != "one" {
+		t.Fatalf("double click did not reauthenticate: %#v", m)
+	}
+}
+
+func TestTUIProviderMetricsKeepResetsSeparate(t *testing.T) {
+	used := 35.0
+	reset := time.Now().Add(2 * time.Hour).Unix()
+	m := tuiModel{width: 110, height: 24, settings: defaultAppSettings(), rows: []usageRow{{
+		Name: "OpenCode", ProviderID: providerOpenCodeGo, Provider: "OpenCode Go",
+		Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used, ResetAt: &reset}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}, {Kind: percentageMetric, Slot: monthlySlot, Label: "MONTHLY", Used: &used}},
+	}}}
+	view := ansi.Strip(m.renderUsageTab(106, 22))
+	for _, expected := range []string{"SESSION", "WEEKLY", "MONTHLY", "35%", "RESETS", "-"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("usage view missing %q:\n%s", expected, view)
+		}
+	}
+	if strings.Contains(view, "2026-") || strings.Contains(view, "Resets   ") {
+		t.Fatalf("OpenCode view contains raw timestamp or reset credits:\n%s", view)
+	}
+}
+
+func TestTUIDeepSeekBalanceIsVisible(t *testing.T) {
+	m := tuiModel{width: 110, height: 24, settings: defaultAppSettings(), rows: []usageRow{{
+		Name: "DeepSeek", ProviderID: providerDeepSeek, Provider: "DeepSeek", Plan: "USD 12.50",
+	}}}
+	view := ansi.Strip(m.renderUsageTab(106, 22))
+	if !strings.Contains(view, "USD 12.50") || !strings.Contains(view, "SESSION") || !strings.Contains(view, "WEEKLY") || !strings.Contains(view, "-") {
+		t.Fatalf("DeepSeek balance is missing:\n%s", view)
+	}
+	if strings.Contains(view, "BALANCE") || strings.Contains(view, "available") {
+		t.Fatalf("DeepSeek balance leaked into usage metrics:\n%s", view)
+	}
+}
+
+func TestTUIMouseLoadsResetAccountWithoutCache(t *testing.T) {
+	m := tuiModel{
+		tab: resetsTab, width: 100, height: 24,
+		accounts:    []storedAccount{{ID: "one", Name: "One", Provider: providerOpenAICodex}},
+		resetCache:  map[string]*resetCreditsPayload{},
+		resetLoader: func(string) (*resetCreditsPayload, error) { return &resetCreditsPayload{}, nil },
+	}
+	updated, command := m.Update(tea.MouseMsg{X: 3, Y: 7, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if command == nil || !m.resetLoading || m.resetAccountID != "one" {
+		t.Fatalf("reset account click = loading %v, account %q, command %v", m.resetLoading, m.resetAccountID, command)
+	}
+}
+
+func TestResetsTabHidesUnsupportedProviders(t *testing.T) {
+	m := tuiModel{accounts: []storedAccount{{ID: "codex", Provider: providerOpenAICodex}, {ID: "deepseek", Provider: providerDeepSeek}}}
+	accounts := m.resetAccounts()
+	if len(accounts) != 1 || accounts[0].ID != "codex" {
+		t.Fatalf("reset accounts = %#v", accounts)
+	}
+}
+
 func TestAccountsTabColumnOrder(t *testing.T) {
 	m := tuiModel{
 		tab: accountsTab, width: 110, height: 24, settings: defaultAppSettings(),
-		accounts: []storedAccount{{Name: "Personal", PlanType: strPtr("plus"), Provider: "OpenAI", Email: strPtr("person@example.com")}},
+		accounts: []storedAccount{{Name: "Personal", PlanType: strPtr("plus"), Provider: providerOpenAICodex, Email: strPtr("person@example.com")}},
 	}
 	view := ansi.Strip(m.View())
 	nameIndex := strings.Index(view, "ACCOUNT NAME")
@@ -303,17 +422,17 @@ func TestAccountsTabColumnOrder(t *testing.T) {
 func TestCompactAccountsTabShowsProviderBeforePlan(t *testing.T) {
 	m := tuiModel{
 		tab: accountsTab, width: 64, height: 24, settings: defaultAppSettings(),
-		accounts: []storedAccount{{Name: "Personal", PlanType: strPtr("plus"), Provider: "OpenAI", Email: strPtr("person@example.com")}},
+		accounts: []storedAccount{{Name: "Personal", PlanType: strPtr("plus"), Provider: providerOpenAICodex, Email: strPtr("person@example.com")}},
 	}
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "OpenAI · plus") {
+	if !strings.Contains(view, "OpenAI Codex · plus") {
 		t.Fatalf("compact account metadata is out of order:\n%s", view)
 	}
 }
 
 func TestResetSidebarCompactModeUsesSingleLineAccounts(t *testing.T) {
 	m := tuiModel{
-		accounts: []storedAccount{{Name: "Personal", Provider: "OpenAI"}},
+		accounts: []storedAccount{{Name: "Personal", Provider: providerOpenAICodex}},
 		settings: appSettings{CompactMode: true},
 	}
 	sidebar := ansi.Strip(m.renderResetSidebar(30, 20))
@@ -403,7 +522,7 @@ func TestEveryTabFooterShowsQuitBinding(t *testing.T) {
 }
 
 func TestAccountsTabSupportsReauthentication(t *testing.T) {
-	m := tuiModel{tab: accountsTab, accounts: []storedAccount{{ID: "one", Name: "Personal"}}}
+	m := tuiModel{tab: accountsTab, accounts: []storedAccount{{ID: "one", Name: "Personal", Provider: providerOpenAICodex}}}
 	if footer := ansi.Strip(m.renderFooter(100)); !strings.Contains(footer, "r reauthenticate") {
 		t.Fatalf("accounts footer does not document reauthentication: %s", footer)
 	}
@@ -437,6 +556,15 @@ func TestTUIAuthenticationRendersDeviceCodeAndCancels(t *testing.T) {
 	}
 }
 
+func TestTUIAPIKeyInputAcceptsPastedRunes(t *testing.T) {
+	m := tuiModel{authActive: true, authProviderID: providerDeepSeek}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("sk-pasted-key")})
+	m = updated.(tuiModel)
+	if m.authAPIKeyInput != "sk-pasted-key" {
+		t.Fatalf("API key input = %q", m.authAPIKeyInput)
+	}
+}
+
 func TestTUIViewHasOneRowShellMargin(t *testing.T) {
 	m := tuiModel{width: 80, height: 24, settings: defaultAppSettings()}
 	view := m.View()
@@ -452,15 +580,14 @@ func TestTUIViewFitsCommonTerminalWidths(t *testing.T) {
 			width: width, height: 24,
 			settings: defaultAppSettings(),
 			accounts: []storedAccount{{
-				ID: "one", Name: "An account with an exceptionally long display name", Provider: "OpenAI",
+				ID: "one", Name: "An account with an exceptionally long display name", Provider: providerOpenAICodex,
 				Email: strPtr("a-very-long-address@example.com"), PlanType: strPtr("enterprise"),
 			}},
 			rows: []usageRow{{
 				Name:  "An account with an exceptionally long display name",
-				Email: "a-very-long-address@example.com", Provider: "OpenAI", Plan: "enterprise",
-				Primary:     "99% used / 1% left - resets in 1h 20m (August 6, 6:30 PM CEST)",
-				Secondary:   "99% used / 1% left - resets in 120h (August 11, 5:00 PM CEST)",
-				PrimaryUsed: &used, SecondaryUsed: &used, ResetCredits: "12, earliest exp. in 24h",
+				Email: "a-very-long-address@example.com", ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", Plan: "enterprise",
+				Metrics:      []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}},
+				ResetCredits: "12, earliest exp. in 24h", SupportsResetCredits: true,
 			}},
 		}
 		m.resetPayload = &resetCreditsPayload{AvailableCount: 1, TotalEarnedCount: 1, Credits: []resetCreditDetail{{
@@ -487,15 +614,15 @@ func TestTUIViewRendersDashboardAndCompactLayout(t *testing.T) {
 	secondary := 73.0
 	m := tuiModel{
 		rows: []usageRow{{
-			Name: "Personal", Email: "person@example.com", Provider: "OpenAI", Plan: "plus",
-			Primary: "42% used / 58% left", Secondary: "73% used / 27% left",
-			PrimaryUsed: &primary, SecondaryUsed: &secondary, ResetCredits: "2, earliest exp. in 1d",
+			Name: "Personal", Email: "person@example.com", ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", Plan: "plus",
+			Metrics:      []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &primary}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &secondary}},
+			ResetCredits: "2, earliest exp. in 1d", SupportsResetCredits: true,
 		}},
 		width: 64, height: 24,
 	}
 
 	view := m.View()
-	for _, want := range []string{"CODEX", "USAGE", "Personal", "OpenAI", "5H", "WK", "42%", "73%", "person@example.com"} {
+	for _, want := range []string{"AI", "USAGE", "Personal", "OpenAI", "SESSION", "WEEKLY", "MONTHLY", "42%", "73%", "person@example.com"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q:\n%s", want, view)
 		}
@@ -509,8 +636,8 @@ func TestUsageDetailsHaveOneBlankRowAbove(t *testing.T) {
 			width: 110, height: 24,
 			settings: appSettings{UsageDisplay: "used", BarFill: "left", PercentagePosition: "right", ColorTheme: "default", CompactMode: compact},
 			rows: []usageRow{{
-				Name: "Personal", Email: "person@example.com", Provider: "OpenAI", Plan: "plus",
-				Primary: "25% used", Secondary: "25% used", PrimaryUsed: &used, SecondaryUsed: &used, ResetCredits: "0",
+				Name: "Personal", Email: "person@example.com", ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", Plan: "plus",
+				Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "0", SupportsResetCredits: true,
 			}},
 		}
 		list := strings.TrimRight(m.renderAccountList(110, 22), "\n")

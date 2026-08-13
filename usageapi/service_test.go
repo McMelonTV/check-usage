@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/McMelonTV/codex-usage/codexapi"
+	"github.com/McMelonTV/codex-usage/providers"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -24,7 +25,7 @@ func TestListAccountsNeverReturnsCredentials(t *testing.T) {
 	service := testService(t, nil)
 	secret := "top-secret-token"
 	if err := service.saveAccounts(&accountsStore{Accounts: []storedAccount{{
-		ID: "one", Name: "Personal", Provider: "OpenAI", Email: stringPointer("person@example.com"),
+		ID: "one", Name: "Personal", Provider: providerOpenAICodex, Email: stringPointer("person@example.com"),
 		AuthData: authData{Type: "chatgpt", AccessToken: &secret, RefreshToken: &secret},
 	}}}); err != nil {
 		t.Fatal(err)
@@ -132,7 +133,7 @@ func TestUsageRefreshAndCachedResetCredits(t *testing.T) {
 	service := testService(t, client)
 	service.now = func() time.Time { return now }
 	if err := service.saveAccounts(&accountsStore{Accounts: []storedAccount{{
-		ID: "one", Name: "Personal", Provider: "OpenAI",
+		ID: "one", Name: "Personal", Provider: providerOpenAICodex,
 		AuthData: authData{Type: "chatgpt", AccessToken: &accessToken, RefreshToken: &refreshToken},
 	}}}); err != nil {
 		t.Fatal(err)
@@ -167,17 +168,19 @@ func TestUsageRefreshFallsBackToCompatibleCache(t *testing.T) {
 	service := testService(t, client)
 	service.now = func() time.Time { return now }
 	if err := service.saveAccounts(&accountsStore{Accounts: []storedAccount{{
-		ID: "one", Name: "Personal", Provider: "OpenAI",
+		ID: "one", Name: "Personal", Provider: providerOpenAICodex,
 		AuthData: authData{Type: "chatgpt", AccessToken: &accessToken, RefreshToken: &refreshToken},
 	}}}); err != nil {
 		t.Fatal(err)
 	}
 	shortSeconds := 18_000
+	used := 40.0
 	if err := service.saveCache("one", cacheEntry{
 		PlanType: "plus", FetchedAt: now.Add(-time.Minute).Unix(),
 		RateLimit: &codexapi.RateLimitDetails{PrimaryWindow: &codexapi.RateLimitWindow{
 			UsedPercent: 40, LimitWindowSeconds: &shortSeconds,
 		}},
+		ProviderUsage: &providers.Usage{Plan: "plus", Metrics: []providers.Metric{{Kind: providers.Percentage, Slot: providers.SessionSlot, Label: "SESSION", Used: &used}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -207,12 +210,28 @@ func TestSaveAPIKeyAccountAndFetchDeepSeekBalance(t *testing.T) {
 		t.Fatalf("save account = %#v, %v", mutation, err)
 	}
 	results, err := service.Usage(context.Background(), mutation.Account.ID, true)
-	if err != nil || len(results) != 1 || results[0].Snapshot == nil || results[0].Snapshot.Windows[0].Label != "USD 12.50" {
+	if err != nil || len(results) != 1 || len(results[0].Metrics) != 0 || results[0].Account.PlanType != "USD 12.50" {
 		t.Fatalf("usage = %#v, %v", results, err)
 	}
 	encoded, _ := json.Marshal(mutation)
 	if strings.Contains(string(encoded), "secret") {
 		t.Fatalf("mutation leaked API key: %s", encoded)
+	}
+}
+
+func TestSaveAPIKeyAccountUpdatesSelectedAccount(t *testing.T) {
+	service := testService(t, nil)
+	created, err := service.SaveAPIKeyAccount(APIKeyAccount{Provider: providerDeepSeek, APIKey: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.SaveAPIKeyAccount(APIKeyAccount{Account: created.Account.ID, Provider: providerDeepSeek, APIKey: "second"})
+	if err != nil || updated.Action != "updated" {
+		t.Fatalf("update = %#v, %v", updated, err)
+	}
+	store, err := service.loadAccounts()
+	if err != nil || len(store.Accounts) != 1 || stringValue(store.Accounts[0].AuthData.APIKey) != "second" {
+		t.Fatalf("accounts = %#v, %v", store, err)
 	}
 }
 

@@ -52,9 +52,9 @@ func TestCollectUsageRowsTreatsMissingAccountsFileAsEmpty(t *testing.T) {
 }
 
 func TestCachedUsageRowsReturnsSkeletonWithoutSnapshot(t *testing.T) {
-	accounts := []storedAccount{{ID: "one", Name: "Personal", Provider: "OpenAI", AuthData: authData{Type: "chatgpt"}}}
+	accounts := []storedAccount{{ID: "one", Name: "Personal", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}}
 	rows, newest := cachedUsageRows(accounts, nil, time.Now())
-	if len(rows) != 1 || !rows[0].Loading || rows[0].Primary != "loading…" {
+	if len(rows) != 1 || !rows[0].Loading {
 		t.Fatalf("cachedUsageRows() = %#v", rows)
 	}
 	if !newest.IsZero() {
@@ -66,18 +66,14 @@ func TestCachedUsageRowsRendersPersistedSnapshot(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	shortSeconds := 5 * 60 * 60
 	weeklySeconds := 7 * 24 * 60 * 60
-	accounts := []storedAccount{{ID: "one", Name: "Personal", Provider: "OpenAI", AuthData: authData{Type: "chatgpt"}}}
+	accounts := []storedAccount{{ID: "one", Name: "Personal", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}}
 	cache := map[string]usageCacheEntry{"one": {
-		PlanType: "plus",
-		RateLimit: &rateLimitDetails{
-			PrimaryWindow:   &rateLimitWindow{UsedPercent: 25, LimitWindowSeconds: &shortSeconds},
-			SecondaryWindow: &rateLimitWindow{UsedPercent: 50, LimitWindowSeconds: &weeklySeconds},
-		},
-		ResetCredits: &resetCreditsPayload{AvailableCount: 2},
-		FetchedAt:    now.Add(-time.Minute).Unix(),
+		ProviderUsage: &providerUsage{Plan: "plus", Metrics: []providerMetric{codexWindowMetric(sessionSlot, "SESSION", &rateLimitDetails{PrimaryWindow: &rateLimitWindow{UsedPercent: 25, LimitWindowSeconds: &shortSeconds}}, true), codexWindowMetric(weeklySlot, "WEEKLY", &rateLimitDetails{SecondaryWindow: &rateLimitWindow{UsedPercent: 50, LimitWindowSeconds: &weeklySeconds}}, false)}},
+		ResetCredits:  &resetCreditsPayload{AvailableCount: 2},
+		FetchedAt:     now.Add(-time.Minute).Unix(),
 	}}
 	rows, newest := cachedUsageRows(accounts, cache, now)
-	if len(rows) != 1 || rows[0].Loading || rows[0].Plan != "plus" || rows[0].PrimaryUsed == nil || *rows[0].PrimaryUsed != 25 || rows[0].ResetCredits != "2" {
+	if len(rows) != 1 || rows[0].Loading || rows[0].Plan != "plus" || len(rows[0].Metrics) != 2 || rows[0].Metrics[0].Used == nil || *rows[0].Metrics[0].Used != 25 || rows[0].ResetCredits != "2" {
 		t.Fatalf("cachedUsageRows() = %#v", rows)
 	}
 	if !newest.Equal(now.Add(-time.Minute)) {
@@ -87,12 +83,13 @@ func TestCachedUsageRowsRendersPersistedSnapshot(t *testing.T) {
 
 func TestCachedFallbackUsageRowIsMarkedStale(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	account := storedAccount{ID: "one", Name: "Personal", Provider: "OpenAI", AuthData: authData{Type: "chatgpt"}}
+	account := storedAccount{ID: "one", Name: "Personal", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}
+	used := 25.0
 	row := cachedOrUnavailableUsageRow(account, usageCacheEntry{
-		RateLimit: &rateLimitDetails{PrimaryWindow: &rateLimitWindow{UsedPercent: 25}},
-		FetchedAt: now.Add(-time.Minute).Unix(),
+		ProviderUsage: &providerUsage{Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}}},
+		FetchedAt:     now.Add(-time.Minute).Unix(),
 	}, now)
-	if !row.Stale || row.PrimaryUsed == nil || *row.PrimaryUsed != 25 {
+	if !row.Stale || len(row.Metrics) != 2 || row.Metrics[0].Used == nil || *row.Metrics[0].Used != 25 {
 		t.Fatalf("cached fallback row = %#v", row)
 	}
 }
@@ -103,14 +100,13 @@ func TestNewTUIModelBootstrapsFromCacheBeforeNetworkInit(t *testing.T) {
 	shortSeconds := 5 * 60 * 60
 	cachedResets := &resetCreditsPayload{AvailableCount: 3}
 	store := &accountsStore{
-		Accounts: []storedAccount{{ID: "one", Name: "Personal", Provider: "OpenAI", AuthData: authData{Type: "chatgpt"}}},
+		Accounts: []storedAccount{{ID: "one", Name: "Personal", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}},
 	}
 	if err := saveAccounts(path, store); err != nil {
 		t.Fatalf("saveAccounts() error = %v", err)
 	}
 	if err := saveAccountUsageCache("one", usageCacheEntry{
-		PlanType:       "plus",
-		RateLimit:      &rateLimitDetails{PrimaryWindow: &rateLimitWindow{UsedPercent: 35, LimitWindowSeconds: &shortSeconds}},
+		ProviderUsage:  &providerUsage{Plan: "plus", Metrics: []providerMetric{codexWindowMetric(sessionSlot, "SESSION", &rateLimitDetails{PrimaryWindow: &rateLimitWindow{UsedPercent: 35, LimitWindowSeconds: &shortSeconds}}, true), {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}}},
 		ResetCredits:   cachedResets,
 		FetchedAt:      time.Now().Add(-time.Minute).Unix(),
 		ResetFetchedAt: time.Now().Add(-time.Minute).Unix(),
@@ -118,7 +114,7 @@ func TestNewTUIModelBootstrapsFromCacheBeforeNetworkInit(t *testing.T) {
 		t.Fatalf("saveAccountUsageCache() error = %v", err)
 	}
 	m := newTUIModel(path, &http.Client{})
-	if !m.initialized || len(m.rows) != 1 || m.rows[0].Loading || m.rows[0].PrimaryUsed == nil || *m.rows[0].PrimaryUsed != 35 {
+	if !m.initialized || len(m.rows) != 1 || m.rows[0].Loading || len(m.rows[0].Metrics) != 2 || m.rows[0].Metrics[0].Used == nil || *m.rows[0].Metrics[0].Used != 35 {
 		t.Fatalf("newTUIModel() did not bootstrap cached usage: %#v", m)
 	}
 	if m.resetCache["one"] == nil || m.resetCache["one"].AvailableCount != 3 {
@@ -151,13 +147,13 @@ func TestCollectUsageRowsDoesNotShowCachedQuotaWhenAuthenticationExpires(t *test
 	store := &accountsStore{Accounts: []storedAccount{{
 		ID:       "one",
 		Name:     "Personal",
-		Provider: "OpenAI",
+		Provider: providerOpenAICodex,
 		AuthData: authData{Type: "chatgpt", AccessToken: &expiredToken, RefreshToken: strPtr("expired-refresh-token")},
 	}}}
 	if err := saveAccounts(accountsPath, store); err != nil {
 		t.Fatalf("save accounts: %v", err)
 	}
-	if err := saveAccountUsageCache("one", usageCacheEntry{RateLimit: &rateLimitDetails{PrimaryWindow: &rateLimitWindow{UsedPercent: 0}}, FetchedAt: time.Now().Unix()}); err != nil {
+	if err := saveAccountUsageCache("one", usageCacheEntry{ProviderUsage: &providerUsage{Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION"}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}}}, FetchedAt: time.Now().Unix()}); err != nil {
 		t.Fatalf("save cache: %v", err)
 	}
 	client := &http.Client{Transport: usageRoundTripper(func(*http.Request) (*http.Response, error) {
@@ -173,7 +169,7 @@ func TestCollectUsageRowsDoesNotShowCachedQuotaWhenAuthenticationExpires(t *test
 	if err != nil {
 		t.Fatalf("collect usage: %v", err)
 	}
-	if len(rows) != 1 || !rows[0].AuthRequired || rows[0].Primary != "sign in required" || rows[0].PrimaryUsed != nil {
+	if len(rows) != 1 || !rows[0].AuthRequired || len(rows[0].Metrics) != 0 {
 		t.Fatalf("expired authentication row = %#v", rows)
 	}
 }
