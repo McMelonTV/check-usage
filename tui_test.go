@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,85 @@ func TestTUILeftAndRightSwitchTabs(t *testing.T) {
 	}
 }
 
+func TestUsageTabSupportsAccountManagementKeys(t *testing.T) {
+	m := tuiModel{tab: usageTab,
+		accounts: []storedAccount{
+			{ID: "one", Name: "Personal", Provider: providerCodex},
+			{ID: "two", Name: "Work", Provider: providerDeepSeek},
+		},
+		rows: []usageRow{
+			{ID: "one", Name: "Personal", ProviderID: providerCodex},
+			{ID: "two", Name: "Work", ProviderID: providerDeepSeek},
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = updated.(tuiModel)
+	if !m.editingName || m.nameInput != "Personal" {
+		t.Fatalf("e did not start rename: %#v", m)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(tuiModel)
+	if m.editingName {
+		t.Fatalf("esc did not cancel rename: %#v", m)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(tuiModel)
+	if m.removeArmed != "one" || !strings.Contains(m.notice, "again") {
+		t.Fatalf("d did not arm removal: %#v", m)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(tuiModel)
+	if m.cursor != 1 || m.removeArmed != "" {
+		t.Fatalf("cursor move did not clear armed removal: %#v", m)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(tuiModel)
+	if !m.authActive || !m.authSelectingProvider {
+		t.Fatalf("a did not start provider selection: %#v", m)
+	}
+}
+
+func TestUsageTabRenameTargetsRowAccountNotIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounts.json")
+	store := &accountsStore{Accounts: []storedAccount{
+		{ID: "alpha", Name: "Zulu", Provider: providerCodex},
+		{ID: "beta", Name: "Alpha", Provider: providerDeepSeek},
+	}}
+	if err := saveAccounts(path, store); err != nil {
+		t.Fatal(err)
+	}
+	// rows are sorted by name, so cursor 0 points at "Alpha" (id beta).
+	m := tuiModel{tab: usageTab, accountsPath: path,
+		accounts: store.Accounts,
+		rows: []usageRow{
+			{ID: "beta", Name: "Alpha", ProviderID: providerDeepSeek},
+			{ID: "alpha", Name: "Zulu", ProviderID: providerCodex},
+		},
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = updated.(tuiModel)
+	m.nameInput = "Renamed"
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(tuiModel)
+	if m.editingName || cmd == nil {
+		t.Fatalf("rename did not save: %#v", m)
+	}
+	msg := cmd().(storeSavedMsg)
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	loaded, err := loadAccounts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Accounts[1].Name != "Renamed" {
+		t.Fatalf("renamed the wrong account: %#v", loaded.Accounts)
+	}
+}
+
 func TestTUIUpDoesNotFocusTabsAndTabPreservesSelection(t *testing.T) {
 	m := tuiModel{tab: usageTab, cursor: 2, rows: []usageRow{{}, {}, {}}}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
@@ -90,10 +170,10 @@ func TestTUIUpDoesNotFocusTabsAndTabPreservesSelection(t *testing.T) {
 }
 
 func TestTUITabFocusesTabRowWithoutSwitching(t *testing.T) {
-	m := tuiModel{tab: accountsTab}
+	m := tuiModel{tab: settingsTab}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(tuiModel)
-	if !m.tabRowFocused || m.tab != accountsTab {
+	if !m.tabRowFocused || m.tab != settingsTab {
 		t.Fatalf("Tab result: focused=%v tab=%d", m.tabRowFocused, m.tab)
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -333,9 +413,6 @@ func TestUsageListShowsAuthenticationRecovery(t *testing.T) {
 	if !strings.Contains(strings.ToLower(view), "sign in required") {
 		t.Fatalf("authentication status is missing:\n%s", view)
 	}
-	if !strings.Contains(view, "Open Accounts and press r to reconnect.") {
-		t.Fatalf("authentication recovery instruction missing:\n%s", view)
-	}
 }
 
 func TestTUIMouseClickChangesTabAndSelectsUsageRow(t *testing.T) {
@@ -426,7 +503,7 @@ func TestTUIMouseSecondClickArmsResetCredit(t *testing.T) {
 
 func TestTUIMouseDoubleClickReauthenticatesAccount(t *testing.T) {
 	account := storedAccount{ID: "one", Name: "One", Provider: providerDeepSeek}
-	m := tuiModel{tab: accountsTab, width: 100, height: 24, accounts: []storedAccount{account}, lastMouseTarget: "account:one", lastMouseAt: time.Now()}
+	m := tuiModel{tab: usageTab, width: 100, height: 24, accounts: []storedAccount{account}, rows: []usageRow{{ID: "one", Name: "One", ProviderID: providerDeepSeek}}, lastMouseTarget: "account:one", lastMouseAt: time.Now()}
 	updated, _ := m.Update(tea.MouseMsg{X: 3, Y: 7, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	m = updated.(tuiModel)
 	if !m.authActive || m.authProviderID != providerDeepSeek || m.authReauthID != "one" {
@@ -484,32 +561,6 @@ func TestResetsTabHidesUnsupportedProviders(t *testing.T) {
 	accounts := m.resetAccounts()
 	if len(accounts) != 1 || accounts[0].ID != "codex" {
 		t.Fatalf("reset accounts = %#v", accounts)
-	}
-}
-
-func TestAccountsTabColumnOrder(t *testing.T) {
-	m := tuiModel{
-		tab: accountsTab, width: 110, height: 24, settings: defaultAppSettings(),
-		accounts: []storedAccount{{Name: "Personal", PlanType: strPtr("plus"), Provider: providerCodex, Email: strPtr("person@example.com")}},
-	}
-	view := ansi.Strip(m.View())
-	nameIndex := strings.Index(view, "ACCOUNT NAME")
-	providerIndex := strings.Index(view, "PROVIDER")
-	planIndex := strings.Index(view, "PLAN")
-	emailIndex := strings.Index(view, "EMAIL")
-	if !(nameIndex >= 0 && nameIndex < providerIndex && providerIndex < planIndex && planIndex < emailIndex) {
-		t.Fatalf("account columns are out of order:\n%s", view)
-	}
-}
-
-func TestCompactAccountsTabShowsProviderBeforePlan(t *testing.T) {
-	m := tuiModel{
-		tab: accountsTab, width: 64, height: 24, settings: defaultAppSettings(),
-		accounts: []storedAccount{{Name: "Personal", PlanType: strPtr("plus"), Provider: providerCodex, Email: strPtr("person@example.com")}},
-	}
-	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "Codex · plus") {
-		t.Fatalf("compact account metadata is out of order:\n%s", view)
 	}
 }
 
@@ -590,7 +641,7 @@ func TestFocusedTabFooterDescribesFocusControls(t *testing.T) {
 }
 
 func TestEveryTabFooterShowsQuitBinding(t *testing.T) {
-	for _, tab := range []tuiTab{usageTab, resetsTab, accountsTab, settingsTab} {
+	for _, tab := range []tuiTab{usageTab, resetsTab, settingsTab} {
 		m := tuiModel{tab: tab}
 		footer := ansi.Strip(m.renderFooter(44))
 		if !strings.Contains(footer, "q quit") {
@@ -604,17 +655,17 @@ func TestEveryTabFooterShowsQuitBinding(t *testing.T) {
 	}
 }
 
-func TestAccountsTabSupportsReauthentication(t *testing.T) {
-	m := tuiModel{tab: accountsTab, accounts: []storedAccount{{ID: "one", Name: "Personal", Provider: providerCodex}}}
-	if footer := ansi.Strip(m.renderFooter(100)); !strings.Contains(footer, "r reauthenticate") {
-		t.Fatalf("accounts footer does not document reauthentication: %s", footer)
+func TestUsageTabSupportsReauthentication(t *testing.T) {
+	m := tuiModel{tab: usageTab, accounts: []storedAccount{{ID: "one", Name: "Personal", Provider: providerCodex}}, rows: []usageRow{{ID: "one", Name: "Personal", ProviderID: providerCodex}}}
+	if footer := ansi.Strip(m.renderFooter(100)); !strings.Contains(footer, "x reauth") {
+		t.Fatalf("usage footer does not document reauthentication: %s", footer)
 	}
-	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	m = updated.(tuiModel)
 	if command == nil || !m.authActive || !m.authLoading || m.authReauthID != "one" {
-		t.Fatal("r did not start reauthentication")
+		t.Fatal("x did not start reauthentication")
 	}
-	if m.tab != accountsTab {
+	if m.tab != usageTab {
 		t.Fatalf("tab changed to %d", m.tab)
 	}
 }
@@ -677,7 +728,7 @@ func TestTUIViewFitsCommonTerminalWidths(t *testing.T) {
 			Status: "available", Title: "A reset credit with a very long descriptive title",
 			GrantedAt: "2026-08-01T12:00:00Z", ExpiresAt: "2026-08-09T12:00:00Z",
 		}}}
-		for _, tab := range []tuiTab{usageTab, resetsTab, accountsTab, settingsTab} {
+		for _, tab := range []tuiTab{usageTab, resetsTab, settingsTab} {
 			m.tab = tab
 			view := m.View()
 			if got := lipgloss.Height(view); got > m.height {
@@ -705,28 +756,9 @@ func TestTUIViewRendersDashboardAndCompactLayout(t *testing.T) {
 	}
 
 	view := m.View()
-	for _, want := range []string{"AI", "USAGE", "Personal", "Codex", "SESSION", "WEEKLY", "MONTHLY", "42%", "73%", "person@example.com"} {
+	for _, want := range []string{"AI", "USAGE", "Personal", "CODEX", "SESSION", "WEEKLY", "MONTHLY", "42%", "73%"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q:\n%s", want, view)
-		}
-	}
-}
-
-func TestUsageDetailsHaveOneBlankRowAbove(t *testing.T) {
-	used := 25.0
-	for _, compact := range []bool{false, true} {
-		m := tuiModel{
-			width: 110, height: 24,
-			settings: appSettings{UsageDisplay: "used", BarFill: "left", BarOrder: "bar_percent_reset", ColorTheme: "default", CompactMode: compact},
-			rows: []usageRow{{
-				Name: "Personal", Email: "person@example.com", ProviderID: providerCodex, Provider: "Codex", Plan: "plus",
-				Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "0", SupportsResetCredits: true,
-			}},
-		}
-		list := strings.TrimRight(m.renderAccountList(110, 22), "\n")
-		want := list + "\n\n" + m.renderDetails(110)
-		if got := m.renderUsageTab(110, 22); got != want {
-			t.Fatalf("compact=%v detail spacing differs", compact)
 		}
 	}
 }

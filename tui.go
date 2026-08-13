@@ -16,7 +16,6 @@ import (
 const (
 	tuiMaxWidth     = 120
 	tuiWideAt       = 98
-	tuiDetailAt     = 19
 	tuiMinListLen   = 1
 	tuiSettingsRows = 9
 )
@@ -26,7 +25,6 @@ type tuiTab int
 const (
 	usageTab tuiTab = iota
 	resetsTab
-	accountsTab
 	settingsTab
 	tuiTabCount
 )
@@ -513,7 +511,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if key == "r" && m.tab != accountsTab {
+		if key == "r" {
 			if m.tab == resetsTab && !m.loading {
 				m.resetPayload, m.resetErr, m.resetAccountID = nil, nil, ""
 				m.resetLoading = true
@@ -530,7 +528,34 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 	switch m.tab {
 	case usageTab:
+		before := m.cursor
 		m.cursor = moveCursor(m.cursor, len(m.rows), key)
+		if before != m.cursor {
+			m.removeArmed, m.notice = "", ""
+		}
+		switch key {
+		case "a":
+			return m.startAccountAdd()
+		case "x":
+			if account, ok := m.selectedRowAccount(); ok {
+				return m.startAccountReauthentication(account)
+			}
+		case "e":
+			if account, ok := m.selectedRowAccount(); ok {
+				m.editingName = true
+				m.nameInput = account.Name
+				m.notice = ""
+			}
+		case "d":
+			if account, ok := m.selectedRowAccount(); ok {
+				if m.removeArmed != account.ID {
+					m.removeArmed = account.ID
+					m.notice = "Press d again to remove " + account.Name
+				} else {
+					return m, removeAccountCmd(m.accountsPath, account.ID, account.Name)
+				}
+			}
+		}
 
 	case resetsTab:
 		if !m.resetRowsFocused {
@@ -567,36 +592,6 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 			m.consumeArmed, m.notice = "", ""
 		} else if key == "enter" {
 			m.armResetConsumption()
-		}
-
-	case accountsTab:
-		before := m.cursor
-		m.cursor = moveCursor(m.cursor, len(m.accounts), key)
-		if before != m.cursor {
-			m.removeArmed, m.notice = "", ""
-		}
-		switch key {
-		case "a":
-			return m.startAccountAdd()
-		case "r":
-			if account, ok := m.selectedAccount(); ok {
-				return m.startAccountReauthentication(account)
-			}
-		case "e":
-			if account, ok := m.selectedAccount(); ok {
-				m.editingName = true
-				m.nameInput = account.Name
-				m.notice = ""
-			}
-		case "d":
-			if account, ok := m.selectedAccount(); ok {
-				if m.removeArmed != account.ID {
-					m.removeArmed = account.ID
-					m.notice = "Press d again to remove " + account.Name
-				} else {
-					return m, removeAccountCmd(m.accountsPath, account.ID, account.Name)
-				}
-			}
 		}
 
 	case settingsTab:
@@ -898,7 +893,7 @@ func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	x := msg.X - tuiContentOrigin(m.width)
 	if msg.Y == 2 {
-		for i, right := range []int{8, 17, 28, 38} {
+		for i, right := range []int{8, 17, 28} {
 			if x < right {
 				m.tab = tuiTab(i)
 				m.tabRowFocused = false
@@ -918,8 +913,16 @@ func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	switch m.tab {
 	case usageTab:
+		if len(m.rows) == 0 && msg.Y >= 5 {
+			return m.startAccountAdd()
+		}
 		if index, ok := m.usageMouseRowIndex(msg.Y); ok {
 			m.cursor = index
+			if m.registerMouseClick("account:" + m.rows[index].ID) {
+				if account, ok := m.selectedRowAccount(); ok {
+					return m.startAccountReauthentication(account)
+				}
+			}
 		}
 	case resetsTab:
 		sidebarWidth := max(10, min(24, tuiContentWidth(m.width)/3))
@@ -938,16 +941,6 @@ func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.armResetConsumption()
 			} else {
 				m.consumeArmed, m.notice = "", ""
-			}
-		}
-	case accountsTab:
-		if len(m.accounts) == 0 && msg.Y >= 5 {
-			return m.startAccountAdd()
-		}
-		if index, ok := m.mouseRowIndex(msg.Y, len(m.accounts), m.width >= 80, 7, 5); ok {
-			m.cursor = index
-			if m.registerMouseClick("account:" + m.accounts[index].ID) {
-				return m.startAccountReauthentication(m.accounts[index])
 			}
 		}
 	case settingsTab:
@@ -1094,7 +1087,7 @@ func (m tuiModel) updateNameEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.editingName, m.nameInput = false, ""
 	case "enter":
 		name := strings.TrimSpace(m.nameInput)
-		account, selected := m.selectedAccount()
+		account, selected := m.selectedRowAccount()
 		if !selected || name == "" {
 			m.notice = "Account name cannot be empty"
 			return m, nil
@@ -1145,6 +1138,19 @@ func (m tuiModel) selectedAccount() (storedAccount, bool) {
 	return accounts[m.cursor], true
 }
 
+func (m tuiModel) selectedRowAccount() (storedAccount, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return storedAccount{}, false
+	}
+	id := m.rows[m.cursor].ID
+	for _, account := range m.accounts {
+		if account.ID == id {
+			return account, true
+		}
+	}
+	return storedAccount{}, false
+}
+
 func (m tuiModel) resetAccounts() []storedAccount {
 	accounts := make([]storedAccount, 0, len(m.accounts))
 	for _, account := range m.accounts {
@@ -1158,11 +1164,8 @@ func (m tuiModel) resetAccounts() []storedAccount {
 
 func (m *tuiModel) clampCursor() {
 	count := len(m.rows)
-	if m.tab == resetsTab || m.tab == accountsTab {
-		count = len(m.accounts)
-		if m.tab == resetsTab {
-			count = len(m.resetAccounts())
-		}
+	if m.tab == resetsTab {
+		count = len(m.resetAccounts())
 	}
 	if m.cursor >= count {
 		m.cursor = max(0, count-1)
@@ -1293,8 +1296,6 @@ func (m tuiModel) View() string {
 			sections = append(sections, m.renderUsageTab(contentWidth, innerHeight))
 		case resetsTab:
 			sections = append(sections, m.renderResetsTab(contentWidth, innerHeight))
-		case accountsTab:
-			sections = append(sections, m.renderAccountsTab(contentWidth, innerHeight))
 		case settingsTab:
 			sections = append(sections, m.renderSettingsTab(contentWidth, innerHeight))
 		}
@@ -1320,7 +1321,7 @@ func (m tuiModel) renderHeader(width int) string {
 	}
 	header := brand + strings.Repeat(" ", max(1, width-lipgloss.Width(brand)-lipgloss.Width(status))) + status
 
-	tabNames := []string{"Usage", "Resets", "Accounts", "Settings"}
+	tabNames := []string{"Usage", "Resets", "Settings"}
 	tabs := make([]string, 0, len(tabNames))
 	for i, name := range tabNames {
 		style := lipgloss.NewStyle().Foreground(mutedColor).Padding(0, 1)
@@ -1440,13 +1441,28 @@ func (m tuiModel) renderRefreshWarning(width int, err error) string {
 
 func (m tuiModel) renderUsageTab(width, height int) string {
 	if len(m.rows) == 0 {
-		return m.renderEmpty(width, "No accounts yet", "Open the Accounts tab and press a to choose a provider.")
+		body := "Press a to choose a provider."
+		if m.notice != "" {
+			body += "\n\n" + m.notice
+		}
+		return m.renderEmpty(width, "No accounts yet", body)
 	}
-	accountList := m.renderAccountList(width, height)
-	if height >= tuiDetailAt {
-		return strings.TrimRight(accountList, "\n") + "\n\n" + m.renderDetails(width)
+	listHeight := height
+	if m.notice != "" || m.editingName {
+		listHeight = max(1, height-2)
+	}
+	accountList := m.renderAccountList(width, listHeight)
+	if m.editingName {
+		return strings.TrimRight(accountList, "\n") + "\n\n" + m.renderNameEditor(width)
+	}
+	if m.notice != "" {
+		return strings.TrimRight(accountList, "\n") + "\n\n" + noticeStyle(m.notice).Render(ansi.Truncate(m.notice, width, "…"))
 	}
 	return accountList
+}
+
+func (m tuiModel) renderNameEditor(width int) string {
+	return tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render("Rename account") + "\n\n" + tuiAccentStyle.Render("> ") + m.nameInput + "█\n\n" + tuiMutedStyle.Render("Enter save · Esc cancel"))
 }
 
 func (m tuiModel) renderEmpty(width int, title, body string) string {
@@ -1485,7 +1501,7 @@ func (m tuiModel) renderWideList(width, height int) string {
 		}
 		name := row.Name
 		if row.Stale || row.ResetsStale {
-			name += " " + lipgloss.NewStyle().Foreground(amberColor).Render("(Stale)")
+			name = ansi.Truncate(name, max(1, nameWidth-8), "…") + " " + lipgloss.NewStyle().Foreground(amberColor).Render("(Stale)")
 		}
 		includeReset := m.settings.CompactMode
 		session := m.renderUsageSlot(row, sessionSlot, usageWidth, includeReset)
@@ -1552,34 +1568,6 @@ func (m tuiModel) renderCompactList(width, height int) string {
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-func (m tuiModel) renderDetails(width int) string {
-	if m.cursor >= len(m.rows) {
-		return ""
-	}
-	row := m.rows[m.cursor]
-	labelStyle := lipgloss.NewStyle().Foreground(mutedColor).Width(9)
-	name := tuiTitleStyle.Render(row.Name)
-	if row.Stale || row.ResetsStale {
-		name += "  " + lipgloss.NewStyle().Bold(true).Foreground(amberColor).Render("(Stale)")
-	}
-	nameLine := name + "  " + tuiMutedStyle.Render(row.Email+" · "+row.Provider+" · "+row.Plan)
-	if row.AuthRequired {
-		return tuiBorderStyle.Width(max(20, width-4)).Render(nameLine + "\n" + tuiErrorStyle.Render(credentialRequiredText(row)+". Open Accounts and press r to reconnect."))
-	}
-	lines := []string{nameLine}
-	now := time.Now()
-	for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
-		label := strings.ToUpper(string(slot))
-		lines = append(lines, labelStyle.Render(label)+ansi.Truncate(usageSlotText(row, slot, now), max(16, width-15), "…"))
-	}
-	resets := resetSlotText(row)
-	if row.ResetsStale {
-		resets += " (stale)"
-	}
-	lines = append(lines, labelStyle.Render("RESETS")+ansi.Truncate(resets, max(16, width-15), "…"))
-	return tuiBorderStyle.Width(max(20, width-4)).Render(strings.Join(lines, "\n"))
 }
 
 func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int, includeReset bool) string {
@@ -1774,62 +1762,6 @@ func (m *tuiModel) showFocusedResetCache() bool {
 	return m.resetPayload != nil
 }
 
-func (m tuiModel) renderAccountsTab(width, height int) string {
-	if len(m.accounts) == 0 {
-		return m.renderEmpty(width, "No accounts yet", "Press a to choose a provider.")
-	}
-	lines := []string{""}
-	if width >= 80 {
-		headerStyle := lipgloss.NewStyle().Foreground(mutedColor).Bold(true)
-		nameW, planW, providerW := max(14, width/5), 10, 13
-		emailW := max(14, width-nameW-providerW-planW-8)
-		lines = append(lines, "  "+cell(headerStyle.Render("ACCOUNT NAME"), nameW)+" "+cell(headerStyle.Render("PROVIDER"), providerW)+" "+cell(headerStyle.Render("PLAN"), planW)+" "+cell(headerStyle.Render("EMAIL"), emailW), "")
-		rowStride := 1
-		if !m.settings.CompactMode {
-			rowStride = 2
-		}
-		maxRows := max(1, (height-12)/rowStride)
-		start, end := visibleRange(len(m.accounts), m.cursor, maxRows)
-		for i := start; i < end; i++ {
-			account := m.accounts[i]
-			marker, nameStyle := "  ", lipgloss.NewStyle().Foreground(textColor)
-			if i == m.cursor {
-				marker, nameStyle = selectedRowVisual(m.tabRowFocused)
-			}
-			lines = append(lines, marker+cell(nameStyle.Render(account.Name), nameW)+" "+cell(tuiMutedStyle.Render(providerName(account.Provider)), providerW)+" "+cell(tuiMutedStyle.Render(accountPlan(account)), planW)+" "+cell(tuiMutedStyle.Render(valueOrDash(account.Email)), emailW))
-			if !m.settings.CompactMode {
-				lines = append(lines, "")
-			}
-		}
-	} else {
-		rowStride := 2
-		if !m.settings.CompactMode {
-			rowStride = 3
-		}
-		maxRows := max(1, (height-12)/rowStride)
-		start, end := visibleRange(len(m.accounts), m.cursor, maxRows)
-		for i := start; i < end; i++ {
-			account := m.accounts[i]
-			marker, nameStyle := "  ", lipgloss.NewStyle().Foreground(textColor)
-			if i == m.cursor {
-				marker, nameStyle = selectedRowVisual(m.tabRowFocused)
-			}
-			accountLine := marker + nameStyle.Render(account.Name) + "  " + tuiMutedStyle.Render(providerName(account.Provider)+" · "+accountPlan(account))
-			lines = append(lines, ansi.Truncate(accountLine, width, "…"))
-			lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(valueOrDash(account.Email), width-2, "…")))
-			if !m.settings.CompactMode {
-				lines = append(lines, "")
-			}
-		}
-	}
-	if m.editingName {
-		lines = append(lines, tuiBorderStyle.Width(max(20, width-4)).Render(tuiTitleStyle.Render("Rename account")+"\n\n"+tuiAccentStyle.Render("> ")+m.nameInput+"█\n\n"+tuiMutedStyle.Render("Enter save · Esc cancel")))
-	} else if m.notice != "" {
-		lines = append(lines, noticeStyle(m.notice).Render(ansi.Truncate(m.notice, width, "…")))
-	}
-	return strings.Join(lines, "\n")
-}
-
 type settingsItem struct {
 	label, value, description string
 }
@@ -1884,6 +1816,10 @@ func (m tuiModel) renderHelp(width int) string {
 		key.Render("←/→") + "Switch the focused tab",
 		key.Render("↑/k  ↓/j") + "Move selection",
 		key.Render("enter") + "Select or activate",
+		key.Render("a") + "Add an account",
+		key.Render("x") + "Reauthenticate selected account",
+		key.Render("e") + "Rename selected account",
+		key.Render("d") + "Remove selected account",
 		key.Render("r") + "Refresh usage data",
 		key.Render("? / esc") + "Close this help",
 		key.Render("q") + "Quit",
@@ -1906,12 +1842,12 @@ func (m tuiModel) renderFooter(width int) string {
 	switch m.tab {
 	case resetsTab:
 		if m.resetRowsFocused {
-			help = "↑/↓ reset   q quit   enter claim/confirm   ← accounts   tab tabs"
+			help = "↑/↓ reset   q quit   enter claim/confirm   ← usage   tab tabs"
 		} else {
 			help = "↑/↓ account   q quit   enter/→ open   tab focuses tabs   ? help"
 		}
-	case accountsTab:
-		help = "↑/↓ navigate   q quit   a add provider   r reauthenticate   e rename   d remove   ? help"
+	case usageTab:
+		help = "↑/↓ navigate   q quit   a add   x reauth   e rename   d remove   r refresh   ? help"
 	case settingsTab:
 		help = "↑/↓ setting   q quit   ←/→ change   tab focuses tabs   ? help"
 	}

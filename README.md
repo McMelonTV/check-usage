@@ -42,7 +42,7 @@ Then open the interactive usage dashboard:
 ./check-usage
 ```
 
-The Bubble Tea interface has Usage, Resets, Accounts, and Settings tabs. Press `Tab` to focus the tab row, then use Left/Right to switch tabs; the active content row remains selected but muted. Press `Tab` again to restore content focus, or press Up/Down to restore focus and move immediately. Use `r` to refresh, `?` for help, and `q` to quit.
+The Bubble Tea interface has Usage, Resets, and Settings tabs. Press `Tab` to focus the tab row, then use Left/Right to switch tabs; the active content row remains selected but muted. Press `Tab` again to restore content focus, or press Up/Down to restore focus and move immediately. Use `r` to refresh, `a` to add an account, `x` to reauthenticate the selected account, `e` to rename it, `d` to remove it, `?` for help, and `q` to quit.
 
 Resets uses an account sidebar and immediately shows cached resets for the focused account. Choose an account with Up/Down, then press Enter or Right to focus its reset rows and refresh them. Press Enter twice on a reset to confirm a claim. Claiming is currently a UI-only placeholder and does not call an API; Left or Escape returns to the account sidebar.
 
