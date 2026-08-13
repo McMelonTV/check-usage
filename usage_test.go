@@ -62,6 +62,19 @@ func TestCachedUsageRowsReturnsSkeletonWithoutSnapshot(t *testing.T) {
 	}
 }
 
+func TestBaseOpenCodeRowUsesGoPlan(t *testing.T) {
+	row := baseUsageRow(storedAccount{Provider: providerOpenCodeGo})
+	if row.Provider != "OpenCode" || row.Plan != "Go" {
+		t.Fatalf("row = %#v", row)
+	}
+}
+
+func TestAccountPlanUsesOpenCodeDefault(t *testing.T) {
+	if got := accountPlan(storedAccount{Provider: providerOpenCodeGo}); got != "Go" {
+		t.Fatalf("plan = %q", got)
+	}
+}
+
 func TestCachedUsageRowsRendersPersistedSnapshot(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	shortSeconds := 5 * 60 * 60

@@ -32,6 +32,7 @@ const (
 type providerDefinition struct {
 	ID           string
 	Name         string
+	Plan         string
 	Credentials  credentialMode
 	ResetCredits bool
 }
@@ -49,7 +50,7 @@ func providerDefinitions() []providerDefinition {
 	definitions := providers.Definitions()
 	result := make([]providerDefinition, 0, len(definitions))
 	for _, definition := range definitions {
-		result = append(result, providerDefinition{ID: definition.ID, Name: definition.Name, Credentials: definition.Credentials, ResetCredits: definition.SupportsResetCredits})
+		result = append(result, providerDefinition{ID: definition.ID, Name: definition.Name, Plan: definition.Plan, Credentials: definition.Credentials, ResetCredits: definition.SupportsResetCredits})
 	}
 	return result
 }
@@ -59,7 +60,7 @@ func providerFor(id string) (providerDefinition, error) {
 	if !ok {
 		return providerDefinition{}, fmt.Errorf("unsupported provider %q", id)
 	}
-	return providerDefinition{ID: definition.ID, Name: definition.Name, Credentials: definition.Credentials, ResetCredits: definition.SupportsResetCredits}, nil
+	return providerDefinition{ID: definition.ID, Name: definition.Name, Plan: definition.Plan, Credentials: definition.Credentials, ResetCredits: definition.SupportsResetCredits}, nil
 }
 
 func providerName(id string) string {
@@ -68,6 +69,17 @@ func providerName(id string) string {
 		return id
 	}
 	return definition.Name
+}
+
+func accountPlan(account storedAccount) string {
+	if account.PlanType != nil && *account.PlanType != "" {
+		return *account.PlanType
+	}
+	provider, err := providerFor(account.Provider)
+	if err != nil {
+		return "-"
+	}
+	return firstNonEmpty(provider.Plan, "-")
 }
 
 func emptyProviderMetrics(providerID string) []providerMetric {

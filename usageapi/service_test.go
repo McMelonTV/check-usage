@@ -235,6 +235,21 @@ func TestSaveAPIKeyAccountUpdatesSelectedAccount(t *testing.T) {
 	}
 }
 
+func TestSaveOpenCodeAccountUsesGoPlan(t *testing.T) {
+	service := testService(t, nil)
+	mutation, err := service.SaveAPIKeyAccount(APIKeyAccount{Provider: providerOpenCodeGo, APIKey: "secret"})
+	if err != nil || mutation.Account.Name != "OpenCode" || mutation.Account.PlanType != "Go" {
+		t.Fatalf("mutation = %#v, error = %v", mutation, err)
+	}
+}
+
+func TestPublicOpenCodeAccountUsesDefaultPlan(t *testing.T) {
+	account := storedAccount{Provider: providerOpenCodeGo}.public()
+	if account.PlanType != "Go" {
+		t.Fatalf("account = %#v", account)
+	}
+}
+
 func testService(t *testing.T, client *http.Client) *Service {
 	t.Helper()
 	root := t.TempDir()

@@ -265,7 +265,7 @@ func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutatio
 			return AccountMutation{}, fmt.Errorf("account name %q already exists", name)
 		}
 	}
-	account := storedAccount{ID: newAccountID(service.now()), Name: name, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: stringPointer(strings.TrimSpace(request.APIKey))}}
+	account := storedAccount{ID: newAccountID(service.now()), Name: name, Provider: provider.ID, PlanType: stringPointer(provider.Plan), AuthData: authData{Type: string(apiKeyCredentials), APIKey: stringPointer(strings.TrimSpace(request.APIKey))}}
 	store.Accounts = append(store.Accounts, account)
 	if err := service.saveAccounts(store); err != nil {
 		return AccountMutation{}, err

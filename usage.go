@@ -100,7 +100,7 @@ func baseUsageRow(account storedAccount) usageRow {
 		ProviderID:           account.Provider,
 		Provider:             providerName(account.Provider),
 		Email:                valueOrDash(account.Email),
-		Plan:                 valueOrDash(account.PlanType),
+		Plan:                 accountPlan(account),
 		Metrics:              emptyProviderMetrics(account.Provider),
 		ResetCredits:         "-",
 		SupportsResetCredits: provider.ResetCredits,

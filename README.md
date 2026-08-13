@@ -28,7 +28,7 @@ Sign in to your first account:
 ./codex-usage accounts login --provider openai-codex --name "My Account"
 ```
 
-The account provider is always explicit. Add OpenCode Go or DeepSeek with an API key:
+The account provider is always explicit. Add OpenCode or DeepSeek with an API key:
 
 ```bash
 ./codex-usage accounts add --provider opencode-go --api-key-env OPENCODE_API_KEY

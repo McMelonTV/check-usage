@@ -117,9 +117,15 @@ type cacheEntry struct {
 }
 
 func (account storedAccount) public() Account {
+	plan := stringValue(account.PlanType)
+	if plan == "" {
+		if provider, ok := providerDefinitions[account.Provider]; ok {
+			plan = provider.Plan
+		}
+	}
 	return Account{
 		ID: account.ID, Name: account.Name, Provider: account.Provider,
-		Email: stringValue(account.Email), PlanType: stringValue(account.PlanType),
+		Email: stringValue(account.Email), PlanType: plan,
 		AuthType: account.AuthData.Type,
 	}
 }

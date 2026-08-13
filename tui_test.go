@@ -355,7 +355,7 @@ func TestTUIProviderMetricsKeepResetsSeparate(t *testing.T) {
 	used := 35.0
 	reset := time.Now().Add(2 * time.Hour).Unix()
 	m := tuiModel{width: 110, height: 24, settings: defaultAppSettings(), rows: []usageRow{{
-		Name: "OpenCode", ProviderID: providerOpenCodeGo, Provider: "OpenCode Go",
+		Name: "OpenCode", ProviderID: providerOpenCodeGo, Provider: "OpenCode", Plan: "Go",
 		Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used, ResetAt: &reset}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}, {Kind: percentageMetric, Slot: monthlySlot, Label: "MONTHLY", Used: &used}},
 	}}}
 	view := ansi.Strip(m.renderUsageTab(106, 22))

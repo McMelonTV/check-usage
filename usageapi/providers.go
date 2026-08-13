@@ -24,6 +24,7 @@ const (
 type providerDefinition struct {
 	ID           string
 	Name         string
+	Plan         string
 	Credentials  credentialMode
 	ResetCredits bool
 }
@@ -31,7 +32,7 @@ type providerDefinition struct {
 var providerDefinitions = func() map[string]providerDefinition {
 	result := make(map[string]providerDefinition)
 	for _, definition := range providers.Definitions() {
-		result[definition.ID] = providerDefinition{ID: definition.ID, Name: definition.Name, Credentials: definition.Credentials, ResetCredits: definition.SupportsResetCredits}
+		result[definition.ID] = providerDefinition{ID: definition.ID, Name: definition.Name, Plan: definition.Plan, Credentials: definition.Credentials, ResetCredits: definition.SupportsResetCredits}
 	}
 	return result
 }()

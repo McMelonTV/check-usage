@@ -99,7 +99,7 @@ func runAccountsAdd(args []string) int {
 			return 1
 		}
 	}
-	store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: accountName, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(resolvedKey)}})
+	store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: accountName, Provider: provider.ID, PlanType: optionalString(provider.Plan), AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(resolvedKey)}})
 	if err := saveAccounts(*accountsPath, store); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
@@ -460,7 +460,7 @@ func printAccountsList(accounts []storedAccount) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tNAME\tPROVIDER\tEMAIL\tPLAN\tAUTH TYPE")
 	for _, acc := range accounts {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", acc.ID, acc.Name, acc.Provider, valueOrDash(acc.Email), valueOrDash(acc.PlanType), acc.AuthData.Type)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", acc.ID, acc.Name, acc.Provider, valueOrDash(acc.Email), accountPlan(acc), acc.AuthData.Type)
 	}
 	_ = w.Flush()
 }

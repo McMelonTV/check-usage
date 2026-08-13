@@ -27,13 +27,14 @@ const (
 type Definition struct {
 	ID                   string
 	Name                 string
+	Plan                 string
 	Credentials          CredentialMode
 	SupportsResetCredits bool
 }
 
 var definitions = []Definition{
 	{ID: OpenAICodex, Name: "OpenAI Codex", Credentials: Device, SupportsResetCredits: true},
-	{ID: OpenCodeGo, Name: "OpenCode Go", Credentials: APIKey},
+	{ID: OpenCodeGo, Name: "OpenCode", Plan: "Go", Credentials: APIKey},
 	{ID: DeepSeek, Name: "DeepSeek", Credentials: APIKey},
 }
 
@@ -127,7 +128,7 @@ func fetchOpenCodeGo(ctx context.Context, client *http.Client, key, userAgent st
 			Monthly *usageWindow `json:"monthly"`
 		} `json:"usage"`
 	}
-	if err := doJSON(client, req, "OpenCode Go usage request", &payload); err != nil {
+	if err := doJSON(client, req, "OpenCode usage request", &payload); err != nil {
 		return Usage{}, err
 	}
 	session, err := payload.Usage.Session.metric(SessionSlot, "SESSION")
@@ -142,16 +143,16 @@ func fetchOpenCodeGo(ctx context.Context, client *http.Client, key, userAgent st
 	if err != nil {
 		return Usage{}, err
 	}
-	return Usage{Metrics: []Metric{session, weekly, monthly}}, nil
+	return Usage{Plan: "Go", Metrics: []Metric{session, weekly, monthly}}, nil
 }
 
 func (window *usageWindow) metric(slot MetricSlot, label string) (Metric, error) {
 	if window == nil || window.Percent == nil || window.ResetsAt == nil {
-		return Metric{}, fmt.Errorf("OpenCode Go %s usage is missing required fields", strings.ToLower(label))
+		return Metric{}, fmt.Errorf("OpenCode %s usage is missing required fields", strings.ToLower(label))
 	}
 	reset, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(*window.ResetsAt))
 	if err != nil {
-		return Metric{}, fmt.Errorf("parse OpenCode Go %s reset time: %w", strings.ToLower(label), err)
+		return Metric{}, fmt.Errorf("parse OpenCode %s reset time: %w", strings.ToLower(label), err)
 	}
 	used, resetAt := clampPercent(*window.Percent), reset.Unix()
 	return Metric{Kind: Percentage, Slot: slot, Label: label, Used: &used, ResetAt: &resetAt}, nil

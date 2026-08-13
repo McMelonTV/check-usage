@@ -863,7 +863,7 @@ func (m tuiModel) saveAPIKeyAccount() tea.Cmd {
 		for suffix := 2; accountNameExists(store.Accounts, name); suffix++ {
 			name = fmt.Sprintf("%s %d", provider.Name, suffix)
 		}
-		store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: name, Provider: provider.ID, AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}})
+		store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: name, Provider: provider.ID, PlanType: optionalString(provider.Plan), AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}})
 		return authSavedMsg{err: saveAccounts(accountsPath, store), version: version}
 	}
 }
@@ -1725,7 +1725,7 @@ func (m tuiModel) renderAccountsTab(width, height int) string {
 			if i == m.cursor {
 				marker, nameStyle = selectedRowVisual(m.tabRowFocused)
 			}
-			lines = append(lines, marker+cell(nameStyle.Render(account.Name), nameW)+" "+cell(tuiMutedStyle.Render(providerName(account.Provider)), providerW)+" "+cell(tuiMutedStyle.Render(valueOrDash(account.PlanType)), planW)+" "+cell(tuiMutedStyle.Render(valueOrDash(account.Email)), emailW))
+			lines = append(lines, marker+cell(nameStyle.Render(account.Name), nameW)+" "+cell(tuiMutedStyle.Render(providerName(account.Provider)), providerW)+" "+cell(tuiMutedStyle.Render(accountPlan(account)), planW)+" "+cell(tuiMutedStyle.Render(valueOrDash(account.Email)), emailW))
 			if !m.settings.CompactMode {
 				lines = append(lines, "")
 			}
@@ -1743,7 +1743,7 @@ func (m tuiModel) renderAccountsTab(width, height int) string {
 			if i == m.cursor {
 				marker, nameStyle = selectedRowVisual(m.tabRowFocused)
 			}
-			accountLine := marker + nameStyle.Render(account.Name) + "  " + tuiMutedStyle.Render(providerName(account.Provider)+" · "+valueOrDash(account.PlanType))
+			accountLine := marker + nameStyle.Render(account.Name) + "  " + tuiMutedStyle.Render(providerName(account.Provider)+" · "+accountPlan(account))
 			lines = append(lines, ansi.Truncate(accountLine, width, "…"))
 			lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(valueOrDash(account.Email), width-2, "…")))
 			if !m.settings.CompactMode {
