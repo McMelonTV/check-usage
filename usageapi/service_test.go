@@ -260,6 +260,60 @@ func testService(t *testing.T, client *http.Client) *Service {
 	})
 }
 
+func TestCodexProviderUsageAlwaysEmitsSessionAndWeekly(t *testing.T) {
+	short, weekly := 18_000, 604_800
+	reset := int64(1_000_000)
+	payload := &codexapi.RateLimitStatusPayload{
+		PlanType: "team",
+		RateLimit: &codexapi.RateLimitDetails{
+			PrimaryWindow:   &codexapi.RateLimitWindow{UsedPercent: 10, LimitWindowSeconds: &short, ResetAt: &reset},
+			SecondaryWindow: &codexapi.RateLimitWindow{UsedPercent: 20, LimitWindowSeconds: &weekly, ResetAt: &reset},
+		},
+	}
+	usage := codexProviderUsage(payload)
+	if len(usage.Metrics) != 2 || usage.Metrics[0].Slot != providers.SessionSlot || usage.Metrics[1].Slot != providers.WeeklySlot {
+		t.Fatalf("codex metrics = %#v, want SESSION + WEEKLY", usage.Metrics)
+	}
+	if usage.Metrics[0].Used == nil || usage.Metrics[1].Used == nil {
+		t.Fatalf("codex metrics missing used percent: %#v", usage.Metrics)
+	}
+	if usage.Metrics[0].ResetAt == nil || usage.Metrics[1].ResetAt == nil {
+		t.Fatalf("codex metrics missing reset times: %#v", usage.Metrics)
+	}
+	// A missing window still yields the other metric instead of dropping it.
+	partial := &codexapi.RateLimitStatusPayload{
+		RateLimit: &codexapi.RateLimitDetails{SecondaryWindow: &codexapi.RateLimitWindow{UsedPercent: 20, LimitWindowSeconds: &weekly}},
+	}
+	usage = codexProviderUsage(partial)
+	if len(usage.Metrics) != 2 {
+		t.Fatalf("partial codex metrics = %#v, want both slots present", usage.Metrics)
+	}
+	if usage.Metrics[1].Used == nil {
+		t.Fatalf("weekly metric missing used percent: %#v", usage.Metrics)
+	}
+}
+
+func TestSaveAPIKeyAccountSuffixesDuplicateNames(t *testing.T) {
+	service := testService(t, nil)
+	if _, err := service.SaveAPIKeyAccount(APIKeyAccount{Provider: providerOpenCodeGo, APIKey: "k1"}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.SaveAPIKeyAccount(APIKeyAccount{Provider: providerOpenCodeGo, APIKey: "k2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Account.Name != "OpenCode 2" {
+		t.Fatalf("duplicate account name = %q, want %q", second.Account.Name, "OpenCode 2")
+	}
+	third, err := service.SaveAPIKeyAccount(APIKeyAccount{Provider: providerOpenCodeGo, APIKey: "k3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Account.Name != "OpenCode 3" {
+		t.Fatalf("third account name = %q, want %q", third.Account.Name, "OpenCode 3")
+	}
+}
+
 func testJWT(t *testing.T, claims map[string]any) string {
 	t.Helper()
 	payload, err := json.Marshal(claims)

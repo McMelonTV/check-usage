@@ -47,19 +47,20 @@ func codexProviderUsage(payload *codexapi.RateLimitStatusPayload) providers.Usag
 	if payload.RateLimit == nil {
 		return usage
 	}
-	for _, window := range []struct {
-		label string
-		value *codexapi.RateLimitWindow
-	}{{"SESSION", payload.RateLimit.PrimaryWindow}, {"WEEKLY", payload.RateLimit.SecondaryWindow}} {
-		if window.value == nil {
-			continue
-		}
-		used := window.value.UsedPercent
-		slot := providers.SessionSlot
-		if window.label == "WEEKLY" {
-			slot = providers.WeeklySlot
-		}
-		usage.Metrics = append(usage.Metrics, providers.Metric{Kind: providers.Percentage, Slot: slot, Label: window.label, Used: &used, ResetAt: window.value.ResetAt})
+	usage.Metrics = []providers.Metric{
+		codexWindowMetric(providers.SessionSlot, "SESSION", payload.RateLimit, true),
+		codexWindowMetric(providers.WeeklySlot, "WEEKLY", payload.RateLimit, false),
 	}
 	return usage
+}
+
+func codexWindowMetric(slot providers.MetricSlot, label string, limits *codexapi.RateLimitDetails, primary bool) providers.Metric {
+	window := codexapi.SelectWindow(limits, primary)
+	metric := providers.Metric{Kind: providers.Percentage, Slot: slot, Label: label}
+	if window == nil {
+		return metric
+	}
+	used := codexapi.PercentValue(window.UsedPercent)
+	metric.Used, metric.ResetAt = &used, window.ResetAt
+	return metric
 }

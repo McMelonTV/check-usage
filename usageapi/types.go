@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.
-const ProtocolVersion = "1.0"
+const ProtocolVersion = "1.1"
 
 // Account is the public, credential-free representation of a saved account.
 type Account struct {

@@ -165,6 +165,48 @@ func WindowKind(seconds *int, fallback string) string {
 	return "long_window"
 }
 
+// WindowIsShort reports whether the window is the short, session-length window.
+func WindowIsShort(window *RateLimitWindow, fallback bool) bool {
+	if window == nil || window.LimitWindowSeconds == nil {
+		return fallback
+	}
+	return WindowKind(window.LimitWindowSeconds, "long_window") == "short_window"
+}
+
+// SelectWindow returns the short window (session) when primary is true and the
+// long window (weekly) otherwise, preferring the payload's primary window for
+// the short kind and its secondary window for the long kind.
+func SelectWindow(limits *RateLimitDetails, primary bool) *RateLimitWindow {
+	if limits == nil {
+		return nil
+	}
+	candidates := []struct {
+		window        *RateLimitWindow
+		fallbackShort bool
+	}{
+		{window: limits.PrimaryWindow, fallbackShort: true},
+		{window: limits.SecondaryWindow, fallbackShort: false},
+	}
+	for _, candidate := range candidates {
+		if candidate.window != nil && WindowIsShort(candidate.window, candidate.fallbackShort) == primary {
+			return candidate.window
+		}
+	}
+	return nil
+}
+
+// PercentValue clamps a usage percentage into the 0–100 range.
+func PercentValue(usedPercent float64) float64 {
+	value := usedPercent
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
 func mapWindow(window *RateLimitWindow, fallback string) UsageWindow {
 	kind := WindowKind(window.LimitWindowSeconds, fallback)
 	used := window.UsedPercent

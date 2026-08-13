@@ -260,10 +260,9 @@ func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutatio
 		}
 		return AccountMutation{Action: "updated", Account: store.Accounts[index].public()}, nil
 	}
-	for _, existing := range store.Accounts {
-		if strings.EqualFold(strings.TrimSpace(existing.Name), name) {
-			return AccountMutation{}, fmt.Errorf("account name %q already exists", name)
-		}
+	baseName := name
+	for suffix := 2; accountNameExists(store.Accounts, name); suffix++ {
+		name = fmt.Sprintf("%s %d", baseName, suffix)
 	}
 	account := storedAccount{ID: newAccountID(service.now()), Name: name, Provider: provider.ID, PlanType: stringPointer(provider.Plan), AuthData: authData{Type: string(apiKeyCredentials), APIKey: stringPointer(strings.TrimSpace(request.APIKey))}}
 	store.Accounts = append(store.Accounts, account)
@@ -271,6 +270,15 @@ func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutatio
 		return AccountMutation{}, err
 	}
 	return AccountMutation{Action: "added", Account: account.public()}, nil
+}
+
+func accountNameExists(accounts []storedAccount, name string) bool {
+	for _, account := range accounts {
+		if strings.EqualFold(strings.TrimSpace(account.Name), strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Usage returns one account or all accounts when target is empty. When refresh

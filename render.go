@@ -8,6 +8,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/McMelonTV/check-usage/codexapi"
 )
 
 func printTable(rows []usageRow) {
@@ -109,41 +111,15 @@ func limitSummary(rl *rateLimitDetails, primary bool, now time.Time) string {
 }
 
 func selectWindow(rl *rateLimitDetails, primary bool) *rateLimitWindow {
-	if rl == nil {
-		return nil
-	}
-
-	candidates := []struct {
-		window        *rateLimitWindow
-		fallbackShort bool
-	}{
-		{window: rl.PrimaryWindow, fallbackShort: true},
-		{window: rl.SecondaryWindow, fallbackShort: false},
-	}
-	for _, candidate := range candidates {
-		if candidate.window != nil && windowIsShort(candidate.window, candidate.fallbackShort) == primary {
-			return candidate.window
-		}
-	}
-	return nil
+	return codexapi.SelectWindow(rl, primary)
 }
 
 func windowIsShort(window *rateLimitWindow, fallback bool) bool {
-	if window == nil || window.LimitWindowSeconds == nil {
-		return fallback
-	}
-	return *window.LimitWindowSeconds > 0 && *window.LimitWindowSeconds <= 24*60*60
+	return codexapi.WindowIsShort(window, fallback)
 }
 
 func percentValue(usedPercent float64) float64 {
-	value := usedPercent
-	if value < 0 {
-		return 0
-	}
-	if value > 100 {
-		return 100
-	}
-	return value
+	return codexapi.PercentValue(usedPercent)
 }
 
 func resetTimesText(resetAt *int64, now time.Time) (string, string) {

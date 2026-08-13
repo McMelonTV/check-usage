@@ -62,6 +62,37 @@ func TestWindowKindUsesDurationAndFallback(t *testing.T) {
 	}
 }
 
+func TestSelectWindowPrefersShortPrimaryAndLongSecondary(t *testing.T) {
+	short, weekly := 18_000, 604_800
+	primary := &RateLimitWindow{UsedPercent: 10, LimitWindowSeconds: &short, ResetAt: int64Ptr(1000)}
+	secondary := &RateLimitWindow{UsedPercent: 20, LimitWindowSeconds: &weekly, ResetAt: int64Ptr(2000)}
+	limits := &RateLimitDetails{PrimaryWindow: primary, SecondaryWindow: secondary}
+	if got := SelectWindow(limits, true); got != primary {
+		t.Fatalf("SelectWindow(primary=true) = %#v, want the short window", got)
+	}
+	if got := SelectWindow(limits, false); got != secondary {
+		t.Fatalf("SelectWindow(primary=false) = %#v, want the long window", got)
+	}
+	// When the payload labels windows by position instead of duration, the
+	// duration still decides the slot.
+	swapped := &RateLimitDetails{PrimaryWindow: secondary, SecondaryWindow: primary}
+	if got := SelectWindow(swapped, true); got != primary {
+		t.Fatalf("SelectWindow swapped primary=true = %#v, want the short window", got)
+	}
+	// Missing windows fall back to the other candidate.
+	onlySecondary := &RateLimitDetails{PrimaryWindow: nil, SecondaryWindow: secondary}
+	if got := SelectWindow(onlySecondary, false); got != secondary {
+		t.Fatalf("SelectWindow(onlySecondary) = %#v, want the long window", got)
+	}
+	if got := SelectWindow(nil, true); got != nil {
+		t.Fatalf("SelectWindow(nil) = %#v, want nil", got)
+	}
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
+}
+
 func TestMobileErrorClassifications(t *testing.T) {
 	invalidGrant := &HTTPError{Operation: "token refresh", StatusCode: http.StatusBadRequest}
 	if !IsAuthenticationError(invalidGrant) {
