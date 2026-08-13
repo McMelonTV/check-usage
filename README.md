@@ -46,7 +46,7 @@ The Bubble Tea interface has Usage, Resets, Accounts, and Settings tabs. Press `
 
 Resets uses an account sidebar and immediately shows cached resets for the focused account. Choose an account with Up/Down, then press Enter or Right to focus its reset rows and refresh them. Press Enter twice on a reset to confirm a claim. Claiming is currently a UI-only placeholder and does not call an API; Left or Escape returns to the account sidebar.
 
-Settings let you show used or remaining usage, independently place the bar fill and percentage on the left or right, choose a default, colorblind, or monochrome semantic palette, set an automatic refresh interval, and enable compact account rows. Preferences are stored in `settings.json` beside `accounts.json`. Each account has its own cached snapshot under the platform cache directory (`~/.cache/check-usage/accounts/` on Linux), including when zero resets are available, so cached values or skeletons appear immediately while account requests refresh in parallel.
+Settings let you show used or remaining usage, place the bar fill on either side, order the percent, bar, and reset countdown however you like (each one can be hidden), choose a default, colorblind, or monochrome semantic palette, set an automatic refresh interval, and enable compact account rows. Preferences are stored in `settings.json` beside `accounts.json`. Each account has its own cached snapshot under the platform cache directory (`~/.cache/check-usage/accounts/` on Linux), including when zero resets are available, so cached values or skeletons appear immediately while account requests refresh in parallel.
 
 For a non-interactive table suitable for scripts or logs, use:
 

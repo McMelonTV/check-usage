@@ -49,7 +49,8 @@ func emptyAccountsStore() *accountsStore {
 }
 
 func defaultAppSettings() appSettings {
-	return appSettings{UsageDisplay: "used", BarFill: "left", PercentagePosition: "right", ColorTheme: "default", AutoRefreshSeconds: 60, CompactMode: false}
+	showBar, showPercent, showReset := true, true, true
+	return appSettings{UsageDisplay: "used", BarFill: "left", BarOrder: "bar_percent_reset", ShowBar: &showBar, ShowPercent: &showPercent, ShowReset: &showReset, ColorTheme: "default", AutoRefreshSeconds: 60, CompactMode: false}
 }
 
 func saveAccounts(path string, store *accountsStore) error {

@@ -46,8 +46,20 @@ func normalizeSettings(settings *appSettings) {
 	if settings.BarFill != "left" && settings.BarFill != "right" {
 		settings.BarFill = "left"
 	}
-	if settings.PercentagePosition != "left" && settings.PercentagePosition != "right" {
-		settings.PercentagePosition = "right"
+	if !validBarOrder(settings.BarOrder) {
+		settings.BarOrder = "bar_percent_reset"
+	}
+	if settings.ShowBar == nil {
+		v := true
+		settings.ShowBar = &v
+	}
+	if settings.ShowPercent == nil {
+		v := true
+		settings.ShowPercent = &v
+	}
+	if settings.ShowReset == nil {
+		v := true
+		settings.ShowReset = &v
 	}
 	if !validColorTheme(settings.ColorTheme) {
 		settings.ColorTheme = "default"
@@ -55,6 +67,28 @@ func normalizeSettings(settings *appSettings) {
 	if !validAutoRefreshInterval(settings.AutoRefreshSeconds) {
 		settings.AutoRefreshSeconds = 60
 	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+var barOrders = []string{
+	"bar_percent_reset",
+	"bar_reset_percent",
+	"percent_bar_reset",
+	"percent_reset_bar",
+	"reset_bar_percent",
+	"reset_percent_bar",
+}
+
+func validBarOrder(order string) bool {
+	for _, candidate := range barOrders {
+		if order == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func validColorTheme(theme string) bool {

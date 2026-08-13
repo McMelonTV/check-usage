@@ -9,7 +9,7 @@ import (
 
 func TestSettingsUseSeparateFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounts.json")
-	settings := appSettings{UsageDisplay: "remaining", BarFill: "right", PercentagePosition: "left", ColorTheme: "colorblind", AutoRefreshSeconds: 0, CompactMode: true}
+	settings := appSettings{UsageDisplay: "remaining", BarFill: "right", BarOrder: "percent_bar_reset", ShowBar: boolPtr(true), ShowPercent: boolPtr(true), ShowReset: boolPtr(false), ColorTheme: "colorblind", AutoRefreshSeconds: 0, CompactMode: true}
 	if err := saveSettings(path, settings); err != nil {
 		t.Fatalf("saveSettings() error = %v", err)
 	}
@@ -17,7 +17,7 @@ func TestSettingsUseSeparateFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSettings() error = %v", err)
 	}
-	if loaded.UsageDisplay != "remaining" || loaded.BarFill != "right" || loaded.PercentagePosition != "left" || loaded.ColorTheme != "colorblind" || loaded.AutoRefreshSeconds != 0 || !loaded.CompactMode {
+	if loaded.UsageDisplay != "remaining" || loaded.BarFill != "right" || loaded.BarOrder != "percent_bar_reset" || !loaded.showBar() || !loaded.showPercent() || loaded.showReset() || loaded.ColorTheme != "colorblind" || loaded.AutoRefreshSeconds != 0 || !loaded.CompactMode {
 		t.Fatalf("settings did not round-trip: %#v", loaded)
 	}
 	if settingsPath(path) == path || filepath.Base(settingsPath(path)) != "settings.json" {

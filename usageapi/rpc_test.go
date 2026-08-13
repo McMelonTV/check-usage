@@ -57,7 +57,8 @@ func TestRPCSettingsRoundTrip(t *testing.T) {
 	response := server.Handle(context.Background(), RPCRequest{
 		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "settings.set",
 		Params: json.RawMessage(`{
-			"usage_display":"remaining","bar_fill":"right","percentage_position":"left",
+			"usage_display":"remaining","bar_fill":"right","bar_order":"percent_bar_reset",
+			"show_bar":false,"show_percent":true,"show_reset":false,
 			"color_theme":"colorblind","auto_refresh_seconds":300,"compact_mode":true
 		}`),
 	})
@@ -70,6 +71,9 @@ func TestRPCSettingsRoundTrip(t *testing.T) {
 	}
 	if settings.UsageDisplay != "remaining" || settings.AutoRefreshSeconds != 300 || !settings.CompactMode {
 		t.Fatalf("settings did not round-trip: %#v", settings)
+	}
+	if settings.BarOrder != "percent_bar_reset" || settings.ShowBar == nil || *settings.ShowBar || settings.ShowPercent == nil || !*settings.ShowPercent {
+		t.Fatalf("bar layout did not round-trip: %#v", settings)
 	}
 }
 

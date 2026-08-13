@@ -196,25 +196,46 @@ func TestTUISettingsToggleUsageAndRefreshInterval(t *testing.T) {
 	m.settingsCursor = 2
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = updated.(tuiModel)
-	if m.settings.PercentagePosition != "left" {
-		t.Fatalf("percentage position = %q, want left", m.settings.PercentagePosition)
+	if m.settings.BarOrder != "bar_reset_percent" {
+		t.Fatalf("bar order = %q, want bar_reset_percent", m.settings.BarOrder)
 	}
 
 	m.settingsCursor = 3
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(tuiModel)
+	if m.settings.showPercent() {
+		t.Fatalf("show percent remained enabled")
+	}
+
+	m.settingsCursor = 4
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(tuiModel)
+	if m.settings.showReset() {
+		t.Fatalf("show reset remained enabled")
+	}
+
+	m.settingsCursor = 5
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(tuiModel)
+	if m.settings.showBar() {
+		t.Fatalf("show bar remained enabled")
+	}
+
+	m.settingsCursor = 6
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = updated.(tuiModel)
 	if m.settings.ColorTheme != "colorblind" {
 		t.Fatalf("color theme = %q, want colorblind", m.settings.ColorTheme)
 	}
 
-	m.settingsCursor = 4
+	m.settingsCursor = 7
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = updated.(tuiModel)
 	if m.settings.AutoRefreshSeconds != 300 {
 		t.Fatalf("auto refresh = %d, want 300", m.settings.AutoRefreshSeconds)
 	}
 
-	m.settingsCursor = 5
+	m.settingsCursor = 8
 	m.settings.CompactMode = false
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = updated.(tuiModel)
@@ -225,21 +246,68 @@ func TestTUISettingsToggleUsageAndRefreshInterval(t *testing.T) {
 
 func TestUsageBarFillAndPercentagePlacementAreIndependent(t *testing.T) {
 	used := 40.0
-	leftFillRightPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, "left", "right", "default"))
-	rightFillRightPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, "right", "right", "default"))
-	leftFillLeftPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, "left", "left", "default"))
-	rightFillLeftPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, "right", "left", "default"))
+	settings := defaultAppSettings()
+	settings.BarOrder = "bar_percent_reset"
+	settings.BarFill = "left"
+	leftFillRightPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, settings, nil, time.Now(), false))
+	settings.BarFill = "right"
+	rightFillRightPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, settings, nil, time.Now(), false))
+	settings.BarOrder = "percent_bar_reset"
+	settings.BarFill = "left"
+	leftFillLeftPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, settings, nil, time.Now(), false))
+	settings.BarFill = "right"
+	rightFillLeftPercentage := ansi.Strip(renderUsageBar(&used, 20, false, false, false, false, settings, nil, time.Now(), false))
 	if !strings.HasPrefix(leftFillRightPercentage, "━") || !strings.HasSuffix(leftFillRightPercentage, " 40%") {
-		t.Fatalf("left fill/right percentage bar = %q", leftFillRightPercentage)
+		t.Fatalf("bar first/percent last bar = %q", leftFillRightPercentage)
 	}
 	if !strings.HasPrefix(rightFillRightPercentage, "─") || !strings.HasSuffix(rightFillRightPercentage, " 40%") {
-		t.Fatalf("right fill/right percentage bar = %q", rightFillRightPercentage)
+		t.Fatalf("right fill/percent last bar = %q", rightFillRightPercentage)
 	}
 	if !strings.HasPrefix(leftFillLeftPercentage, "40% ") || !strings.HasSuffix(leftFillLeftPercentage, "─") {
-		t.Fatalf("left fill/left percentage bar = %q", leftFillLeftPercentage)
+		t.Fatalf("percent first/bar last bar = %q", leftFillLeftPercentage)
 	}
 	if !strings.HasPrefix(rightFillLeftPercentage, "40% ") || !strings.HasSuffix(rightFillLeftPercentage, "━") {
-		t.Fatalf("right fill/left percentage bar = %q", rightFillLeftPercentage)
+		t.Fatalf("percent first/right fill bar = %q", rightFillLeftPercentage)
+	}
+}
+
+func TestUsageBarLayoutTogglesAndResetCountdown(t *testing.T) {
+	used := 40.0
+	settings := defaultAppSettings()
+	settings.BarOrder = "bar_percent_reset"
+	resetAt := time.Now().Add(7*24*time.Hour + 3*time.Hour).Unix()
+	out := ansi.Strip(renderUsageBar(&used, 24, false, false, false, false, settings, &resetAt, time.Now(), true))
+	for _, want := range []string{"40%", "7d"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("bar missing %q: %q", want, out)
+		}
+	}
+	if !strings.HasPrefix(out, "━") {
+		t.Fatalf("bar should start with the track: %q", out)
+	}
+
+	noReset := ansi.Strip(renderUsageBar(&used, 24, false, false, false, false, settings, &resetAt, time.Now(), false))
+	if strings.Contains(noReset, "7d") {
+		t.Fatalf("reset countdown shown without includeReset: %q", noReset)
+	}
+
+	settings.ShowPercent = boolPtr(false)
+	noPercent := ansi.Strip(renderUsageBar(&used, 24, false, false, false, false, settings, &resetAt, time.Now(), true))
+	if strings.Contains(noPercent, "40%") {
+		t.Fatalf("percentage shown after disable: %q", noPercent)
+	}
+	if !strings.Contains(noPercent, "7d") {
+		t.Fatalf("countdown missing after percent disabled: %q", noPercent)
+	}
+
+	settings.ShowPercent = boolPtr(true)
+	settings.ShowBar = boolPtr(false)
+	noBar := ansi.Strip(renderUsageBar(&used, 24, false, false, false, false, settings, &resetAt, time.Now(), true))
+	if strings.Contains(noBar, "━") || strings.Contains(noBar, "─") {
+		t.Fatalf("bar shown after disable: %q", noBar)
+	}
+	if !strings.Contains(noBar, "40%") || !strings.Contains(noBar, "7d") {
+		t.Fatalf("percent/countdown lost with bar hidden: %q", noBar)
 	}
 }
 
@@ -287,10 +355,25 @@ func TestTUIMouseClickChangesTabAndSelectsUsageRow(t *testing.T) {
 
 func TestTUIMouseSettingsUsesClickedDirection(t *testing.T) {
 	m := tuiModel{tab: settingsTab, width: 100, height: 24, settings: defaultAppSettings()}
-	updated, _ := m.Update(tea.MouseMsg{X: 5, Y: 11, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	updated, _ := m.Update(tea.MouseMsg{X: 5, Y: 17, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	m = updated.(tuiModel)
-	if m.settingsCursor != 3 || m.settings.ColorTheme != "monochrome" {
+	if m.settingsCursor != 6 || m.settings.ColorTheme != "monochrome" {
 		t.Fatalf("left settings click = cursor %d, theme %q", m.settingsCursor, m.settings.ColorTheme)
+	}
+}
+
+func TestTUIMouseSettingsValueClickCyclesDirectionally(t *testing.T) {
+	m := tuiModel{tab: settingsTab, width: 100, height: 24, settings: defaultAppSettings(), settingsCursor: 2}
+	m.settings.BarOrder = "percent_bar_reset"
+	updated, _ := m.Update(tea.MouseMsg{X: 89, Y: 9, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if m.settings.BarOrder != "percent_reset_bar" {
+		t.Fatalf("right value click = %q, want percent_reset_bar", m.settings.BarOrder)
+	}
+	updated, _ = m.Update(tea.MouseMsg{X: 87, Y: 9, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if m.settings.BarOrder != "percent_bar_reset" {
+		t.Fatalf("left value click = %q, want percent_bar_reset", m.settings.BarOrder)
 	}
 }
 
@@ -634,7 +717,7 @@ func TestUsageDetailsHaveOneBlankRowAbove(t *testing.T) {
 	for _, compact := range []bool{false, true} {
 		m := tuiModel{
 			width: 110, height: 24,
-			settings: appSettings{UsageDisplay: "used", BarFill: "left", PercentagePosition: "right", ColorTheme: "default", CompactMode: compact},
+			settings: appSettings{UsageDisplay: "used", BarFill: "left", BarOrder: "bar_percent_reset", ColorTheme: "default", CompactMode: compact},
 			rows: []usageRow{{
 				Name: "Personal", Email: "person@example.com", ProviderID: providerCodex, Provider: "Codex", Plan: "plus",
 				Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "0", SupportsResetCredits: true,
@@ -645,6 +728,68 @@ func TestUsageDetailsHaveOneBlankRowAbove(t *testing.T) {
 		if got := m.renderUsageTab(110, 22); got != want {
 			t.Fatalf("compact=%v detail spacing differs", compact)
 		}
+	}
+}
+
+func TestNonCompactListShowsBarResetTimes(t *testing.T) {
+	used := 25.0
+	resetAt := func(offset time.Duration) *int64 {
+		v := time.Now().Add(offset).Unix()
+		return &v
+	}
+	row := usageRow{
+		Name: "Personal", Email: "person@example.com", ProviderID: providerOpenCodeGo, Provider: "OpenCode Go", Plan: "pro",
+		Metrics: []providerMetric{
+			{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used, ResetAt: resetAt(90 * time.Minute)},
+			{Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used, ResetAt: resetAt(3 * 24 * time.Hour)},
+			{Kind: percentageMetric, Slot: monthlySlot, Label: "MONTHLY", Used: &used, ResetAt: resetAt(31 * 24 * time.Hour)},
+		},
+	}
+	for _, wide := range []bool{true, false} {
+		nonCompact := tuiModel{rows: []usageRow{row}, settings: appSettings{CompactMode: false}, width: 110, height: 24}
+		var view string
+		if wide {
+			view = ansi.Strip(nonCompact.renderWideList(110, 22))
+		} else {
+			view = ansi.Strip(nonCompact.renderCompactList(110, 22))
+		}
+		for _, want := range []string{"resets in ", "2d", "30d"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("wide=%v non-compact list missing %q:\n%s", wide, want, view)
+			}
+		}
+		compact := tuiModel{rows: []usageRow{row}, settings: appSettings{CompactMode: true}, width: 110, height: 24}
+		if wide {
+			view = ansi.Strip(compact.renderWideList(110, 22))
+		} else {
+			view = ansi.Strip(compact.renderCompactList(110, 22))
+		}
+		if strings.Contains(view, "resets ") {
+			t.Fatalf("wide=%v compact list still shows reset times:\n%s", wide, view)
+		}
+	}
+}
+
+func TestWideListCompactModeShowsResetCountdownInBars(t *testing.T) {
+	used := 25.0
+	resetAt := time.Now().Add(7*24*time.Hour + 3*time.Hour).Unix()
+	row := usageRow{
+		Name: "Personal", Email: "person@example.com", ProviderID: providerOpenCodeGo, Provider: "OpenCode Go", Plan: "pro",
+		Metrics: []providerMetric{
+			{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used, ResetAt: &resetAt},
+			{Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used, ResetAt: &resetAt},
+			{Kind: percentageMetric, Slot: monthlySlot, Label: "MONTHLY", Used: &used, ResetAt: &resetAt},
+		},
+	}
+	compact := tuiModel{rows: []usageRow{row}, settings: appSettings{CompactMode: true, BarOrder: "bar_percent_reset"}, width: 110, height: 24}
+	view := ansi.Strip(compact.renderWideList(110, 22))
+	if !strings.Contains(view, "7d2h") || strings.Contains(view, "resets in") {
+		t.Fatalf("compact wide list lost the bar reset countdown:\n%s", view)
+	}
+	spaced := tuiModel{rows: []usageRow{row}, settings: appSettings{CompactMode: false, BarOrder: "bar_percent_reset"}, width: 110, height: 24}
+	view = ansi.Strip(spaced.renderWideList(110, 22))
+	if strings.Contains(view, "7d2h") || !strings.Contains(view, "resets in") {
+		t.Fatalf("spaced wide list duplicated the countdown or lost reset rows:\n%s", view)
 	}
 }
 

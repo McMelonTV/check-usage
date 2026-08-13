@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	tuiMaxWidth   = 120
-	tuiWideAt     = 98
-	tuiDetailAt   = 19
-	tuiMinListLen = 1
+	tuiMaxWidth     = 120
+	tuiWideAt       = 98
+	tuiDetailAt     = 19
+	tuiMinListLen   = 1
+	tuiSettingsRows = 9
 )
 
 type tuiTab int
@@ -604,7 +605,7 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key == "down" || key == "j" {
-			m.settingsCursor = min(5, m.settingsCursor+1)
+			m.settingsCursor = min(8, m.settingsCursor+1)
 			return m, nil
 		}
 		if key == "left" || key == "right" || key == "[" || key == "]" || key == "enter" || key == " " {
@@ -612,38 +613,39 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 			if key == "left" || key == "[" {
 				direction = -1
 			}
-			if m.settingsCursor == 0 {
+			switch m.settingsCursor {
+			case 0:
 				if m.settings.UsageDisplay == "used" {
 					m.settings.UsageDisplay = "remaining"
 				} else {
 					m.settings.UsageDisplay = "used"
 				}
-				return m, saveSettingsCmd(m.accountsPath, m.settings)
-			} else if m.settingsCursor == 1 {
+			case 1:
 				if m.settings.BarFill == "left" {
 					m.settings.BarFill = "right"
 				} else {
 					m.settings.BarFill = "left"
 				}
-				return m, saveSettingsCmd(m.accountsPath, m.settings)
-			} else if m.settingsCursor == 2 {
-				if m.settings.PercentagePosition == "left" {
-					m.settings.PercentagePosition = "right"
-				} else {
-					m.settings.PercentagePosition = "left"
-				}
-				return m, saveSettingsCmd(m.accountsPath, m.settings)
-			} else if m.settingsCursor == 3 {
+			case 2:
+				m.settings.BarOrder = nextBarOrder(m.settings.BarOrder, direction)
+			case 3:
+				m.settings.ShowPercent = boolPtr(!m.settings.showPercent())
+			case 4:
+				m.settings.ShowReset = boolPtr(!m.settings.showReset())
+			case 5:
+				m.settings.ShowBar = boolPtr(!m.settings.showBar())
+			case 6:
 				m.settings.ColorTheme = nextColorTheme(m.settings.ColorTheme, direction)
-				return m, saveSettingsCmd(m.accountsPath, m.settings)
-			} else if m.settingsCursor == 4 {
+			case 7:
 				m.settings.AutoRefreshSeconds = nextRefreshInterval(m.settings.AutoRefreshSeconds, direction)
 				m.timerVersion++
-			} else {
+			default:
 				m.settings.CompactMode = !m.settings.CompactMode
-				return m, saveSettingsCmd(m.accountsPath, m.settings)
 			}
-			return m, tea.Batch(saveSettingsCmd(m.accountsPath, m.settings), m.scheduleAutoRefresh())
+			if m.settingsCursor == 7 {
+				return m, tea.Batch(saveSettingsCmd(m.accountsPath, m.settings), m.scheduleAutoRefresh())
+			}
+			return m, saveSettingsCmd(m.accountsPath, m.settings)
 		}
 	}
 	return m, nil
@@ -949,13 +951,27 @@ func (m tuiModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case settingsTab:
-		if index := (msg.Y - 5) / 2; msg.Y >= 5 && index >= 0 && index < 6 {
-			m.settingsCursor = index
-			direction := "left"
-			if x >= tuiContentWidth(m.width)/2 {
-				direction = "right"
+		if msg.Y >= 5 {
+			innerHeight := max(1, m.height-2)
+			maxRows := max(1, (innerHeight-8)/2)
+			start, end := visibleRange(tuiSettingsRows, m.settingsCursor, maxRows)
+			row := (msg.Y - 5) / 2
+			if row >= 0 && row < end-start {
+				index := start + row
+				items := m.settingsItems()
+				if index >= len(items) {
+					return m, nil
+				}
+				m.settingsCursor = index
+				contentWidth := tuiContentWidth(m.width)
+				valueWidth := lipgloss.Width(tuiAccentStyle.Render("‹ " + items[index].value + " ›"))
+				valueMid := contentWidth - valueWidth/2
+				direction := "left"
+				if x >= valueMid {
+					direction = "right"
+				}
+				return m.updateActiveTab(direction)
 			}
-			return m.updateActiveTab(direction)
 		}
 	}
 	return m, nil
@@ -1280,7 +1296,7 @@ func (m tuiModel) View() string {
 		case accountsTab:
 			sections = append(sections, m.renderAccountsTab(contentWidth, innerHeight))
 		case settingsTab:
-			sections = append(sections, m.renderSettingsTab(contentWidth))
+			sections = append(sections, m.renderSettingsTab(contentWidth, innerHeight))
 		}
 	}
 	sections = append(sections, m.renderFooter(contentWidth))
@@ -1471,16 +1487,21 @@ func (m tuiModel) renderWideList(width, height int) string {
 		if row.Stale || row.ResetsStale {
 			name += " " + lipgloss.NewStyle().Foreground(amberColor).Render("(Stale)")
 		}
-		session := m.renderUsageSlot(row, sessionSlot, usageWidth)
-		weekly := m.renderUsageSlot(row, weeklySlot, usageWidth)
-		monthly := m.renderUsageSlot(row, monthlySlot, usageWidth)
+		includeReset := m.settings.CompactMode
+		session := m.renderUsageSlot(row, sessionSlot, usageWidth, includeReset)
+		weekly := m.renderUsageSlot(row, weeklySlot, usageWidth, includeReset)
+		monthly := m.renderUsageSlot(row, monthlySlot, usageWidth, includeReset)
 		resets := m.renderResetSlot(row)
 		line := marker + cell(nameStyle.Render(name), nameWidth) + " " +
 			cell(tuiMutedStyle.Render(row.Provider), providerWidth) + " " + cell(tuiMutedStyle.Render(row.Plan), planWidth) + " " +
 			cell(session, usageWidth) + " " + cell(weekly, usageWidth) + " " + cell(monthly, usageWidth) + " " + cell(resets, creditWidth)
 		lines = append(lines, line)
 		if !m.settings.CompactMode {
-			lines = append(lines, "")
+			now := time.Now()
+			lines = append(lines, tuiMutedStyle.Render("  "+cell("", nameWidth)+" "+cell("", providerWidth)+" "+cell("", planWidth)+" "+
+				cell(resetInCellText(row, sessionSlot, now), usageWidth)+" "+
+				cell(resetInCellText(row, weeklySlot, now), usageWidth)+" "+
+				cell(resetInCellText(row, monthlySlot, now), usageWidth)+" "+cell("", creditWidth)))
 		}
 	}
 	if start > 0 || end < len(m.rows) {
@@ -1516,7 +1537,18 @@ func (m tuiModel) renderCompactList(width, height int) string {
 		}
 		lines = append(lines, "  "+tuiMutedStyle.Render("RESETS  ")+m.renderResetSlot(row))
 		if !m.settings.CompactMode {
-			lines = append(lines, "")
+			now := time.Now()
+			parts := make([]string, 0, 3)
+			for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
+				if text := barResetInText(row, slot, now); text != "-" {
+					parts = append(parts, strings.ToUpper(string(slot))+" resets in "+text)
+				}
+			}
+			if len(parts) > 0 {
+				lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(strings.Join(parts, " · "), max(10, width-2), "…")))
+			} else {
+				lines = append(lines, "")
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -1550,9 +1582,9 @@ func (m tuiModel) renderDetails(width int) string {
 	return tuiBorderStyle.Width(max(20, width-4)).Render(strings.Join(lines, "\n"))
 }
 
-func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int) string {
+func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int, includeReset bool) string {
 	if metric, ok := usageMetricForSlot(row, slot); ok && metric.Kind == percentageMetric {
-		return renderUsageBar(metric.Used, width, m.showRemaining(), row.Loading, false, row.Stale, m.settings.BarFill, m.settings.PercentagePosition, m.settings.ColorTheme)
+		return renderUsageBar(metric.Used, width, m.showRemaining(), row.Loading, false, row.Stale, m.settings, metric.ResetAt, time.Now(), includeReset)
 	}
 	text := usageSlotText(row, slot, time.Now())
 	if row.AuthRequired && slot == sessionSlot {
@@ -1561,10 +1593,49 @@ func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int) stri
 	return tuiMutedStyle.Render(ansi.Truncate(text, width, "…"))
 }
 
+func barResetInText(row usageRow, slot metricSlot, now time.Time) string {
+	metric, ok := usageMetricForSlot(row, slot)
+	if !ok || metric.ResetAt == nil {
+		return "-"
+	}
+	d := time.Unix(*metric.ResetAt, 0).In(now.Location()).Sub(now)
+	if d <= 0 {
+		return "now"
+	}
+	days := int(d / (24 * time.Hour))
+	hours := int((d % (24 * time.Hour)) / time.Hour)
+	minutes := int((d % time.Hour) / time.Minute)
+	switch {
+	case days > 0:
+		if hours > 0 {
+			return fmt.Sprintf("%dd %dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	case hours > 0:
+		if minutes > 0 {
+			return fmt.Sprintf("%dh %dm", hours, minutes)
+		}
+		return fmt.Sprintf("%dh", hours)
+	default:
+		if minutes == 0 {
+			return "now"
+		}
+		return fmt.Sprintf("%dm", minutes)
+	}
+}
+
+func resetInCellText(row usageRow, slot metricSlot, now time.Time) string {
+	text := barResetInText(row, slot, now)
+	if text == "-" {
+		return ""
+	}
+	return "resets in " + text
+}
+
 func (m tuiModel) renderCompactSlot(row usageRow, slot metricSlot, width int) string {
 	label := tuiMutedStyle.Render(cell(strings.ToUpper(string(slot)), 8))
-	valueWidth := max(10, width-12)
-	return "  " + label + "  " + m.renderUsageSlot(row, slot, valueWidth)
+	valueWidth := min(max(10, width-12), 30)
+	return "  " + label + "  " + m.renderUsageSlot(row, slot, valueWidth, true)
 }
 
 func (m tuiModel) renderResetSlot(row usageRow) string {
@@ -1759,21 +1830,35 @@ func (m tuiModel) renderAccountsTab(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m tuiModel) renderSettingsTab(width int) string {
+type settingsItem struct {
+	label, value, description string
+}
+
+func (m tuiModel) settingsItems() []settingsItem {
 	display := "Used"
 	if m.showRemaining() {
 		display = "Remaining"
 	}
-	items := []struct{ label, value, description string }{
+	return []settingsItem{
 		{"Usage bars", display, "Choose which side of each limit the bars represent."},
 		{"Bar fill", sideText(m.settings.BarFill), "Choose which side of the track contains the filled bar."},
-		{"Percentage", sideText(m.settings.PercentagePosition), "Choose which side displays the percentage."},
+		{"Bar layout", barOrderText(m.settings.BarOrder), "Choose the order of percent, bar, and reset countdown."},
+		{"Show percent", onOffText(m.settings.showPercent()), "Show the percentage next to each bar."},
+		{"Show reset", onOffText(m.settings.showReset()), "Show the reset countdown next to each bar."},
+		{"Show bar", onOffText(m.settings.showBar()), "Show the usage bar itself."},
 		{"Color palette", colorThemeText(m.settings.ColorTheme), colorThemeDescription(m.settings.ColorTheme)},
 		{"Auto-refresh", refreshIntervalText(m.settings.AutoRefreshSeconds), "Refresh usage automatically after the selected interval."},
-		{"Compact mode", onOffText(m.settings.CompactMode), "Remove blank rows between account entries."},
+		{"Compact mode", onOffText(m.settings.CompactMode), "Hide reset times shown under each account's bars."},
 	}
+}
+
+func (m tuiModel) renderSettingsTab(width, height int) string {
+	items := m.settingsItems()
+	maxRows := max(1, (height-8)/2)
+	start, end := visibleRange(len(items), m.settingsCursor, maxRows)
 	lines := []string{""}
-	for i, item := range items {
+	for i := start; i < end; i++ {
+		item := items[i]
 		marker, labelStyle := "  ", lipgloss.NewStyle().Foreground(textColor).Bold(true)
 		if i == m.settingsCursor {
 			marker, labelStyle = selectedRowVisual(m.tabRowFocused)
@@ -1782,6 +1867,9 @@ func (m tuiModel) renderSettingsTab(width int) string {
 		gap := max(1, width-2-lipgloss.Width(item.label)-lipgloss.Width(value))
 		lines = append(lines, marker+labelStyle.Render(item.label)+strings.Repeat(" ", gap)+value)
 		lines = append(lines, "  "+tuiMutedStyle.Render(ansi.Truncate(item.description, width-2, "…")))
+	}
+	if start > 0 || end < len(items) {
+		lines = append(lines, tuiMutedStyle.Render("  showing "+strconv.Itoa(start+1)+"–"+strconv.Itoa(end)+" of "+strconv.Itoa(len(items))))
 	}
 	if m.notice != "" {
 		lines = append(lines, noticeStyle(m.notice).Render(m.notice))
@@ -1838,6 +1926,10 @@ func (m tuiModel) renderFooter(width int) string {
 
 func (m tuiModel) showRemaining() bool { return m.settings.UsageDisplay == "remaining" }
 
+func (s appSettings) showBar() bool     { return s.ShowBar == nil || *s.ShowBar }
+func (s appSettings) showPercent() bool { return s.ShowPercent == nil || *s.ShowPercent }
+func (s appSettings) showReset() bool   { return s.ShowReset == nil || *s.ShowReset }
+
 func selectedRowVisual(tabFocused bool) (string, lipgloss.Style) {
 	color := lipgloss.TerminalColor(accentColor)
 	if tabFocused {
@@ -1847,10 +1939,75 @@ func selectedRowVisual(tabFocused bool) (string, lipgloss.Style) {
 	return markerStyle.Render("› "), lipgloss.NewStyle().Foreground(color).Bold(true)
 }
 
-func renderUsageBar(used *float64, width int, showRemaining, loading, authRequired, stale bool, barFill, percentagePosition, colorTheme string) string {
+func nextBarOrder(order string, direction int) string {
+	if direction < 0 {
+		direction = len(barOrders) - 1
+	}
+	index := 0
+	for i, candidate := range barOrders {
+		if candidate == order {
+			index = i
+			break
+		}
+	}
+	return barOrders[(index+direction)%len(barOrders)]
+}
+
+func barOrderText(order string) string {
+	if !validBarOrder(order) {
+		order = "bar_percent_reset"
+	}
+	return strings.ReplaceAll(order, "_", " ")
+}
+
+func barOrderTokens(order string) []string {
+	if !validBarOrder(order) {
+		order = "bar_percent_reset"
+	}
+	return strings.Split(order, "_")
+}
+
+func barOrderStartsWithPercent(order string) bool {
+	if !validBarOrder(order) {
+		order = "bar_percent_reset"
+	}
+	return strings.HasPrefix(order, "percent")
+}
+
+func resetCountdownText(resetAt *int64, now time.Time) string {
+	if resetAt == nil {
+		return ""
+	}
+	d := time.Unix(*resetAt, 0).In(now.Location()).Sub(now)
+	if d <= 0 {
+		return "now"
+	}
+	days := int(d / (24 * time.Hour))
+	hours := int((d % (24 * time.Hour)) / time.Hour)
+	minutes := int((d % time.Hour) / time.Minute)
+	switch {
+	case days > 0:
+		if hours > 0 {
+			return fmt.Sprintf("%dd%dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	case hours > 0:
+		if minutes > 0 {
+			return fmt.Sprintf("%dh%dm", hours, minutes)
+		}
+		return fmt.Sprintf("%dh", hours)
+	default:
+		if minutes == 0 {
+			return "now"
+		}
+		return fmt.Sprintf("%dm", minutes)
+	}
+}
+
+func renderUsageBar(used *float64, width int, showRemaining, loading, authRequired, stale bool, settings appSettings, resetAt *int64, now time.Time, includeReset bool) string {
 	if loading {
 		skeleton := strings.Repeat("·", max(3, width-5))
-		if percentagePosition == "left" {
+		if barOrderStartsWithPercent(settings.BarOrder) {
 			return tuiMutedStyle.Render("…  " + skeleton)
 		}
 		return tuiMutedStyle.Render(skeleton + "  …")
@@ -1867,27 +2024,82 @@ func renderUsageBar(used *float64, width int, showRemaining, loading, authRequir
 		displayValue = 100 - usedValue
 	}
 	percentage := fmt.Sprintf("%.0f%%", displayValue)
-	trackWidth := max(3, width-lipgloss.Width(percentage)-1)
+	barColor := usageLipglossColor(usedValue, settings.ColorTheme)
+	if stale {
+		barColor = semanticPaletteFor(settings.ColorTheme).warning
+	}
+	barStyle := lipgloss.NewStyle().Foreground(barColor)
+
+	var percentText, resetText string
+	if settings.showPercent() {
+		percentText = percentage
+	}
+	if includeReset && settings.showReset() {
+		resetText = resetCountdownText(resetAt, now)
+	}
+
+	order := barOrderTokens(settings.BarOrder)
+	staticWidth := 0
+	staticCount := 0
+	renderBar := settings.showBar()
+	for _, token := range order {
+		switch token {
+		case "percent":
+			if percentText != "" {
+				staticWidth += lipgloss.Width(percentText)
+				staticCount++
+			}
+		case "reset":
+			if resetText != "" {
+				staticWidth += lipgloss.Width(resetText)
+				staticCount++
+			}
+		}
+	}
+	segmentCount := staticCount
+	if renderBar {
+		segmentCount++
+	}
+	trackWidth := width - staticWidth - max(0, segmentCount-1)
+
+	parts := make([]string, 0, segmentCount)
+	for _, token := range order {
+		switch token {
+		case "percent":
+			if percentText != "" {
+				parts = append(parts, barStyle.Render(percentText))
+			}
+		case "reset":
+			if resetText != "" {
+				parts = append(parts, tuiMutedStyle.Render(resetText))
+			}
+		case "bar":
+			if renderBar {
+				parts = append(parts, renderBarTrack(displayValue, max(0, trackWidth), settings.BarFill, barStyle))
+			}
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func renderBarTrack(displayValue float64, trackWidth int, barFill string, barStyle lipgloss.Style) string {
+	if trackWidth == 0 {
+		return ""
+	}
 	filled := int((displayValue/100)*float64(trackWidth) + 0.5)
 	if displayValue > 0 && filled == 0 {
 		filled = 1
 	}
-	barColor := usageLipglossColor(usedValue, colorTheme)
-	if stale {
-		barColor = semanticPaletteFor(colorTheme).warning
+	if filled > trackWidth {
+		filled = trackWidth
 	}
-	barStyle := lipgloss.NewStyle().Foreground(barColor)
 	trackStyle := lipgloss.NewStyle().Foreground(dimTrackColor)
 	filledBar := barStyle.Render(strings.Repeat("━", filled))
 	emptyTrack := trackStyle.Render(strings.Repeat("─", trackWidth-filled))
-	bar := filledBar + emptyTrack
 	if barFill == "right" {
-		bar = emptyTrack + filledBar
+		return emptyTrack + filledBar
 	}
-	if percentagePosition == "left" {
-		return barStyle.Render(percentage) + " " + bar
-	}
-	return bar + " " + barStyle.Render(percentage)
+	return filledBar + emptyTrack
 }
 
 type semanticPalette struct {

@@ -28,8 +28,10 @@ func DefaultCacheDir() string {
 }
 
 func defaultSettings() Settings {
+	showBar, showPercent, showReset := true, true, true
 	return Settings{
-		UsageDisplay: "used", BarFill: "left", PercentagePosition: "right",
+		UsageDisplay: "used", BarFill: "left", BarOrder: "bar_percent_reset",
+		ShowBar: &showBar, ShowPercent: &showPercent, ShowReset: &showReset,
 		ColorTheme: "default", AutoRefreshSeconds: 60,
 	}
 }
@@ -126,8 +128,27 @@ func normalizeSettings(settings *Settings) {
 	if settings.BarFill != "left" && settings.BarFill != "right" {
 		settings.BarFill = "left"
 	}
-	if settings.PercentagePosition != "left" && settings.PercentagePosition != "right" {
-		settings.PercentagePosition = "right"
+	validOrder := false
+	for _, order := range []string{
+		"bar_percent_reset", "bar_reset_percent", "percent_bar_reset",
+		"percent_reset_bar", "reset_bar_percent", "reset_percent_bar",
+	} {
+		validOrder = validOrder || settings.BarOrder == order
+	}
+	if !validOrder {
+		settings.BarOrder = "bar_percent_reset"
+	}
+	if settings.ShowBar == nil {
+		v := true
+		settings.ShowBar = &v
+	}
+	if settings.ShowPercent == nil {
+		v := true
+		settings.ShowPercent = &v
+	}
+	if settings.ShowReset == nil {
+		v := true
+		settings.ShowReset = &v
 	}
 	if settings.ColorTheme != "default" && settings.ColorTheme != "colorblind" && settings.ColorTheme != "monochrome" {
 		settings.ColorTheme = "default"

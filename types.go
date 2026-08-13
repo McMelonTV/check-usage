@@ -52,7 +52,10 @@ type usageRow struct {
 type appSettings struct {
 	UsageDisplay       string `json:"usage_display"`
 	BarFill            string `json:"bar_fill"`
-	PercentagePosition string `json:"percentage_position"`
+	BarOrder           string `json:"bar_order"`
+	ShowBar            *bool  `json:"show_bar,omitempty"`
+	ShowPercent        *bool  `json:"show_percent,omitempty"`
+	ShowReset          *bool  `json:"show_reset,omitempty"`
 	ColorTheme         string `json:"color_theme"`
 	AutoRefreshSeconds int    `json:"auto_refresh_seconds"`
 	CompactMode        bool   `json:"compact_mode"`
