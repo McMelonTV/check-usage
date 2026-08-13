@@ -55,7 +55,7 @@ func TestTUIAccountRenameAndRemoveCommands(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "accounts.json")
 	store := &accountsStore{
-		Accounts: []storedAccount{{ID: "one", Name: "Old name", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}},
+		Accounts: []storedAccount{{ID: "one", Name: "Old name", Provider: providerCodex, AuthData: authData{Type: "chatgpt"}}},
 	}
 	if err := saveAccounts(path, store); err != nil {
 		t.Fatalf("saveAccounts() error = %v", err)

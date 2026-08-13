@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/McMelonTV/codex-usage/codexapi"
+	"github.com/McMelonTV/check-usage/codexapi"
 )
 
 const oauthCallbackPath = "/auth/callback"
@@ -218,7 +218,7 @@ func buildStoredAccount(requestedName string, email, planType, accountID *string
 	return storedAccount{
 		ID:       newAccountID(),
 		Name:     name,
-		Provider: providerOpenAICodex,
+		Provider: providerCodex,
 		Email:    email,
 		PlanType: planType,
 		AuthData: authData{

@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+func TestDefaultUserAgentUsesProjectName(t *testing.T) {
+	if DefaultUserAgent != "check-usage/1.0.0" {
+		t.Fatalf("user agent = %q", DefaultUserAgent)
+	}
+}
+
 func TestParseIdentityReadsNestedAuthClaims(t *testing.T) {
 	token := testJWT(t, map[string]any{
 		"email": "person@example.com",

@@ -4,14 +4,14 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/McMelonTV/codex-usage/codexapi"
-	"github.com/McMelonTV/codex-usage/providers"
+	"github.com/McMelonTV/check-usage/codexapi"
+	"github.com/McMelonTV/check-usage/providers"
 )
 
 const (
-	providerOpenAICodex = providers.OpenAICodex
-	providerOpenCodeGo  = providers.OpenCodeGo
-	providerDeepSeek    = providers.DeepSeek
+	providerCodex      = providers.Codex
+	providerOpenCodeGo = providers.OpenCodeGo
+	providerDeepSeek   = providers.DeepSeek
 )
 
 type credentialMode = providers.CredentialMode

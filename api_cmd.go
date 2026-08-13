@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/McMelonTV/codex-usage/usageapi"
+	"github.com/McMelonTV/check-usage/usageapi"
 )
 
 func runAPICommand(args []string) int {
@@ -29,7 +29,7 @@ func runAPICommand(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 || fs.NArg() > 2 {
-		fmt.Fprintln(os.Stderr, "usage: codex-usage api [flags] <method|serve> [params-json|-]")
+		fmt.Fprintln(os.Stderr, "usage: check-usage api [flags] <method|serve> [params-json|-]")
 		return 2
 	}
 

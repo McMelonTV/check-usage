@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/McMelonTV/codex-usage/codexapi"
-	"github.com/McMelonTV/codex-usage/providers"
+	"github.com/McMelonTV/check-usage/codexapi"
+	"github.com/McMelonTV/check-usage/providers"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -25,7 +25,7 @@ func TestListAccountsNeverReturnsCredentials(t *testing.T) {
 	service := testService(t, nil)
 	secret := "top-secret-token"
 	if err := service.saveAccounts(&accountsStore{Accounts: []storedAccount{{
-		ID: "one", Name: "Personal", Provider: providerOpenAICodex, Email: stringPointer("person@example.com"),
+		ID: "one", Name: "Personal", Provider: providerCodex, Email: stringPointer("person@example.com"),
 		AuthData: authData{Type: "chatgpt", AccessToken: &secret, RefreshToken: &secret},
 	}}}); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestDeviceAuthPersistsTokensButReturnsPublicAccount(t *testing.T) {
 	})}
 	service := testService(t, client)
 
-	session, err := service.BeginDeviceAuth(context.Background(), providerOpenAICodex)
+	session, err := service.BeginDeviceAuth(context.Background(), providerCodex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestDeviceAuthPersistsTokensButReturnsPublicAccount(t *testing.T) {
 		t.Fatalf("unexpected session: %#v", session)
 	}
 	result, err := service.PollDeviceAuth(context.Background(), DeviceAuthPoll{
-		Provider: providerOpenAICodex, SessionID: session.SessionID, UserCode: session.UserCode,
+		Provider: providerCodex, SessionID: session.SessionID, UserCode: session.UserCode,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestUsageRefreshAndCachedResetCredits(t *testing.T) {
 	service := testService(t, client)
 	service.now = func() time.Time { return now }
 	if err := service.saveAccounts(&accountsStore{Accounts: []storedAccount{{
-		ID: "one", Name: "Personal", Provider: providerOpenAICodex,
+		ID: "one", Name: "Personal", Provider: providerCodex,
 		AuthData: authData{Type: "chatgpt", AccessToken: &accessToken, RefreshToken: &refreshToken},
 	}}}); err != nil {
 		t.Fatal(err)
@@ -168,7 +168,7 @@ func TestUsageRefreshFallsBackToCompatibleCache(t *testing.T) {
 	service := testService(t, client)
 	service.now = func() time.Time { return now }
 	if err := service.saveAccounts(&accountsStore{Accounts: []storedAccount{{
-		ID: "one", Name: "Personal", Provider: providerOpenAICodex,
+		ID: "one", Name: "Personal", Provider: providerCodex,
 		AuthData: authData{Type: "chatgpt", AccessToken: &accessToken, RefreshToken: &refreshToken},
 	}}}); err != nil {
 		t.Fatal(err)

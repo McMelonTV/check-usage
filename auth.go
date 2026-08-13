@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/McMelonTV/codex-usage/codexapi"
+	"github.com/McMelonTV/check-usage/codexapi"
 )
 
 var errMissingCredentials = errors.New("missing access/refresh token")

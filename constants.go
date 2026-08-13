@@ -1,6 +1,6 @@
 package main
 
-import "github.com/McMelonTV/codex-usage/codexapi"
+import "github.com/McMelonTV/check-usage/codexapi"
 
 const (
 	oauthIssuerURL            = "https://auth.openai.com"
@@ -27,5 +27,5 @@ const (
 )
 
 const (
-	defaultAccountsRelPath = ".config/codex-usage/accounts.json"
+	defaultAccountsRelPath = ".config/check-usage/accounts.json"
 )

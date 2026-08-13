@@ -35,12 +35,12 @@ jobs:
         shell: bash
         run: |
           targets=(
-            "linux amd64 codex-usage-linux-amd64"
-            "linux arm64 codex-usage-linux-arm64"
-            "windows amd64 codex-usage-windows-amd64.exe"
-            "windows arm64 codex-usage-windows-arm64.exe"
-            "darwin amd64 codex-usage-macos-amd64"
-            "darwin arm64 codex-usage-macos-arm64"
+            "linux amd64 check-usage-linux-amd64"
+            "linux arm64 check-usage-linux-arm64"
+            "windows amd64 check-usage-windows-amd64.exe"
+            "windows arm64 check-usage-windows-arm64.exe"
+            "darwin amd64 check-usage-macos-amd64"
+            "darwin arm64 check-usage-macos-arm64"
           )
 
           for target in "${targets[@]}"; do

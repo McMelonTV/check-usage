@@ -33,9 +33,20 @@ func TestUsageCacheUsesOneFilePerAccount(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("cache file %q: %v", path, err)
 		}
-		if filepath.Dir(path) != filepath.Join(cacheRoot, "codex-usage", "accounts") {
+		if filepath.Dir(path) != filepath.Join(cacheRoot, "check-usage", "accounts") {
 			t.Fatalf("cache file is outside cache directory: %q", path)
 		}
+	}
+}
+
+func TestDefaultProjectPathsUseCheckUsage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if !strings.Contains(defaultAccountsPath(), filepath.Join(".config", "check-usage", "accounts.json")) {
+		t.Fatalf("accounts path = %q", defaultAccountsPath())
+	}
+	if !strings.Contains(usageCacheDir(), filepath.Join("check-usage", "accounts")) {
+		t.Fatalf("cache directory = %q", usageCacheDir())
 	}
 }
 
@@ -52,7 +63,7 @@ func TestCollectUsageRowsTreatsMissingAccountsFileAsEmpty(t *testing.T) {
 }
 
 func TestCachedUsageRowsReturnsSkeletonWithoutSnapshot(t *testing.T) {
-	accounts := []storedAccount{{ID: "one", Name: "Personal", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}}
+	accounts := []storedAccount{{ID: "one", Name: "Personal", Provider: providerCodex, AuthData: authData{Type: "chatgpt"}}}
 	rows, newest := cachedUsageRows(accounts, nil, time.Now())
 	if len(rows) != 1 || !rows[0].Loading {
 		t.Fatalf("cachedUsageRows() = %#v", rows)
@@ -79,7 +90,7 @@ func TestCachedUsageRowsRendersPersistedSnapshot(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 	shortSeconds := 5 * 60 * 60
 	weeklySeconds := 7 * 24 * 60 * 60
-	accounts := []storedAccount{{ID: "one", Name: "Personal", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}}
+	accounts := []storedAccount{{ID: "one", Name: "Personal", Provider: providerCodex, AuthData: authData{Type: "chatgpt"}}}
 	cache := map[string]usageCacheEntry{"one": {
 		ProviderUsage: &providerUsage{Plan: "plus", Metrics: []providerMetric{codexWindowMetric(sessionSlot, "SESSION", &rateLimitDetails{PrimaryWindow: &rateLimitWindow{UsedPercent: 25, LimitWindowSeconds: &shortSeconds}}, true), codexWindowMetric(weeklySlot, "WEEKLY", &rateLimitDetails{SecondaryWindow: &rateLimitWindow{UsedPercent: 50, LimitWindowSeconds: &weeklySeconds}}, false)}},
 		ResetCredits:  &resetCreditsPayload{AvailableCount: 2},
@@ -96,7 +107,7 @@ func TestCachedUsageRowsRendersPersistedSnapshot(t *testing.T) {
 
 func TestCachedFallbackUsageRowIsMarkedStale(t *testing.T) {
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	account := storedAccount{ID: "one", Name: "Personal", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}
+	account := storedAccount{ID: "one", Name: "Personal", Provider: providerCodex, AuthData: authData{Type: "chatgpt"}}
 	used := 25.0
 	row := cachedOrUnavailableUsageRow(account, usageCacheEntry{
 		ProviderUsage: &providerUsage{Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}}},
@@ -113,7 +124,7 @@ func TestNewTUIModelBootstrapsFromCacheBeforeNetworkInit(t *testing.T) {
 	shortSeconds := 5 * 60 * 60
 	cachedResets := &resetCreditsPayload{AvailableCount: 3}
 	store := &accountsStore{
-		Accounts: []storedAccount{{ID: "one", Name: "Personal", Provider: providerOpenAICodex, AuthData: authData{Type: "chatgpt"}}},
+		Accounts: []storedAccount{{ID: "one", Name: "Personal", Provider: providerCodex, AuthData: authData{Type: "chatgpt"}}},
 	}
 	if err := saveAccounts(path, store); err != nil {
 		t.Fatalf("saveAccounts() error = %v", err)
@@ -160,7 +171,7 @@ func TestCollectUsageRowsDoesNotShowCachedQuotaWhenAuthenticationExpires(t *test
 	store := &accountsStore{Accounts: []storedAccount{{
 		ID:       "one",
 		Name:     "Personal",
-		Provider: providerOpenAICodex,
+		Provider: providerCodex,
 		AuthData: authData{Type: "chatgpt", AccessToken: &expiredToken, RefreshToken: strPtr("expired-refresh-token")},
 	}}}
 	if err := saveAccounts(accountsPath, store); err != nil {

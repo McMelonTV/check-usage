@@ -1,6 +1,6 @@
 package main
 
-import "github.com/McMelonTV/codex-usage/codexapi"
+import "github.com/McMelonTV/check-usage/codexapi"
 
 type accountsStore struct {
 	Accounts  []storedAccount `json:"accounts"`

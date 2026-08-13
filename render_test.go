@@ -134,7 +134,7 @@ func TestUsageSlotTextUsesFixedProviderSemantics(t *testing.T) {
 		t.Fatalf("DeepSeek resets = %q", got)
 	}
 
-	codex := usageRow{ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", SupportsResetCredits: true, ResetCredits: "2"}
+	codex := usageRow{ProviderID: providerCodex, Provider: "Codex", SupportsResetCredits: true, ResetCredits: "2"}
 	if got := usageSlotText(codex, monthlySlot, time.Now()); got != "-" {
 		t.Fatalf("Codex monthly = %q", got)
 	}
@@ -149,7 +149,7 @@ func TestUsageSlotTextUsesFixedProviderSemantics(t *testing.T) {
 func TestRenderTableUsesFixedUsageColumns(t *testing.T) {
 	used := 25.0
 	rows := []usageRow{
-		{Name: "Codex", ProviderID: providerOpenAICodex, Provider: "OpenAI Codex", Email: "-", Plan: "plus", Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "2", SupportsResetCredits: true},
+		{Name: "Codex", ProviderID: providerCodex, Provider: "Codex", Email: "-", Plan: "plus", Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "2", SupportsResetCredits: true},
 		{Name: "DeepSeek", ProviderID: providerDeepSeek, Provider: "DeepSeek", Email: "-", Plan: "USD 12.50"},
 	}
 	output := ansi.Strip(renderTable(rows, time.Now()))

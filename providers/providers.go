@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	OpenAICodex = "openai-codex"
-	OpenCodeGo  = "opencode-go"
-	DeepSeek    = "deepseek"
+	Codex      = "codex"
+	OpenCodeGo = "opencode-go"
+	DeepSeek   = "deepseek"
 )
 
 type CredentialMode string
@@ -33,7 +33,7 @@ type Definition struct {
 }
 
 var definitions = []Definition{
-	{ID: OpenAICodex, Name: "OpenAI Codex", Credentials: Device, SupportsResetCredits: true},
+	{ID: Codex, Name: "Codex", Credentials: Device, SupportsResetCredits: true},
 	{ID: OpenCodeGo, Name: "OpenCode", Plan: "Go", Credentials: APIKey},
 	{ID: DeepSeek, Name: "DeepSeek", Credentials: APIKey},
 }

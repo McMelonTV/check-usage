@@ -13,9 +13,9 @@ var usageCacheMu sync.Mutex
 func usageCacheDir() string {
 	root, err := os.UserCacheDir()
 	if err != nil {
-		return filepath.Join(".cache", "codex-usage", "accounts")
+		return filepath.Join(".cache", "check-usage", "accounts")
 	}
-	return filepath.Join(root, "codex-usage", "accounts")
+	return filepath.Join(root, "check-usage", "accounts")
 }
 
 func accountUsageCachePath(accountID string) string {

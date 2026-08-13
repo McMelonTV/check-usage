@@ -40,12 +40,12 @@ func runAccountsCommand(args []string) int {
 }
 
 func accountProviderFlag(fs *flag.FlagSet) *string {
-	return fs.String("provider", "", "provider: openai-codex, opencode-go, or deepseek")
+	return fs.String("provider", "", "provider: codex, opencode-go, or deepseek")
 }
 
 func selectedProvider(id string) (providerDefinition, error) {
 	if strings.TrimSpace(id) == "" {
-		return providerDefinition{}, fmt.Errorf("--provider is required; choose: openai-codex, opencode-go, deepseek")
+		return providerDefinition{}, fmt.Errorf("--provider is required; choose: codex, opencode-go, deepseek")
 	}
 	return providerFor(id)
 }
@@ -561,10 +561,10 @@ func findAccountForRemoval(accounts []storedAccount, target string) (int, error)
 
 func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
-	fmt.Println("  codex-usage accounts list [--accounts-file path]")
-	fmt.Println("  codex-usage accounts add [--accounts-file path] --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]")
-	fmt.Println("  codex-usage accounts login [--accounts-file path] --provider openai-codex [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
-	fmt.Println("  codex-usage accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
-	fmt.Println("  codex-usage accounts remove [--accounts-file path] <id-or-name>")
-	fmt.Println("  codex-usage accounts rename [--accounts-file path] <id-or-name> <new-name>")
+	fmt.Println("  check-usage accounts list [--accounts-file path]")
+	fmt.Println("  check-usage accounts add [--accounts-file path] --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]")
+	fmt.Println("  check-usage accounts login [--accounts-file path] --provider codex [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
+	fmt.Println("  check-usage accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
+	fmt.Println("  check-usage accounts remove [--accounts-file path] <id-or-name>")
+	fmt.Println("  check-usage accounts rename [--accounts-file path] <id-or-name> <new-name>")
 }

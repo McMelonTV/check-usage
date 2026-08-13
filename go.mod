@@ -1,4 +1,4 @@
-module github.com/McMelonTV/codex-usage
+module github.com/McMelonTV/check-usage
 
 go 1.26
 

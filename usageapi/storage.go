@@ -13,18 +13,18 @@ import (
 func DefaultAccountsPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".config", "codex-usage", "accounts.json")
+		return filepath.Join(".config", "check-usage", "accounts.json")
 	}
-	return filepath.Join(home, ".config", "codex-usage", "accounts.json")
+	return filepath.Join(home, ".config", "check-usage", "accounts.json")
 }
 
 // DefaultCacheDir returns the per-account cache directory used by the CLI.
 func DefaultCacheDir() string {
 	root, err := os.UserCacheDir()
 	if err != nil {
-		return filepath.Join(".cache", "codex-usage", "accounts")
+		return filepath.Join(".cache", "check-usage", "accounts")
 	}
-	return filepath.Join(root, "codex-usage", "accounts")
+	return filepath.Join(root, "check-usage", "accounts")
 }
 
 func defaultSettings() Settings {

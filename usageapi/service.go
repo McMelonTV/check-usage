@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/McMelonTV/codex-usage/codexapi"
+	"github.com/McMelonTV/check-usage/codexapi"
 )
 
 // Config controls persistence, networking, and time for an embedded Service.
@@ -25,7 +25,7 @@ type Config struct {
 	Now          func() time.Time
 }
 
-// Service is the high-level, credential-owning codex-usage application API.
+// Service is the high-level, credential-owning check-usage application API.
 // Its methods are safe for concurrent use within one process.
 type Service struct {
 	accountsFile string
@@ -146,7 +146,7 @@ func (service *Service) UpdateSettings(settings Settings) (Settings, error) {
 
 // BeginDeviceAuth starts device authorization for an explicit provider.
 func (service *Service) BeginDeviceAuth(ctx context.Context, provider string) (DeviceAuthSession, error) {
-	if provider != providerOpenAICodex {
+	if provider != providerCodex {
 		return DeviceAuthSession{}, fmt.Errorf("provider %q does not support device authentication", provider)
 	}
 	response, err := codexapi.RequestDeviceUserCode(ctx, service.client)
@@ -158,7 +158,7 @@ func (service *Service) BeginDeviceAuth(ctx context.Context, provider string) (D
 		interval = 5
 	}
 	return DeviceAuthSession{
-		Provider:  providerOpenAICodex,
+		Provider:  providerCodex,
 		SessionID: response.DeviceAuthID, UserCode: response.UserCode,
 		VerificationURL: codexapi.DeviceVerificationURL, PollIntervalSeconds: interval,
 	}, nil
@@ -166,7 +166,7 @@ func (service *Service) BeginDeviceAuth(ctx context.Context, provider string) (D
 
 // PollDeviceAuth polls once and persists credentials when authorization completes.
 func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPoll) (DeviceAuthResult, error) {
-	if request.Provider != providerOpenAICodex {
+	if request.Provider != providerCodex {
 		return DeviceAuthResult{}, fmt.Errorf("provider %q does not support device authentication", request.Provider)
 	}
 	if strings.TrimSpace(request.SessionID) == "" || strings.TrimSpace(request.UserCode) == "" {
@@ -195,7 +195,7 @@ func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPo
 		name = defaultAccountName(identity.Email, service.now())
 	}
 	candidate := storedAccount{
-		ID: newAccountID(service.now()), Name: name, Provider: providerOpenAICodex,
+		ID: newAccountID(service.now()), Name: name, Provider: providerCodex,
 		Email: stringPointer(identity.Email), PlanType: stringPointer(identity.PlanType),
 		AuthData: authData{
 			Type: "chatgpt", IDToken: &tokens.IDToken, AccessToken: &tokens.AccessToken,

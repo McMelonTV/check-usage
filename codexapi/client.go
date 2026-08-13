@@ -19,7 +19,7 @@ const (
 	DeviceRedirectURI     = "https://auth.openai.com/deviceauth/callback"
 	UsageURL              = "https://chatgpt.com/backend-api/wham/usage"
 	ResetCreditsURL       = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
-	DefaultUserAgent      = "codex-usage/1.0.0"
+	DefaultUserAgent      = "check-usage/1.0.0"
 )
 
 type HTTPError struct {

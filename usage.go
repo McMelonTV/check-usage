@@ -154,7 +154,7 @@ func usageMetricForSlot(row usageRow, slot metricSlot) (providerMetric, bool) {
 
 func providerSupportsUsageSlot(providerID string, slot metricSlot) bool {
 	switch providerID {
-	case providerOpenAICodex:
+	case providerCodex:
 		return slot == sessionSlot || slot == weeklySlot
 	case providerOpenCodeGo:
 		return slot == sessionSlot || slot == weeklySlot || slot == monthlySlot

@@ -20,6 +20,13 @@ func TestOpenCodeDefinitionUsesGoPlan(t *testing.T) {
 	}
 }
 
+func TestCodexDefinition(t *testing.T) {
+	definition, ok := Get("codex")
+	if !ok || definition.ID != Codex || definition.Name != "Codex" {
+		t.Fatalf("definition = %#v", definition)
+	}
+}
+
 func TestOpenCodeGoRequiresCompleteWindows(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return response(http.StatusOK, `{"usage":{"rolling":{"percent":0}}}`), nil

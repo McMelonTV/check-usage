@@ -1,10 +1,10 @@
-// Package usageapi exposes the application capabilities of codex-usage without
+// Package usageapi exposes the application capabilities of check-usage without
 // requiring callers to parse terminal output or manage credential files.
 package usageapi
 
 import (
-	"github.com/McMelonTV/codex-usage/codexapi"
-	"github.com/McMelonTV/codex-usage/providers"
+	"github.com/McMelonTV/check-usage/codexapi"
+	"github.com/McMelonTV/check-usage/providers"
 )
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.

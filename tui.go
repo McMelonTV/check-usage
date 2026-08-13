@@ -1575,7 +1575,7 @@ func (m tuiModel) renderResetSlot(row usageRow) string {
 }
 
 func credentialRequiredText(row usageRow) string {
-	if row.ProviderID == providerOpenAICodex {
+	if row.ProviderID == providerCodex {
 		return "Sign in required"
 	}
 	return "API key required or invalid"

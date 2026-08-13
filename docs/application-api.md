@@ -1,9 +1,9 @@
 # Application API
 
-`codex-usage` exposes the same account, authentication, usage, reset-credit, and settings operations through two non-HTTP interfaces:
+`check-usage` exposes the same account, authentication, usage, reset-credit, and settings operations through two non-HTTP interfaces:
 
-- Go applications can import `github.com/McMelonTV/codex-usage/usageapi`.
-- Applications in any language can spawn `codex-usage api serve` and exchange newline-delimited JSON-RPC 2.0 messages over stdin/stdout.
+- Go applications can import `github.com/McMelonTV/check-usage/usageapi`.
+- Applications in any language can spawn `check-usage api serve` and exchange newline-delimited JSON-RPC 2.0 messages over stdin/stdout.
 
 The protocol version is `1.0`. Call `rpc.discover` to inspect the methods supported by the installed binary. Account and authentication results never include access tokens, refresh tokens, or ID tokens. Credentials remain in the configured `accounts.json` file.
 
@@ -12,17 +12,17 @@ The protocol version is `1.0`. Call `rpc.discover` to inspect the methods suppor
 The simplest integration is one process per request:
 
 ```bash
-codex-usage api accounts.list
-codex-usage api usage.get '{"refresh":true}'
-codex-usage api resets.get '{"account":"My Account","include_unavailable":true}'
-codex-usage api --pretty settings.get
+check-usage api accounts.list
+check-usage api usage.get '{"refresh":true}'
+check-usage api resets.get '{"account":"My Account","include_unavailable":true}'
+check-usage api --pretty settings.get
 ```
 
 Use `-` as the params argument to read one JSON value from stdin:
 
 ```bash
 printf '%s' '{"account":"My Account","new_name":"Work"}' \
-  | codex-usage api accounts.rename -
+  | check-usage api accounts.rename -
 ```
 
 Flags must precede the method. The supported flags are `--accounts-file`, `--cache-dir`, `--timeout`, and `--pretty`. A successful RPC response exits with status 0, an RPC/application error with status 1, and invalid command syntax with status 2.
@@ -32,7 +32,7 @@ Flags must precede the method. The supported flags are `--accounts-file`, `--cac
 For multiple calls, keep one process alive:
 
 ```bash
-codex-usage api --accounts-file ./accounts.json serve
+check-usage api --accounts-file ./accounts.json serve
 ```
 
 Write exactly one JSON-RPC request per line:
@@ -55,8 +55,8 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 | `accounts.rename` | `{"account":"id/name/email","new_name":"..."}` | Mutation and public account |
 | `accounts.remove` | `{"account":"id/name/email"}` | Mutation and removed public account |
 | `accounts.api_key.save` | `{"account":"optional id/name","provider":"opencode-go/deepseek","api_key":"...","name":"optional"}` | Creates or updates an API-key account and returns public metadata |
-| `auth.device.begin` | `{"provider":"openai-codex"}` | Session ID, user code, verification URL, and polling interval |
-| `auth.device.poll` | `{"provider":"openai-codex","session_id":"...","user_code":"...","name":"optional"}` | `pending`, or `complete` with the persisted public account |
+| `auth.device.begin` | `{"provider":"codex"}` | Session ID, user code, verification URL, and polling interval |
+| `auth.device.poll` | `{"provider":"codex","session_id":"...","user_code":"...","name":"optional"}` | `pending`, or `complete` with the persisted public account |
 | `usage.get` | `{"account":"optional","refresh":true}` | One result per selected account with typed provider metrics; omitting `account` selects all |
 | `resets.get` | `{"account":"...","refresh":true,"include_unavailable":false}` | Reset-credit payload for one account |
 | `settings.get` | `{}` | Current settings |
@@ -68,7 +68,7 @@ Provider metrics are returned in `UsageResult.metrics`. Percentage metrics inclu
 
 ### Device authentication
 
-1. Call `auth.device.begin` with `provider: "openai-codex"`.
+1. Call `auth.device.begin` with `provider: "codex"`.
 2. Show or open `verification_url` and display `user_code`.
 3. Poll `auth.device.poll` with the same provider no faster than `poll_interval_seconds`.
 4. Stop when the returned status is `complete`. The service exchanges the authorization code and saves the credentials itself.
@@ -84,7 +84,7 @@ import (
     "context"
     "log"
 
-    "github.com/McMelonTV/codex-usage/usageapi"
+    "github.com/McMelonTV/check-usage/usageapi"
 )
 
 func main() {

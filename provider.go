@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/McMelonTV/codex-usage/providers"
+	"github.com/McMelonTV/check-usage/providers"
 )
 
 const (
-	providerOpenAICodex = providers.OpenAICodex
-	providerOpenCodeGo  = providers.OpenCodeGo
-	providerDeepSeek    = providers.DeepSeek
+	providerCodex      = providers.Codex
+	providerOpenCodeGo = providers.OpenCodeGo
+	providerDeepSeek   = providers.DeepSeek
 )
 
 type credentialMode = providers.CredentialMode
@@ -84,7 +84,7 @@ func accountPlan(account storedAccount) string {
 
 func emptyProviderMetrics(providerID string) []providerMetric {
 	switch providerID {
-	case providerOpenAICodex:
+	case providerCodex:
 		return []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION"}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}}
 	case providerOpenCodeGo:
 		return []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION"}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}, {Kind: percentageMetric, Slot: monthlySlot, Label: "MONTHLY"}}
@@ -111,10 +111,10 @@ func fetchProviderUsage(ctx context.Context, client *http.Client, account stored
 		}
 		return providerFetchResult{Usage: usage, Account: account, AccountChanged: changed}, nil
 	}
-	return fetchOpenAICodexUsage(client, account)
+	return fetchCodexUsage(client, account)
 }
 
-func fetchOpenAICodexUsage(client *http.Client, account storedAccount) (providerFetchResult, error) {
+func fetchCodexUsage(client *http.Client, account storedAccount) (providerFetchResult, error) {
 	updated, changed, err := ensureFreshTokens(account, client)
 	if err != nil {
 		return providerFetchResult{}, err

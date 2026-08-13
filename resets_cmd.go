@@ -22,7 +22,7 @@ func runResetsCommand(args []string) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: codex-usage resets [--accounts-file path] [--timeout seconds] [--show-used] <account name/email/id>")
+		fmt.Fprintln(os.Stderr, "usage: check-usage resets [--accounts-file path] [--timeout seconds] [--show-used] <account name/email/id>")
 		return 2
 	}
 	target := strings.TrimSpace(fs.Arg(0))
