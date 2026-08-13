@@ -864,6 +864,9 @@ func TestNonCompactListShowsBarResetTimes(t *testing.T) {
 		},
 	}
 	for _, wide := range []bool{true, false} {
+		now := time.Now()
+		sessionDate := now.Add(90 * time.Minute).Format("Jan 2 15:04")
+		weeklyDate := now.Add(3 * 24 * time.Hour).Format("Jan 2 15:04")
 		nonCompact := tuiModel{rows: []usageRow{row}, settings: appSettings{CompactMode: false}, width: 110, height: 24}
 		var view string
 		if wide {
@@ -871,7 +874,7 @@ func TestNonCompactListShowsBarResetTimes(t *testing.T) {
 		} else {
 			view = ansi.Strip(nonCompact.renderCompactList(110, 22))
 		}
-		for _, want := range []string{"resets in ", "2d", "30d"} {
+		for _, want := range []string{"·", "1h29m", "2d23h", "30d23h", sessionDate, weeklyDate} {
 			if !strings.Contains(view, want) {
 				t.Fatalf("wide=%v non-compact list missing %q:\n%s", wide, want, view)
 			}
@@ -882,8 +885,8 @@ func TestNonCompactListShowsBarResetTimes(t *testing.T) {
 		} else {
 			view = ansi.Strip(compact.renderCompactList(110, 22))
 		}
-		if strings.Contains(view, "resets ") {
-			t.Fatalf("wide=%v compact list still shows reset times:\n%s", wide, view)
+		if strings.Contains(view, sessionDate) {
+			t.Fatalf("wide=%v compact list still shows reset dates:\n%s", wide, view)
 		}
 	}
 }
@@ -901,13 +904,14 @@ func TestWideListCompactModeShowsResetCountdownInBars(t *testing.T) {
 	}
 	compact := tuiModel{rows: []usageRow{row}, settings: appSettings{CompactMode: true, BarOrder: "bar_percent_reset"}, width: 110, height: 24}
 	view := ansi.Strip(compact.renderWideList(110, 22))
-	if !strings.Contains(view, "7d2h") || strings.Contains(view, "resets in") {
+	if !strings.Contains(view, "7d2h") || strings.Contains(view, "·") {
 		t.Fatalf("compact wide list lost the bar reset countdown:\n%s", view)
 	}
 	spaced := tuiModel{rows: []usageRow{row}, settings: appSettings{CompactMode: false, BarOrder: "bar_percent_reset"}, width: 110, height: 24}
 	view = ansi.Strip(spaced.renderWideList(110, 22))
-	if strings.Contains(view, "7d2h") || !strings.Contains(view, "resets in") {
-		t.Fatalf("spaced wide list duplicated the countdown or lost reset rows:\n%s", view)
+	expectedDate := time.Unix(resetAt, 0).Format("Jan 2 15:04")
+	if !strings.Contains(view, "7d2h") || !strings.Contains(view, "·") || !strings.Contains(view, expectedDate) {
+		t.Fatalf("spaced wide list lost countdown or reset date (%q):\n%s", expectedDate, view)
 	}
 }
 

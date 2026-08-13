@@ -1571,9 +1571,9 @@ func (m tuiModel) renderWideList(width, height int) string {
 		if !m.settings.CompactMode {
 			now := time.Now()
 			lines = append(lines, tuiMutedStyle.Render("  "+cell("", nameWidth)+" "+cell("", providerWidth)+" "+cell("", planWidth)+" "+
-				cell(resetInCellText(row, sessionSlot, now), usageWidth)+" "+
-				cell(resetInCellText(row, weeklySlot, now), usageWidth)+" "+
-				cell(resetInCellText(row, monthlySlot, now), usageWidth)+" "+cell("", creditWidth)))
+				cell(resetSubtitleText(row, sessionSlot, now), usageWidth)+" "+
+				cell(resetSubtitleText(row, weeklySlot, now), usageWidth)+" "+
+				cell(resetSubtitleText(row, monthlySlot, now), usageWidth)+" "+cell("", creditWidth)))
 		}
 	}
 	if start > 0 || end < len(m.rows) {
@@ -1612,8 +1612,8 @@ func (m tuiModel) renderCompactList(width, height int) string {
 			now := time.Now()
 			parts := make([]string, 0, 3)
 			for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
-				if text := barResetInText(row, slot, now); text != "-" {
-					parts = append(parts, strings.ToUpper(string(slot))+" resets in "+text)
+				if text := resetSubtitleText(row, slot, now); text != "" {
+					parts = append(parts, strings.ToUpper(string(slot))+" "+text)
 				}
 			}
 			if len(parts) > 0 {
@@ -1637,43 +1637,28 @@ func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int, incl
 	return tuiMutedStyle.Render(ansi.Truncate(text, width, "…"))
 }
 
-func barResetInText(row usageRow, slot metricSlot, now time.Time) string {
-	metric, ok := usageMetricForSlot(row, slot)
-	if !ok || metric.ResetAt == nil {
-		return "-"
-	}
-	d := time.Unix(*metric.ResetAt, 0).In(now.Location()).Sub(now)
-	if d <= 0 {
-		return "now"
-	}
-	days := int(d / (24 * time.Hour))
-	hours := int((d % (24 * time.Hour)) / time.Hour)
-	minutes := int((d % time.Hour) / time.Minute)
-	switch {
-	case days > 0:
-		if hours > 0 {
-			return fmt.Sprintf("%dd %dh", days, hours)
-		}
-		return fmt.Sprintf("%dd", days)
-	case hours > 0:
-		if minutes > 0 {
-			return fmt.Sprintf("%dh %dm", hours, minutes)
-		}
-		return fmt.Sprintf("%dh", hours)
-	default:
-		if minutes == 0 {
-			return "now"
-		}
-		return fmt.Sprintf("%dm", minutes)
-	}
-}
-
-func resetInCellText(row usageRow, slot metricSlot, now time.Time) string {
-	text := barResetInText(row, slot, now)
-	if text == "-" {
+func resetDateText(resetAt *int64, now time.Time) string {
+	if resetAt == nil {
 		return ""
 	}
-	return "resets in " + text
+	return time.Unix(*resetAt, 0).In(now.Location()).Format("Jan 2 15:04")
+}
+
+func resetSubtitleText(row usageRow, slot metricSlot, now time.Time) string {
+	metric, ok := usageMetricForSlot(row, slot)
+	if !ok || metric.ResetAt == nil {
+		return ""
+	}
+	countdown := resetCountdownText(metric.ResetAt, now)
+	date := resetDateText(metric.ResetAt, now)
+	switch {
+	case countdown == "":
+		return date
+	case date == "":
+		return countdown
+	default:
+		return countdown + " · " + date
+	}
 }
 
 func (m tuiModel) renderCompactSlot(row usageRow, slot metricSlot, width int) string {
