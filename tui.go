@@ -43,6 +43,7 @@ var (
 	orangeColor   = lipgloss.AdaptiveColor{Light: "#B54708", Dark: "#FFB86B"}
 	magentaColor  = lipgloss.AdaptiveColor{Light: "#A53A87", Dark: "#F18ACB"}
 	dimTrackColor = lipgloss.AdaptiveColor{Light: "#DDE2E8", Dark: "#303743"}
+	blockedColor  = lipgloss.AdaptiveColor{Light: "#7A2323", Dark: "#6B1F1F"}
 
 	tuiTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(textColor)
 	tuiAccentStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
@@ -1643,7 +1644,8 @@ func (m tuiModel) renderCompactList(width, height int) string {
 
 func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int, includeReset bool) string {
 	if metric, ok := usageMetricForSlot(row, slot); ok && metric.Kind == percentageMetric {
-		return renderUsageBar(metric.Used, width, m.showRemaining(), row.Loading, false, row.Stale, m.settings, metric.ResetAt, time.Now(), includeReset)
+		blocked := isSlotBlockedByLongerWindow(row, slot)
+		return renderUsageBar(metric.Used, width, m.showRemaining(), row.Loading, false, row.Stale, m.settings, metric.ResetAt, time.Now(), includeReset, blocked)
 	}
 	text := usageSlotText(row, slot, time.Now())
 	if row.AuthRequired && slot == sessionSlot {
@@ -2011,7 +2013,8 @@ func resetCountdownText(resetAt *int64, now time.Time) string {
 	}
 }
 
-func renderUsageBar(used *float64, width int, showRemaining, loading, authRequired, stale bool, settings appSettings, resetAt *int64, now time.Time, includeReset bool) string {
+func renderUsageBar(used *float64, width int, showRemaining, loading, authRequired, stale bool, settings appSettings, resetAt *int64, now time.Time, includeReset bool, blocked ...bool) string {
+	isBlocked := len(blocked) > 0 && blocked[0]
 	if loading {
 		skeleton := strings.Repeat("·", max(0, width-5))
 		if barOrderStartsWithPercent(settings.BarOrder) {
@@ -2035,7 +2038,13 @@ func renderUsageBar(used *float64, width int, showRemaining, loading, authRequir
 	if stale {
 		barColor = semanticPaletteFor(settings.ColorTheme).warning
 	}
+	if isBlocked {
+		barColor = blockedColor
+	}
 	barStyle := lipgloss.NewStyle().Foreground(barColor)
+	if isBlocked {
+		barStyle = barStyle.Strikethrough(true).Faint(true)
+	}
 
 	var percentText, resetText string
 	if settings.showPercent() {
@@ -2078,7 +2087,11 @@ func renderUsageBar(used *float64, width int, showRemaining, loading, authRequir
 			}
 		case "reset":
 			if resetText != "" {
-				parts = append(parts, tuiMutedStyle.Render(resetText))
+				if isBlocked {
+					parts = append(parts, lipgloss.NewStyle().Foreground(blockedColor).Strikethrough(true).Faint(true).Render(resetText))
+				} else {
+					parts = append(parts, tuiMutedStyle.Render(resetText))
+				}
 			}
 		case "bar":
 			if renderBar {
@@ -2107,6 +2120,9 @@ func renderBarTrack(displayValue float64, trackWidth int, barFill string, barSty
 		filled = trackWidth
 	}
 	trackStyle := lipgloss.NewStyle().Foreground(dimTrackColor)
+	if barStyle.GetStrikethrough() {
+		trackStyle = lipgloss.NewStyle().Foreground(blockedColor).Strikethrough(true).Faint(true)
+	}
 	filledBar := barStyle.Render(strings.Repeat("━", filled))
 	emptyTrack := trackStyle.Render(strings.Repeat("─", trackWidth-filled))
 	if barFill == "right" {

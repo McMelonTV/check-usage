@@ -61,6 +61,23 @@ func colorizeMetric(text string, metric providerMetric) string {
 	return colorizeUsage(text, metric.Used)
 }
 
+func colorizeBlockedMetric(text string, metric providerMetric) string {
+	if metric.Kind != percentageMetric || text == "-" {
+		return text
+	}
+	if metric.Used == nil {
+		return text
+	}
+	return colorizeBlockedUsage(text, metric.Used)
+}
+
+func colorizeBlockedUsage(text string, used *float64) string {
+	if used == nil || text == "-" {
+		return text
+	}
+	return ansiBlocked + text + ansiReset
+}
+
 func applyUsageColors(tableText string, rows []usageRow, now time.Time) string {
 	trimmed := strings.TrimRight(tableText, "\n")
 	if trimmed == "" {
@@ -86,7 +103,13 @@ func applyUsageColors(tableText string, rows []usageRow, now time.Time) string {
 			if position < 0 {
 				continue
 			}
-			line = line[:position] + colorizeMetric(text, metric) + line[position+len(text):]
+			var colored string
+			if isSlotBlockedByLongerWindow(row, slot) {
+				colored = colorizeBlockedMetric(text, metric)
+			} else {
+				colored = colorizeMetric(text, metric)
+			}
+			line = line[:position] + colored + line[position+len(text):]
 			end = position
 		}
 		lines[lineIndex] = line

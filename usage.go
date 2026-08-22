@@ -210,3 +210,36 @@ func authenticationRequiredUsageRow(account storedAccount) usageRow {
 	row.AuthRequired = true
 	return row
 }
+
+func slotRank(slot metricSlot) (int, bool) {
+	switch slot {
+	case sessionSlot:
+		return 0, true
+	case weeklySlot:
+		return 1, true
+	case monthlySlot:
+		return 2, true
+	default:
+		return 0, false
+	}
+}
+
+func isSlotBlockedByLongerWindow(row usageRow, slot metricSlot) bool {
+	rank, ok := slotRank(slot)
+	if !ok {
+		return false
+	}
+	for _, metric := range row.Metrics {
+		otherRank, ok := slotRank(metric.Slot)
+		if !ok || otherRank <= rank {
+			continue
+		}
+		if metric.Used == nil {
+			continue
+		}
+		if percentValue(*metric.Used) >= 100 {
+			return true
+		}
+	}
+	return false
+}

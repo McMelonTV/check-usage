@@ -24,6 +24,11 @@ const (
 	ansiAmber      = "\x1b[38;2;245;158;11m"
 	ansiGreen      = "\x1b[38;2;34;197;94m"
 	ansiLightGreen = "\x1b[38;2;134;239;172m"
+
+	ansiStrike        = "\x1b[9m"
+	ansiMutedDarkRed  = "\x1b[38;2;110;35;35m"
+	ansiDim           = "\x1b[2m"
+	ansiBlocked       = "\x1b[9;38;2;110;35;35m"
 )
 
 const (
