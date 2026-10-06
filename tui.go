@@ -715,7 +715,7 @@ func (m tuiModel) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 func (m tuiModel) startAccountAdd() (tea.Model, tea.Cmd) {
 	m.authVersion++
 	m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = true, true, false, false
-	m.authProviderID, m.authAPIKeyInput, m.authCode, m.authErr, m.authReauthID = "", "", nil, nil, ""
+	m.authProviderID, m.authAPIKeyInput, m.authCode, m.authErr, m.authReauthID = providerDefinitions()[0].ID, "", nil, nil, ""
 	return m, nil
 }
 
@@ -1563,11 +1563,13 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 		title = "Reauthenticate account"
 	}
 	if m.authSelectingProvider {
-		lines := []string{tuiMutedStyle.Render("Choose a provider:")}
+		textStyle := lipgloss.NewStyle().Foreground(textColor)
+		lines := []string{textStyle.Render("Choose a provider:")}
 		for _, provider := range providerDefinitions() {
-			marker, style := "  ", tuiMutedStyle
+			marker, nameStyle, credentialStyle := "  ", textStyle.Bold(true), tuiMutedStyle
 			if provider.ID == m.authProviderID {
-				marker, style = "› ", tuiAccentStyle
+				marker, nameStyle = selectedRowVisual(false)
+				credentialStyle = textStyle
 			}
 			credential := "API key"
 			if provider.ID == providerCursor {
@@ -1579,12 +1581,12 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 			case oauthCodeCredentials:
 				credential = "Browser login"
 			}
-			lines = append(lines, marker+style.Render(provider.Name)+tuiMutedStyle.Render(" · "+credential))
+			lines = append(lines, marker+nameStyle.Render(provider.Name)+tuiMutedStyle.Render(" · ")+credentialStyle.Render(credential))
 		}
 		if m.authErr != nil {
 			lines = append(lines, "", tuiErrorStyle.Render(m.authErr.Error()))
 		}
-		lines = append(lines, "", tuiMutedStyle.Render("Enter select · Esc cancel"))
+		lines = append(lines, "", tuiAccentStyle.Render("enter")+tuiMutedStyle.Render(" select  ")+tuiAccentStyle.Render("esc")+tuiMutedStyle.Render(" cancel"))
 		return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+strings.Join(lines, "\n"))
 	}
 	if m.authProviderUsesAPIKey() {
