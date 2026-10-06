@@ -21,7 +21,7 @@ func TestResetCreditsSummaryShowsAvailableCountAndEarliestExpiry(t *testing.T) {
 	}
 
 	got := resetCreditsSummary(payload, now)
-	want := "2, earliest exp. in 26h (July 11, 2:00 PM UTC)"
+	want := "2, exp. 1d2h · Jul 11 14:00"
 	if got != want {
 		t.Fatalf("resetCreditsSummary() = %q, want %q", got, want)
 	}
@@ -148,19 +148,33 @@ func TestUsageSlotTextUsesFixedProviderSemantics(t *testing.T) {
 
 func TestRenderTableUsesFixedUsageColumns(t *testing.T) {
 	used := 25.0
+	now := time.Now()
+	reset := now.Add(90*time.Minute + 30*time.Second).Unix()
 	rows := []usageRow{
-		{Name: "Codex", ProviderID: providerCodex, Provider: "Codex", Email: "-", Plan: "plus", Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "2", SupportsResetCredits: true},
+		{Name: "Codex", ProviderID: providerCodex, Provider: "Codex", Email: "me@example.com", Plan: "plus", Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used, ResetAt: &reset}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "2, exp. 1d2h · Jul 11 14:00", SupportsResetCredits: true},
 		{Name: "DeepSeek", ProviderID: providerDeepSeek, Provider: "DeepSeek", Email: "-", Plan: "USD 12.50"},
 	}
-	output := ansi.Strip(renderTable(rows, time.Now()))
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if got := strings.Join(strings.Fields(lines[0]), " "); got != "ACCOUNT PROVIDER EMAIL PLAN SESSION (~5h) WEEKLY MONTHLY RESETS" {
+	output := ansi.Strip(renderTable(rows, now))
+	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("expected header plus two lines per account:\n%s", output)
+	}
+	if got := strings.Join(strings.Fields(lines[0]), " "); got != "ACCOUNT PROVIDER PLAN SESSION (~5h) WEEKLY MONTHLY RESETS" {
 		t.Fatalf("table header = %q", got)
 	}
-	if !strings.Contains(output, "USD 12.50  -") || !strings.Contains(output, "25% used / 75% left") {
+	if got := strings.Join(strings.Fields(lines[1]), " "); got != "Codex Codex plus 25% used / 75% left 25% used / 75% left - 2" {
+		t.Fatalf("usage line = %q", got)
+	}
+	if got := strings.Join(strings.Fields(lines[2]), " "); got != "me@example.com 1h30m · "+resetDateText(&reset, now)+" exp. 1d2h · Jul 11 14:00" {
+		t.Fatalf("subtitle line = %q", got)
+	}
+	if !strings.Contains(lines[3], "USD 12.50  -") {
 		t.Fatalf("fixed table values are missing:\n%s", output)
 	}
-	if strings.Count(renderTable(rows[:1], time.Now()), ansiGreen+"25%") != 2 {
+	if strings.Index(lines[1], "25%") != strings.Index(lines[2], "1h30m") {
+		t.Fatalf("subtitle is not aligned with its usage column:\n%s", output)
+	}
+	if strings.Count(renderTable(rows[:1], now), ansiGreen+"25%") != 2 {
 		t.Fatalf("identical usage percentages were not colored independently")
 	}
 }

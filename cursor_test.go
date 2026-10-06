@@ -79,7 +79,7 @@ func TestCursorUsageFetchAndRendering(t *testing.T) {
 	}
 	now := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
 	plain := ansi.Strip(renderTable([]usageRow{row}, now))
-	for _, want := range []string{"CURSOR MODELS", "OTHER MODELS", "ON-DEMAND", "0% used / 100% left", "100% used / 0% left", "Disabled", "October 10"} {
+	for _, want := range []string{"CURSOR MODELS", "OTHER MODELS", "ON-DEMAND", "0% used / 100% left", "100% used / 0% left", "Disabled", "Oct 10"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("table missing %q:\n%s", want, plain)
 		}
