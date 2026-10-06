@@ -154,7 +154,7 @@ func TestRenderTableUsesFixedUsageColumns(t *testing.T) {
 	}
 	output := ansi.Strip(renderTable(rows, time.Now()))
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if got := strings.Join(strings.Fields(lines[0]), " "); got != "ACCOUNT PROVIDER EMAIL PLAN SESSION WEEKLY MONTHLY RESETS" {
+	if got := strings.Join(strings.Fields(lines[0]), " "); got != "ACCOUNT PROVIDER EMAIL PLAN SESSION (~5h) WEEKLY MONTHLY RESETS" {
 		t.Fatalf("table header = %q", got)
 	}
 	if !strings.Contains(output, "USD 12.50  -") || !strings.Contains(output, "25% used / 75% left") {

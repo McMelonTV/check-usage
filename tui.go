@@ -1744,7 +1744,7 @@ func (m tuiModel) renderWideList(width, height int) string {
 	headerStyle := lipgloss.NewStyle().Foreground(mutedColor).Bold(true)
 	header := "  " + cell(headerStyle.Render("ACCOUNT"), nameWidth) + " " +
 		cell(headerStyle.Render("PROVIDER"), providerWidth) + " " + cell(headerStyle.Render("PLAN"), planWidth) + " " +
-		cell(headerStyle.Render("SESSION"), usageWidth) + " " + cell(headerStyle.Render("WEEKLY"), usageWidth) + " " +
+		cell(headerStyle.Render("SESSION (~5h)"), usageWidth) + " " + cell(headerStyle.Render("WEEKLY"), usageWidth) + " " +
 		cell(headerStyle.Render("MONTHLY")+m.modelScopedHeaderSuffix(), usageWidth) + " " + cell(headerStyle.Render("RESETS"), creditWidth)
 
 	rowStride := 1
