@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.
-const ProtocolVersion = "1.2"
+const ProtocolVersion = "1.3"
 
 // Account is the public, credential-free representation of a saved account.
 type Account struct {
@@ -64,6 +64,23 @@ type OAuthComplete struct {
 	SessionID string `json:"session_id"`
 	Code      string `json:"code"`
 	Name      string `json:"name,omitempty"`
+}
+
+// BrowserAuthSession contains the public portion of a browser login. The
+// verifier stays in the Service that created it; poll using the same instance.
+type BrowserAuthSession struct {
+	Provider            string `json:"provider"`
+	SessionID           string `json:"session_id"`
+	VerificationURL     string `json:"verification_url"`
+	PollIntervalSeconds int    `json:"poll_interval_seconds"`
+}
+
+// BrowserAuthPoll polls a login, optionally replacing a saved account's login.
+type BrowserAuthPoll struct {
+	Provider  string `json:"provider"`
+	SessionID string `json:"session_id"`
+	Name      string `json:"name,omitempty"`
+	Account   string `json:"account,omitempty"`
 }
 
 // DeviceAuthResult is pending or complete. Complete results include the saved account.

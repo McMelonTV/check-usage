@@ -15,6 +15,7 @@ import (
 
 	"github.com/McMelonTV/check-usage/claudeapi"
 	"github.com/McMelonTV/check-usage/codexapi"
+	"github.com/McMelonTV/check-usage/cursorapi"
 	"github.com/McMelonTV/check-usage/providers"
 )
 
@@ -30,12 +31,13 @@ type Config struct {
 // Service is the high-level, credential-owning check-usage application API.
 // Its methods are safe for concurrent use within one process.
 type Service struct {
-	accountsFile string
-	cacheDir     string
-	client       *http.Client
-	userAgent    string
-	now          func() time.Time
-	mu           sync.Mutex
+	accountsFile    string
+	cacheDir        string
+	client          *http.Client
+	userAgent       string
+	now             func() time.Time
+	mu              sync.Mutex
+	browserSessions map[string]cursorapi.LoginSession
 }
 
 // New creates a Service, applying platform defaults to omitted configuration.
@@ -58,6 +60,7 @@ func New(config Config) *Service {
 	return &Service{
 		accountsFile: config.AccountsFile, cacheDir: config.CacheDir,
 		client: config.HTTPClient, userAgent: config.UserAgent, now: config.Now,
+		browserSessions: make(map[string]cursorapi.LoginSession),
 	}
 }
 
@@ -301,6 +304,9 @@ func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutatio
 		if err := service.saveAccounts(store); err != nil {
 			return AccountMutation{}, err
 		}
+		if err := service.clearCache(store.Accounts[index].ID); err != nil {
+			return AccountMutation{}, err
+		}
 		return AccountMutation{Action: "updated", Account: store.Accounts[index].public()}, nil
 	}
 	baseName := name
@@ -426,7 +432,18 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 			}
 			return UsageResult{Account: resultAccount, Metrics: usage.Metrics, Cached: true}, false, nil
 		}
-		usage, err := fetchAPIKeyUsage(ctx, service.client, *account, service.userAgent)
+		var usage providers.Usage
+		changed := false
+		if account.Provider == providerCursor {
+			var token string
+			usage, token, err = providers.FetchCursorUsage(ctx, service.client, stringValue(account.AuthData.APIKey), stringValue(account.AuthData.AccessToken), service.now())
+			if err == nil && token != stringValue(account.AuthData.AccessToken) {
+				account.AuthData.AccessToken = stringPointer(token)
+				changed = true
+			}
+		} else {
+			usage, err = fetchAPIKeyUsage(ctx, service.client, *account, service.userAgent)
+		}
 		if err != nil {
 			if cached && entry.ProviderUsage != nil {
 				cachedUsage := *entry.ProviderUsage
@@ -440,7 +457,6 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 		}
 		now := service.now()
 		entry.ProviderUsage, entry.FetchedAt = &usage, now.Unix()
-		changed := false
 		if usage.Plan != "" && stringValue(account.PlanType) != usage.Plan {
 			account.PlanType = &usage.Plan
 			changed = true
@@ -645,7 +661,14 @@ func accountIndexes(accounts []storedAccount, target string) ([]int, error) {
 
 func matchingLogin(accounts []storedAccount, candidate storedAccount, explicitName bool) int {
 	for index := range accounts {
-		if candidate.Email == nil || accounts[index].Email == nil || !strings.EqualFold(*accounts[index].Email, *candidate.Email) {
+		if accounts[index].Provider != candidate.Provider {
+			continue
+		}
+		matches := candidate.Email != nil && accounts[index].Email != nil && strings.EqualFold(*accounts[index].Email, *candidate.Email)
+		if candidate.Provider == providerCursor && stringValue(candidate.AuthData.AccountID) != "" && stringValue(candidate.AuthData.AccountID) == stringValue(accounts[index].AuthData.AccountID) {
+			matches = true
+		}
+		if !matches {
 			continue
 		}
 		if explicitName && !strings.EqualFold(accounts[index].Name, candidate.Name) {

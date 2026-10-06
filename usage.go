@@ -154,7 +154,7 @@ func slotLabel(row usageRow, slot metricSlot) string {
 	if metric, ok := usageMetricForSlot(row, slot); ok && metric.IsModelScoped() {
 		return strings.ToUpper(metric.Model)
 	}
-	return strings.ToUpper(string(slot))
+	return usageSlotLabel(slot)
 }
 
 func usageMetricForSlot(row usageRow, slot metricSlot) (providerMetric, bool) {
@@ -172,25 +172,65 @@ func providerSupportsUsageSlot(providerID string, slot metricSlot) bool {
 		return slot == sessionSlot || slot == weeklySlot
 	case providerOpenCodeGo:
 		return slot == sessionSlot || slot == weeklySlot || slot == monthlySlot
+	case providerCursor:
+		return slot == cursorModelsSlot || slot == otherModelsSlot || slot == onDemandSlot
 	default:
 		return false
 	}
 }
 
 func usageSlotText(row usageRow, slot metricSlot, now time.Time) string {
+	if row.AuthRequired && slot == usageSlots(row)[0] {
+		return credentialRequiredText(row)
+	}
 	if metric, ok := usageMetricForSlot(row, slot); ok {
+		if row.Loading && metric.Used == nil && metric.Text == "" {
+			return "loading…"
+		}
 		if metric.IsModelScoped() {
 			return modelScopedMarker + " " + metric.Model + " weekly: " + metricText(metric, now)
 		}
 		return metricText(metric, now)
 	}
-	if row.AuthRequired && slot == sessionSlot {
-		return credentialRequiredText(row)
-	}
 	if row.Loading && providerSupportsUsageSlot(row.ProviderID, slot) {
 		return "loading…"
 	}
 	return "-"
+}
+
+func usageSlots(row usageRow) [3]metricSlot {
+	if row.ProviderID == providerCursor {
+		return [3]metricSlot{cursorModelsSlot, otherModelsSlot, onDemandSlot}
+	}
+	return [3]metricSlot{sessionSlot, weeklySlot, monthlySlot}
+}
+
+func usageSlotLabel(slot metricSlot) string {
+	switch slot {
+	case cursorModelsSlot:
+		return "CURSOR MODELS"
+	case otherModelsSlot:
+		return "OTHER MODELS"
+	case onDemandSlot:
+		return "ON-DEMAND"
+	default:
+		return strings.ToUpper(string(slot))
+	}
+}
+
+func usageColumnLabels(rows []usageRow) [3]string {
+	var cursor, windows bool
+	for _, row := range rows {
+		cursor = cursor || row.ProviderID == providerCursor
+		windows = windows || row.ProviderID == providerCodex || row.ProviderID == providerOpenCodeGo || row.ProviderID == providerClaude
+	}
+	if cursor && windows {
+		return [3]string{"SESSION (~5h)/CURSOR", "WEEKLY/OTHER", "MONTHLY/SPEND"}
+	}
+	if cursor {
+		return [3]string{"CURSOR MODELS", "OTHER MODELS", "ON-DEMAND"}
+	}
+	return [3]string{"SESSION (~5h)", "WEEKLY", "MONTHLY"}
 }
 
 func resetSlotText(row usageRow) string {

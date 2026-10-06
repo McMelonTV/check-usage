@@ -5,7 +5,7 @@
 - Go applications can import `github.com/McMelonTV/check-usage/usageapi`.
 - Applications in any language can spawn `check-usage api serve` and exchange newline-delimited JSON-RPC 2.0 messages over stdin/stdout.
 
-The protocol version is `1.2`. Call `rpc.discover` to inspect the methods supported by the installed binary. Account and authentication results never include access tokens, refresh tokens, or ID tokens. Credentials remain in the configured `accounts.json` file.
+The protocol version is `1.3`. Call `rpc.discover` to inspect the methods supported by the installed binary. Account and authentication results never include API keys, access tokens, refresh tokens, or ID tokens. Credentials remain in the configured `accounts.json` file.
 
 ## One-shot JSON commands
 
@@ -54,11 +54,13 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 | `accounts.list` | `{}` | Public account array |
 | `accounts.rename` | `{"account":"id/name/email","new_name":"..."}` | Mutation and public account |
 | `accounts.remove` | `{"account":"id/name/email"}` | Mutation and removed public account |
-| `accounts.api_key.save` | `{"account":"optional id/name","provider":"opencode-go/deepseek","api_key":"...","name":"optional"}` | Creates or updates an API-key account and returns public metadata |
+| `accounts.api_key.save` | `{"account":"optional id/name","provider":"opencode-go/deepseek/cursor","api_key":"...","name":"optional"}` | Creates or updates an API-key account and returns public metadata |
 | `auth.device.begin` | `{"provider":"codex"}` | Session ID, user code, verification URL, and polling interval |
 | `auth.device.poll` | `{"provider":"codex","session_id":"...","user_code":"...","name":"optional"}` | `pending`, or `complete` with the persisted public account |
 | `auth.oauth.begin` | `{"provider":"claude"}` | Session ID and the authorization URL to open |
 | `auth.oauth.complete` | `{"provider":"claude","session_id":"...","code":"...","name":"optional"}` | `complete` with the persisted public account |
+| `auth.browser.begin` | `{"provider":"cursor"}` | Session ID, verification URL, and polling interval |
+| `auth.browser.poll` | `{"provider":"cursor","session_id":"...","name":"optional","account":"optional id/name/email"}` | `pending`, or `complete` with the persisted public account |
 | `usage.get` | `{"account":"optional","refresh":true}` | One result per selected account with typed provider metrics; omitting `account` selects all |
 | `resets.get` | `{"account":"...","refresh":true,"include_unavailable":false}` | Reset-credit payload for one account |
 | `settings.get` | `{}` | Current settings |
@@ -67,6 +69,19 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 `refresh` defaults to `true`. With `false`, usage and reset methods perform no network access and return the cache used by the CLI dashboard. When refreshing every account, a provider failure is returned in that account's `error` field so successful accounts are not discarded.
 
 Provider metrics are returned in `UsageResult.metrics`. Percentage metrics include `used_percent` and optional `reset_at`. A metric with a `model` field is a per-model weekly limit (for example Claude's Fable limit); it uses the `monthly` slot for display but is not a monthly window. API keys are accepted as input only and are never returned.
+
+### Cursor login and metrics
+
+1. Call `auth.browser.begin` with `provider: "cursor"`.
+2. Show or open the returned `verification_url`.
+3. Poll `auth.browser.poll` with the session ID no faster than `poll_interval_seconds`.
+4. Stop when status is `complete`. The service creates a revocable 90-day API key and persists it with a bearer token; browser refresh tokens are discarded.
+
+Use the same `Service` instance or persistent `api serve` process for both calls. The service keeps the PKCE verifier in memory and never returns it. Sessions expire after 20 minutes and cannot be replayed after completion. One-shot API commands cannot span this login flow. To reauthenticate an existing account, include `account` in the poll request; the signed-in identity must match.
+
+An existing user API key can be saved with `accounts.api_key.save` and `provider: "cursor"`. Public metadata reports `auth_type: "api_key"`. Replacing credentials invalidates cached usage. See [Cursor setup](../README.md#cursor-setup) for protocol details.
+
+Cursor `usage.get` responses use `cursor_models` and `other_models` slots with `kind: "percentage"` and the shared monthly billing-cycle `reset_at` when available. A missing percentage is omitted rather than reported as zero. The `on_demand` slot has `kind: "text"` and a `text` field such as `Disabled`, `USD 1.23 / 10.00`, or `USD 1.23 spent (unlimited)`; absent data omits `text`. These pools are independent and do not correspond to session or weekly windows. Cursor does not support `resets.get`.
 
 ### Device authentication
 
@@ -117,4 +132,4 @@ func main() {
 }
 ```
 
-The main entry points are `Service.ListAccounts`, `RenameAccount`, `RemoveAccount`, `SaveAPIKeyAccount`, `BeginDeviceAuth`, `PollDeviceAuth`, `Usage`, `ResetCredits`, `Settings`, and `UpdateSettings`. A custom `http.Client`, clock, accounts path, cache directory, and user agent can be supplied through `usageapi.Config` for embedding and testing.
+The main entry points are `Service.ListAccounts`, `RenameAccount`, `RemoveAccount`, `SaveAPIKeyAccount`, `BeginDeviceAuth`, `PollDeviceAuth`, `BeginBrowserAuth`, `PollBrowserAuth`, `Usage`, `ResetCredits`, `Settings`, and `UpdateSettings`. A custom `http.Client`, clock, accounts path, cache directory, and user agent can be supplied through `usageapi.Config` for embedding and testing.

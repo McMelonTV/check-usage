@@ -1,6 +1,6 @@
 # check-usage
 
-A simple Go CLI app for checking Codex and Claude usage limits and available Codex "reset credits" across multiple accounts.
+A Go CLI app for checking usage across Codex, Claude, OpenCode, DeepSeek, and Cursor accounts, including Codex "reset credits".
 
 This repository also includes an Android app with home-screen widgets for the same usage information.
 
@@ -41,6 +41,14 @@ The account provider is always explicit. Add OpenCode or DeepSeek with an API ke
 ./check-usage accounts add --provider deepseek --api-key-env DEEPSEEK_API_KEY
 ```
 
+Sign in to Cursor through its browser login:
+
+```bash
+./check-usage accounts login --provider cursor
+```
+
+See [Cursor setup](#cursor-setup) below for details and existing API keys.
+
 Then open the interactive usage dashboard:
 
 ```bash
@@ -69,7 +77,7 @@ For structured application integration, use the importable `usageapi` Go package
 ./check-usage api serve
 ```
 
-See [Application API](docs/application-api.md) for the complete method list, device-auth flow, NDJSON framing, error behavior, and Go example. API responses expose public account metadata but never stored OAuth tokens.
+See [Application API](docs/application-api.md) for the complete method list, authentication flows, NDJSON framing, error behavior, and Go example. API responses expose public account metadata but never stored credentials.
 
 To see individual reset credits for an account:
 
@@ -83,8 +91,8 @@ An account can be identified by its name, email, or ID. Add `--show-used` to inc
 
 ```text
 check-usage accounts list
-check-usage accounts add --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]
-check-usage accounts login --provider codex|claude [--name name] [--no-browser] [--auth-flow device|browser]
+check-usage accounts add --provider opencode-go|deepseek|cursor (--api-key key|--api-key-env name) [--name name]
+check-usage accounts login --provider codex|claude|cursor [--name name] [--no-browser] [--auth-flow device|browser]
 check-usage accounts reauth [--api-key key|--api-key-env name] <account-name-email-or-id>
 check-usage accounts remove <id-or-name>
 check-usage accounts rename <id-or-name> <new-name>
@@ -95,6 +103,28 @@ check-usage api [--accounts-file path] [--cache-dir path] <method|serve> [params
 Use `--accounts-file path` to choose a different accounts file or `--timeout seconds` to change the request timeout. By default, accounts are stored in `~/.config/check-usage/accounts.json`.
 
 API keys are stored in that file with owner-only permissions. Prefer `--api-key-env` over `--api-key` so secrets are not exposed in process arguments or shell history.
+
+## Cursor setup
+
+Cursor displays two separate monthly allowances: **Cursor Models** and **Other Models**. The CLI shows both percentages and their billing-cycle reset date, plus whether on-demand spending is disabled or its spending and limit in USD. In a dashboard containing Codex, Claude, or OpenCode alongside Cursor, the columns read `SESSION (~5h)/CURSOR`, `WEEKLY/OTHER`, and `MONTHLY/SPEND`; Cursor's two pools both reset monthly. Compact rows use the full pool names.
+
+Run the following command and complete sign-in in the browser. Add `--no-browser` to open the printed URL yourself:
+
+```bash
+./check-usage accounts login --provider cursor
+```
+
+You can also press `a` in the terminal dashboard and choose **Cursor**. Reauthenticate with `x` on the account, or `check-usage accounts reauth Cursor`.
+
+The login implements the PKCE browser handshake used by [Cursor's TypeScript SDK](https://cursor.com/docs/sdk/typescript). Like `Cursor.auth.login()`, it creates a revocable API key, named `check-usage`, that expires after 90 days. The key and short-lived bearer token are stored locally with owner-only permissions; bearer tokens refresh automatically by exchanging the key. Browser refresh tokens are discarded. No Node runtime or Cursor installation is needed.
+
+An existing Cursor user API key also works:
+
+```bash
+./check-usage accounts add --provider cursor --api-key-env CURSOR_API_KEY
+```
+
+The SDK's documented `Agent.getUsage()` reports costs for an individual agent. Account quota fetching instead uses the bearer-authenticated `GetCurrentPeriodUsage`, `GetHardLimit`, and `GetPlanInfo` RPCs used by Cursor CLI's `/usage` command. These internal APIs can change. Individual plans exposing `autoPercentUsed` and `apiPercentUsed` are supported; missing pools display `-`. Percentages are not inferred from subscription prices or spending totals. Cursor reset credits and Android widgets are not supported by this integration.
 
 ## Android app ("AI Usage Widgets")
 

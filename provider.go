@@ -15,6 +15,7 @@ const (
 	providerOpenCodeGo = providers.OpenCodeGo
 	providerDeepSeek   = providers.DeepSeek
 	providerClaude     = providers.Claude
+	providerCursor     = providers.Cursor
 )
 
 type credentialMode = providers.CredentialMode
@@ -31,6 +32,10 @@ const (
 	sessionSlot          = providers.SessionSlot
 	weeklySlot           = providers.WeeklySlot
 	monthlySlot          = providers.MonthlySlot
+	textMetric           = providers.Text
+	cursorModelsSlot     = providers.CursorModelsSlot
+	otherModelsSlot      = providers.OtherModelsSlot
+	onDemandSlot         = providers.OnDemandSlot
 )
 
 type providerDefinition struct {
@@ -94,6 +99,8 @@ func emptyProviderMetrics(providerID string) []providerMetric {
 		return []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION"}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}, {Kind: percentageMetric, Slot: monthlySlot, Label: "MONTHLY"}}
 	case providerDeepSeek:
 		return nil
+	case providerCursor:
+		return []providerMetric{{Kind: percentageMetric, Slot: cursorModelsSlot, Label: "CURSOR MODELS"}, {Kind: percentageMetric, Slot: otherModelsSlot, Label: "OTHER MODELS"}, {Kind: textMetric, Slot: onDemandSlot, Label: "ON-DEMAND"}}
 	default:
 		return nil
 	}
@@ -105,13 +112,24 @@ func fetchProviderUsage(ctx context.Context, client *http.Client, account stored
 		return providerFetchResult{}, err
 	}
 	if definition.Credentials == apiKeyCredentials {
-		usage, err := providers.FetchAPIKeyUsage(ctx, client, definition.ID, stringValue(account.AuthData.APIKey), userAgent)
+		var usage providerUsage
+		changed := false
+		if definition.ID == providerCursor {
+			var token string
+			usage, token, err = providers.FetchCursorUsage(ctx, client, stringValue(account.AuthData.APIKey), stringValue(account.AuthData.AccessToken), time.Now())
+			changed = err == nil && token != stringValue(account.AuthData.AccessToken)
+			if changed {
+				account.AuthData.AccessToken = strPtr(token)
+			}
+		} else {
+			usage, err = providers.FetchAPIKeyUsage(ctx, client, definition.ID, stringValue(account.AuthData.APIKey), userAgent)
+		}
 		if err != nil {
 			return providerFetchResult{}, err
 		}
-		changed := usage.Plan != "" && stringValue(account.PlanType) != usage.Plan
-		if changed {
+		if usage.Plan != "" && stringValue(account.PlanType) != usage.Plan {
 			account.PlanType = strPtr(usage.Plan)
+			changed = true
 		}
 		return providerFetchResult{Usage: usage, Account: account, AccountChanged: changed}, nil
 	}
