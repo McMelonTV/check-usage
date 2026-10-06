@@ -28,11 +28,15 @@ const (
 	UsageURL          = "https://api.anthropic.com/api/oauth/usage"
 	ProfileURL        = "https://api.anthropic.com/api/oauth/profile"
 	OAuthBeta         = "oauth-2025-04-20"
-	// UserAgent is the one Claude Code sends to these endpoints. The usage
+	// UserAgent is the one Claude Code sends to api.anthropic.com. The usage
 	// endpoint rate-limits unrecognized clients far more aggressively (a
 	// "check-usage/…" agent got persistent 429s where this one succeeds).
-	UserAgent   = "claude-code/2.1.291"
-	refreshSkew = 60 * time.Second
+	UserAgent = "claude-code/2.1.291"
+	// TokenUserAgent is what Claude Code's HTTP client (axios) sends to the
+	// token endpoint, which sets no agent of its own. That endpoint answers a
+	// claude-code/… agent with persistent 429s, so it must not get UserAgent.
+	TokenUserAgent = "axios/1.9.0"
+	refreshSkew    = 60 * time.Second
 	// defaultTokenLifetime is assumed when a token response omits expires_in.
 	defaultTokenLifetime = 3600
 )
@@ -371,7 +375,7 @@ func requestTokens(ctx context.Context, client *http.Client, body map[string]str
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("User-Agent", TokenUserAgent)
 	var out TokenResponse
 	if err := doJSON(client, req, operation, &out); err != nil {
 		return nil, err

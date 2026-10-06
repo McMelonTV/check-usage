@@ -163,9 +163,14 @@ func TestRequestsUseClaudeCodeUserAgent(t *testing.T) {
 	if _, err := FetchUsage(t.Context(), client, "a"); err != nil {
 		t.Fatal(err)
 	}
-	for _, endpoint := range []string{TokenURL, ProfileURL, UsageURL} {
+	for _, endpoint := range []string{ProfileURL, UsageURL} {
 		if seen[endpoint] != UserAgent || !strings.HasPrefix(UserAgent, "claude-code/") {
 			t.Fatalf("%s User-Agent = %q", endpoint, seen[endpoint])
 		}
+	}
+	// The token endpoint rate-limits the claude-code agent; it gets the HTTP
+	// client's own agent, as Claude Code's requests do.
+	if seen[TokenURL] != TokenUserAgent || strings.HasPrefix(seen[TokenURL], "claude-code/") {
+		t.Fatalf("token User-Agent = %q", seen[TokenURL])
 	}
 }
