@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/McMelonTV/check-usage/claudeapi"
-	"github.com/McMelonTV/check-usage/codexapi"
-	"github.com/McMelonTV/check-usage/cursorapi"
-	"github.com/McMelonTV/check-usage/providers"
+	"github.com/McMelonTV/check-usage/internal/claudeapi"
+	"github.com/McMelonTV/check-usage/internal/codexapi"
+	"github.com/McMelonTV/check-usage/internal/cursorapi"
+	"github.com/McMelonTV/check-usage/internal/providers"
 )
 
 // Config controls persistence, networking, and time for an embedded Service.

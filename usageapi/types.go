@@ -3,8 +3,8 @@
 package usageapi
 
 import (
-	"github.com/McMelonTV/check-usage/codexapi"
-	"github.com/McMelonTV/check-usage/providers"
+	"github.com/McMelonTV/check-usage/internal/codexapi"
+	"github.com/McMelonTV/check-usage/internal/providers"
 )
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.
