@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/McMelonTV/check-usage/cursorapi"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -145,6 +148,8 @@ type tuiModel struct {
 	authProviderID        string
 	authSelectingProvider bool
 	authAPIKeyInput       string
+	authCursorSession     *cursorapi.LoginSession
+	authCancel            context.CancelFunc
 	lastMouseTarget       string
 	lastMouseAt           time.Time
 }
@@ -692,6 +697,12 @@ func (m tuiModel) startAccountReauthentication(account storedAccount) (tea.Model
 		m.notice = err.Error()
 		return m, nil
 	}
+	if provider.ID == providerCursor {
+		m.authVersion++
+		m.authActive, m.authSelectingProvider, m.authSaving = true, false, false
+		m.authProviderID, m.authReauthID, m.authErr = provider.ID, account.ID, nil
+		return m.startCursorAuthentication()
+	}
 	if provider.Credentials == apiKeyCredentials {
 		m.authVersion++
 		m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = true, false, false, false
@@ -739,6 +750,9 @@ func (m tuiModel) updateProviderSelection(key string) (tea.Model, tea.Cmd) {
 	}
 	provider, _ := providerFor(m.authProviderID)
 	m.authSelectingProvider = false
+	if provider.ID == providerCursor {
+		return m.startCursorAuthentication()
+	}
 	if provider.Credentials == apiKeyCredentials {
 		return m, nil
 	}
@@ -778,13 +792,18 @@ func (m tuiModel) updateAPIKeyAuthentication(key tea.KeyMsg) (tea.Model, tea.Cmd
 }
 
 func (m *tuiModel) clearAuthentication() {
+	if m.authCancel != nil {
+		m.authCancel()
+		m.authCancel = nil
+	}
+	m.authCursorSession = nil
 	m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = false, false, false, false
 	m.authCode, m.authErr, m.authReauthID, m.authProviderID, m.authAPIKeyInput = nil, nil, "", "", ""
 }
 
 func (m tuiModel) authProviderUsesAPIKey() bool {
 	provider, err := providerFor(m.authProviderID)
-	return err == nil && provider.Credentials == apiKeyCredentials
+	return err == nil && provider.Credentials == apiKeyCredentials && provider.ID != providerCursor
 }
 
 func (m tuiModel) requestDeviceAuthorization() tea.Cmd {
@@ -862,7 +881,10 @@ func (m tuiModel) saveAuthenticatedAccount(account storedAccount) tea.Cmd {
 		} else {
 			store.Accounts = append(store.Accounts, account)
 		}
-		return authSavedMsg{err: saveAccounts(accountsPath, store), version: version}
+		if err := saveAccounts(accountsPath, store); err != nil {
+			return authSavedMsg{err: err, version: version}
+		}
+		return authSavedMsg{err: removeAccountUsageCache(account.ID), version: version}
 	}
 }
 
@@ -879,7 +901,7 @@ func (m tuiModel) saveAPIKeyAccount() tea.Cmd {
 			if err != nil {
 				return authSavedMsg{err: err, version: version}
 			}
-			store.Accounts[index].AuthData = authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}
+			store.Accounts[index].AuthData = authData{Type: string(apiKeyCredentials), APIKey: strPtr(strings.TrimSpace(key))}
 			if err := saveAccounts(accountsPath, store); err != nil {
 				return authSavedMsg{err: err, version: version}
 			}
@@ -893,7 +915,7 @@ func (m tuiModel) saveAPIKeyAccount() tea.Cmd {
 		for suffix := 2; accountNameExists(store.Accounts, name); suffix++ {
 			name = fmt.Sprintf("%s %d", provider.Name, suffix)
 		}
-		store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: name, Provider: provider.ID, PlanType: optionalString(provider.Plan), AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(key)}})
+		store.Accounts = append(store.Accounts, storedAccount{ID: newAccountID(), Name: name, Provider: provider.ID, PlanType: optionalString(provider.Plan), AuthData: authData{Type: string(apiKeyCredentials), APIKey: strPtr(strings.TrimSpace(key))}})
 		return authSavedMsg{err: saveAccounts(accountsPath, store), version: version}
 	}
 }
@@ -1422,6 +1444,9 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 				marker, style = "› ", tuiAccentStyle
 			}
 			credential := "API key"
+			if provider.ID == providerCursor {
+				credential = "Browser login"
+			}
 			if provider.Credentials == deviceCredentials {
 				credential = "Device login"
 			}
@@ -1438,7 +1463,7 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 		key := strings.Repeat("•", len([]rune(m.authAPIKeyInput)))
 		input := tuiAccentStyle.Render("> ")
 		if key == "" {
-			placeholder := "API Key"
+			placeholder := "API key"
 			if apiKeyCursorVisible(m.spinnerStep) {
 				cursorStyle := lipgloss.NewStyle().Foreground(textColor).Background(accentColor)
 				input += cursorStyle.Render(placeholder[:1]) + tuiMutedStyle.Render(placeholder[1:])
@@ -1466,6 +1491,10 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 		body := tuiErrorStyle.Render("Authentication failed") + "\n" +
 			tuiMutedStyle.Render(ansi.Truncate(m.authErr.Error(), max(16, width-8), "…")) + "\n\n" +
 			tuiMutedStyle.Render("Press Esc to return to Accounts.")
+		return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+	}
+	if m.authCursorSession != nil {
+		body := tuiMutedStyle.Render("Complete Cursor sign-in in your browser:") + "\n" + tuiAccentStyle.Render(m.authCursorSession.LoginURL) + "\n\n" + tuiAccentStyle.Render(spinnerFrame(m.spinnerStep)+" Waiting for approval…") + "\n" + tuiMutedStyle.Render("Esc cancels")
 		return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
 	}
 	if m.authCode == nil {
@@ -1552,10 +1581,11 @@ func (m tuiModel) renderWideList(width, height int) string {
 	providerWidth, planWidth, creditWidth := 11, 10, 8
 	usageWidth := max(12, (width-nameWidth-providerWidth-planWidth-creditWidth-8)/3)
 	headerStyle := lipgloss.NewStyle().Foreground(mutedColor).Bold(true)
+	labels := usageColumnLabels(m.rows)
 	header := "  " + cell(headerStyle.Render("ACCOUNT"), nameWidth) + " " +
 		cell(headerStyle.Render("PROVIDER"), providerWidth) + " " + cell(headerStyle.Render("PLAN"), planWidth) + " " +
-		cell(headerStyle.Render("SESSION"), usageWidth) + " " + cell(headerStyle.Render("WEEKLY"), usageWidth) + " " +
-		cell(headerStyle.Render("MONTHLY"), usageWidth) + " " + cell(headerStyle.Render("RESETS"), creditWidth)
+		cell(headerStyle.Render(labels[0]), usageWidth) + " " + cell(headerStyle.Render(labels[1]), usageWidth) + " " +
+		cell(headerStyle.Render(labels[2]), usageWidth) + " " + cell(headerStyle.Render("RESETS"), creditWidth)
 
 	rowStride := 1
 	if !m.settings.CompactMode {
@@ -1575,9 +1605,10 @@ func (m tuiModel) renderWideList(width, height int) string {
 			name = ansi.Truncate(name, max(1, nameWidth-8), "…") + " " + lipgloss.NewStyle().Foreground(amberColor).Render("(Stale)")
 		}
 		includeReset := m.settings.CompactMode
-		session := m.renderUsageSlot(row, sessionSlot, usageWidth, includeReset)
-		weekly := m.renderUsageSlot(row, weeklySlot, usageWidth, includeReset)
-		monthly := m.renderUsageSlot(row, monthlySlot, usageWidth, includeReset)
+		slots := usageSlots(row)
+		session := m.renderUsageSlot(row, slots[0], usageWidth, includeReset)
+		weekly := m.renderUsageSlot(row, slots[1], usageWidth, includeReset)
+		monthly := m.renderUsageSlot(row, slots[2], usageWidth, includeReset)
 		resets := m.renderResetSlot(row)
 		line := marker + cell(nameStyle.Render(name), nameWidth) + " " +
 			cell(tuiMutedStyle.Render(row.Provider), providerWidth) + " " + cell(tuiMutedStyle.Render(row.Plan), planWidth) + " " +
@@ -1586,9 +1617,9 @@ func (m tuiModel) renderWideList(width, height int) string {
 		if !m.settings.CompactMode {
 			now := time.Now()
 			lines = append(lines, tuiMutedStyle.Render("  "+cell("", nameWidth)+" "+cell("", providerWidth)+" "+cell("", planWidth)+" "+
-				cell(resetSubtitleText(row, sessionSlot, now), usageWidth)+" "+
-				cell(resetSubtitleText(row, weeklySlot, now), usageWidth)+" "+
-				cell(resetSubtitleText(row, monthlySlot, now), usageWidth)+" "+cell("", creditWidth)))
+				cell(resetSubtitleText(row, slots[0], now), usageWidth)+" "+
+				cell(resetSubtitleText(row, slots[1], now), usageWidth)+" "+
+				cell(resetSubtitleText(row, slots[2], now), usageWidth)+" "+cell("", creditWidth)))
 		}
 	}
 	if start > 0 || end < len(m.rows) {
@@ -1620,16 +1651,16 @@ func (m tuiModel) renderCompactList(width, height int) string {
 		visibleName := ansi.Truncate(row.Name, max(1, width-2-lipgloss.Width(meta)), "…")
 		gap := max(0, width-2-lipgloss.Width(visibleName)-lipgloss.Width(meta))
 		lines = append(lines, marker+nameStyle.Render(visibleName)+strings.Repeat(" ", gap)+meta)
-		for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
+		for _, slot := range usageSlots(row) {
 			lines = append(lines, m.renderCompactSlot(row, slot, width))
 		}
 		lines = append(lines, ansi.Truncate("  "+tuiMutedStyle.Render("RESETS  ")+m.renderResetSlot(row), width, "…"))
 		if !m.settings.CompactMode {
 			now := time.Now()
 			parts := make([]string, 0, 3)
-			for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
+			for _, slot := range usageSlots(row) {
 				if text := resetSubtitleText(row, slot, now); text != "" {
-					parts = append(parts, strings.ToUpper(string(slot))+" "+text)
+					parts = append(parts, usageSlotLabel(slot)+" "+text)
 				}
 			}
 			if len(parts) > 0 {
@@ -1648,7 +1679,7 @@ func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int, incl
 		return renderUsageBar(metric.Used, width, m.showRemaining(), row.Loading, false, row.Stale, m.settings, metric.ResetAt, time.Now(), includeReset, blocked)
 	}
 	text := usageSlotText(row, slot, time.Now())
-	if row.AuthRequired && slot == sessionSlot {
+	if row.AuthRequired && slot == usageSlots(row)[0] {
 		return tuiErrorStyle.Render(ansi.Truncate(text, width, "…"))
 	}
 	return tuiMutedStyle.Render(ansi.Truncate(text, width, "…"))
@@ -1679,8 +1710,9 @@ func resetSubtitleText(row usageRow, slot metricSlot, now time.Time) string {
 }
 
 func (m tuiModel) renderCompactSlot(row usageRow, slot metricSlot, width int) string {
-	labelWidth := min(8, max(3, width-13))
-	label := tuiMutedStyle.Render(cell(strings.ToUpper(string(slot)), labelWidth))
+	labelText := usageSlotLabel(slot)
+	labelWidth := min(max(8, len(labelText)), max(3, width-13))
+	label := tuiMutedStyle.Render(cell(labelText, labelWidth))
 	valueWidth := min(30, max(3, width-2-labelWidth-2))
 	return "  " + label + "  " + m.renderUsageSlot(row, slot, valueWidth, true)
 }
@@ -1694,6 +1726,9 @@ func (m tuiModel) renderResetSlot(row usageRow) string {
 
 func credentialRequiredText(row usageRow) string {
 	if row.ProviderID == providerCodex {
+		return "Sign in required"
+	}
+	if row.ProviderID == providerCursor {
 		return "Sign in required"
 	}
 	return "API key required or invalid"
@@ -2267,4 +2302,24 @@ func visibleRange(total, cursor, capacity int) (int, int) {
 	start := cursor - capacity/2
 	start = max(0, min(start, total-capacity))
 	return start, start + capacity
+}
+
+func (m tuiModel) startCursorAuthentication() (tea.Model, tea.Cmd) {
+	session, err := cursorapi.BeginLogin(time.Now())
+	if err != nil {
+		m.authErr = err
+		return m, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.authCancel, m.authCursorSession, m.authLoading = cancel, &session, true
+	client, version, name := m.client, m.authVersion, ""
+	if m.authReauthID != "" {
+		if index, err := findAccountByIDNameOrEmail(m.accounts, m.authReauthID); err == nil {
+			name = m.accounts[index].Name
+		}
+	}
+	return m, tea.Batch(func() tea.Msg { _ = openBrowserURL(session.LoginURL); return nil }, func() tea.Msg {
+		account, err := waitForCursorLogin(ctx, client, session, name)
+		return authCompletedMsg{account: account, err: err, version: version}
+	})
 }

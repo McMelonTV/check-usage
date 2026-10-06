@@ -10,6 +10,7 @@ import (
 
 const (
 	providerCodex      = providers.Codex
+	providerCursor     = providers.Cursor
 	providerOpenCodeGo = providers.OpenCodeGo
 	providerDeepSeek   = providers.DeepSeek
 	providerCrof       = providers.Crof

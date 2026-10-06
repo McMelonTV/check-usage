@@ -23,11 +23,13 @@ func printTable(rows []usageRow) {
 func renderTable(rows []usageRow, now time.Time) string {
 	var b bytes.Buffer
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ACCOUNT\tPROVIDER\tEMAIL\tPLAN\tSESSION\tWEEKLY\tMONTHLY\tRESETS")
+	labels := usageColumnLabels(rows)
+	fmt.Fprintf(w, "ACCOUNT\tPROVIDER\tEMAIL\tPLAN\t%s\t%s\t%s\tRESETS\n", labels[0], labels[1], labels[2])
 	for _, row := range rows {
+		slots := usageSlots(row)
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.Name, row.Provider, row.Email, row.Plan,
-			usageSlotText(row, sessionSlot, now), usageSlotText(row, weeklySlot, now), usageSlotText(row, monthlySlot, now), resetSlotText(row),
+			usageSlotText(row, slots[0], now), usageSlotText(row, slots[1], now), usageSlotText(row, slots[2], now), resetSlotText(row),
 		)
 	}
 	_ = w.Flush()
@@ -36,6 +38,8 @@ func renderTable(rows []usageRow, now time.Time) string {
 
 func metricText(metric providerMetric, now time.Time) string {
 	switch metric.Kind {
+	case textMetric:
+		return firstNonEmpty(metric.Text, "-")
 	case percentageMetric:
 		if metric.Used == nil {
 			return "-"
@@ -93,7 +97,8 @@ func applyUsageColors(tableText string, rows []usageRow, now time.Time) string {
 		resetText := resetSlotText(row)
 		line = replaceLast(line, resetText, colorizeResetCreditsSummary(resetText))
 		end := len(line)
-		for _, slot := range []metricSlot{monthlySlot, weeklySlot, sessionSlot} {
+		slots := usageSlots(row)
+		for _, slot := range []metricSlot{slots[2], slots[1], slots[0]} {
 			metric, ok := usageMetricForSlot(row, slot)
 			if !ok {
 				continue

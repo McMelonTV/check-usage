@@ -40,12 +40,12 @@ func runAccountsCommand(args []string) int {
 }
 
 func accountProviderFlag(fs *flag.FlagSet) *string {
-	return fs.String("provider", "", "provider: codex, opencode-go, deepseek, or crof")
+	return fs.String("provider", "", "provider: codex, opencode-go, deepseek, crof, or cursor")
 }
 
 func selectedProvider(id string) (providerDefinition, error) {
 	if strings.TrimSpace(id) == "" {
-		return providerDefinition{}, fmt.Errorf("--provider is required; choose: codex, opencode-go, deepseek, crof")
+		return providerDefinition{}, fmt.Errorf("--provider is required; choose: codex, opencode-go, deepseek, crof, cursor")
 	}
 	return providerFor(id)
 }
@@ -143,7 +143,7 @@ func runAccountsReauth(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	if provider.Credentials == apiKeyCredentials {
+	if provider.Credentials == apiKeyCredentials && (provider.ID != providerCursor || flagsSet(fs, "api-key", "api-key-env")) {
 		if flagsSet(fs, "timeout", "no-browser", "auth-flow") {
 			fmt.Fprintf(os.Stderr, "error: browser authentication flags do not apply to %s\n", provider.Name)
 			return 2
@@ -177,14 +177,23 @@ func runAccountsReauth(args []string) int {
 
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
 	var refreshed storedAccount
-	switch strings.ToLower(strings.TrimSpace(*authFlow)) {
-	case "device":
-		refreshed, err = runDeviceAuthLogin(existing.Name, client, !*noBrowser)
-	case "browser", "oauth":
-		refreshed, err = runOAuthLogin(existing.Name, client, !*noBrowser)
-	default:
-		fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
-		return 2
+	if provider.ID == providerCursor {
+		flow := strings.ToLower(strings.TrimSpace(*authFlow))
+		if flagsSet(fs, "auth-flow") && flow != "browser" && flow != "oauth" {
+			fmt.Fprintln(os.Stderr, "error: Cursor uses browser authentication")
+			return 2
+		}
+		refreshed, err = runCursorBrowserLogin(existing.Name, client, !*noBrowser)
+	} else {
+		switch strings.ToLower(strings.TrimSpace(*authFlow)) {
+		case "device":
+			refreshed, err = runDeviceAuthLogin(existing.Name, client, !*noBrowser)
+		case "browser", "oauth":
+			refreshed, err = runOAuthLogin(existing.Name, client, !*noBrowser)
+		default:
+			fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
+			return 2
+		}
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -290,7 +299,7 @@ func runAccountsLogin(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
 	}
-	if provider.Credentials != deviceCredentials {
+	if provider.Credentials != deviceCredentials && provider.ID != providerCursor {
 		fmt.Fprintf(os.Stderr, "error: %s uses an API key; run accounts add --provider %s --api-key key\n", provider.Name, provider.ID)
 		return 2
 	}
@@ -298,14 +307,22 @@ func runAccountsLogin(args []string) int {
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
 	flow := strings.ToLower(strings.TrimSpace(*authFlow))
 	var account storedAccount
-	switch flow {
-	case "device":
-		account, err = runDeviceAuthLogin(requestedName, client, !*noBrowser)
-	case "browser", "oauth":
-		account, err = runOAuthLogin(requestedName, client, !*noBrowser)
-	default:
-		fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
-		return 2
+	if provider.ID == providerCursor {
+		if flagsSet(fs, "auth-flow") && flow != "browser" && flow != "oauth" {
+			fmt.Fprintln(os.Stderr, "error: Cursor uses browser authentication")
+			return 2
+		}
+		account, err = runCursorBrowserLogin(requestedName, client, !*noBrowser)
+	} else {
+		switch flow {
+		case "device":
+			account, err = runDeviceAuthLogin(requestedName, client, !*noBrowser)
+		case "browser", "oauth":
+			account, err = runOAuthLogin(requestedName, client, !*noBrowser)
+		default:
+			fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
+			return 2
+		}
 	}
 	account.Provider = provider.ID
 	if err != nil {
@@ -320,6 +337,26 @@ func runAccountsLogin(args []string) int {
 	}
 
 	idx := findMatchingAccount(store.Accounts, account)
+	if provider.ID == providerCursor && idx >= 0 && requestedName != "" && !strings.EqualFold(requestedName, store.Accounts[idx].Name) {
+		idx = -1
+	}
+	if provider.ID == providerCursor && idx >= 0 {
+		account.ID = store.Accounts[idx].ID
+		if requestedName == "" {
+			account.Name = store.Accounts[idx].Name
+		}
+		store.Accounts[idx] = account
+		if err := saveAccounts(*accountsPath, store); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		if err := removeAccountUsageCache(account.ID); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		fmt.Printf("Updated account %q (%s).\n", account.Name, account.ID)
+		return 0
+	}
 	if idx >= 0 {
 		upsert, reason, existing, candidate := shouldUpsertMatchedAccount(store.Accounts[idx], account, requestedName, client, recheckAccountPlanType)
 		store.Accounts[idx] = existing
@@ -466,6 +503,13 @@ func printAccountsList(accounts []storedAccount) {
 }
 
 func findMatchingAccount(accounts []storedAccount, candidate storedAccount) int {
+	if candidate.Provider == providerCursor && stringValue(candidate.AuthData.AccountID) != "" {
+		for i := range accounts {
+			if accounts[i].Provider == providerCursor && stringValue(accounts[i].AuthData.AccountID) == stringValue(candidate.AuthData.AccountID) {
+				return i
+			}
+		}
+	}
 	if candidate.Email != nil {
 		email := strings.ToLower(strings.TrimSpace(*candidate.Email))
 		if email != "" {
@@ -562,8 +606,8 @@ func findAccountForRemoval(accounts []storedAccount, target string) (int, error)
 func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  check-usage accounts list [--accounts-file path]")
-	fmt.Println("  check-usage accounts add [--accounts-file path] --provider opencode-go|deepseek|crof (--api-key key|--api-key-env name) [--name name]")
-	fmt.Println("  check-usage accounts login [--accounts-file path] --provider codex [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
+	fmt.Println("  check-usage accounts add [--accounts-file path] --provider opencode-go|deepseek|crof|cursor (--api-key key|--api-key-env name) [--name name]")
+	fmt.Println("  check-usage accounts login [--accounts-file path] --provider codex|cursor [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
 	fmt.Println("  check-usage accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
 	fmt.Println("  check-usage accounts remove [--accounts-file path] <id-or-name>")
 	fmt.Println("  check-usage accounts rename [--accounts-file path] <id-or-name> <new-name>")

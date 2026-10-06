@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/McMelonTV/check-usage/cursorapi"
 )
 
 const (
@@ -16,6 +18,7 @@ const (
 	OpenCodeGo = "opencode-go"
 	DeepSeek   = "deepseek"
 	Crof       = "crof"
+	Cursor     = "cursor"
 )
 
 type CredentialMode string
@@ -38,6 +41,7 @@ var definitions = []Definition{
 	{ID: OpenCodeGo, Name: "OpenCode", Plan: "Go", Credentials: APIKey},
 	{ID: DeepSeek, Name: "DeepSeek", Credentials: APIKey},
 	{ID: Crof, Name: "CrofAI", Credentials: APIKey},
+	{ID: Cursor, Name: "Cursor", Credentials: APIKey},
 }
 
 type MetricKind string
@@ -46,10 +50,14 @@ type MetricSlot string
 
 const (
 	Percentage MetricKind = "percentage"
+	Text       MetricKind = "text"
 
-	SessionSlot MetricSlot = "session"
-	WeeklySlot  MetricSlot = "weekly"
-	MonthlySlot MetricSlot = "monthly"
+	SessionSlot      MetricSlot = "session"
+	WeeklySlot       MetricSlot = "weekly"
+	MonthlySlot      MetricSlot = "monthly"
+	CursorModelsSlot MetricSlot = "cursor_models"
+	OtherModelsSlot  MetricSlot = "other_models"
+	OnDemandSlot     MetricSlot = "on_demand"
 )
 
 type Metric struct {
@@ -58,6 +66,7 @@ type Metric struct {
 	Label   string     `json:"label"`
 	Used    *float64   `json:"used_percent,omitempty"`
 	ResetAt *int64     `json:"reset_at,omitempty"`
+	Text    string     `json:"text,omitempty"`
 }
 
 type Usage struct {
@@ -79,7 +88,7 @@ func (err *HTTPError) Error() string {
 var ErrMissingAPIKey = errors.New("missing API key")
 
 func IsCredentialError(err error) bool {
-	if errors.Is(err, ErrMissingAPIKey) {
+	if errors.Is(err, ErrMissingAPIKey) || cursorapi.IsAuthenticationError(err) {
 		return true
 	}
 	var httpErr *HTTPError
@@ -104,6 +113,9 @@ func FetchAPIKeyUsage(ctx context.Context, client *http.Client, providerID, key,
 		return Usage{}, ErrMissingAPIKey
 	}
 	switch providerID {
+	case Cursor:
+		usage, _, err := FetchCursorUsage(ctx, client, key, "", time.Now())
+		return usage, err
 	case OpenCodeGo:
 		return fetchOpenCodeGo(ctx, client, key, userAgent)
 	case DeepSeek:
