@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/codexapi"
 	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"

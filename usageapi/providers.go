@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/McMelonTV/check-usage/internal/codexapi"
 	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 )
 
 const (

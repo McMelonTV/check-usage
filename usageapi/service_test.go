@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/claudeapi"
-	"github.com/McMelonTV/check-usage/internal/codexapi"
 	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

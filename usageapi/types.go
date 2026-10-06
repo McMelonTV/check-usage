@@ -3,8 +3,8 @@
 package usageapi
 
 import (
-	"github.com/McMelonTV/check-usage/internal/codexapi"
 	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 )
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.
@@ -92,18 +92,18 @@ type DeviceAuthResult struct {
 
 // UsageResult contains one account snapshot or an account-scoped provider error.
 type UsageResult struct {
-	Account  Account                 `json:"account"`
-	Snapshot *codexapi.UsageSnapshot `json:"snapshot,omitempty"`
-	Metrics  []providers.Metric      `json:"metrics,omitempty"`
-	Cached   bool                    `json:"cached"`
-	Error    string                  `json:"error,omitempty"`
+	Account  Account        `json:"account"`
+	Snapshot *UsageSnapshot `json:"snapshot,omitempty"`
+	Metrics  []Metric       `json:"metrics,omitempty"`
+	Cached   bool           `json:"cached"`
+	Error    string         `json:"error,omitempty"`
 }
 
 // ResetCreditsResult contains reset-credit details for one account.
 type ResetCreditsResult struct {
-	Account Account                       `json:"account"`
-	Credits *codexapi.ResetCreditsPayload `json:"credits,omitempty"`
-	Cached  bool                          `json:"cached"`
+	Account Account       `json:"account"`
+	Credits *ResetCredits `json:"credits,omitempty"`
+	Cached  bool          `json:"cached"`
 }
 
 // AccountMutation describes a persisted account change.

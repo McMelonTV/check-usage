@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/codexapi"
 	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 	"github.com/McMelonTV/check-usage/internal/storage"
 )
 

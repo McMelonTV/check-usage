@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/claudeapi"
+	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

@@ -43,7 +43,7 @@ func TestCursorRPCFetchCacheAndKeyReplacement(t *testing.T) {
 	}
 	mutation := response.Result.(AccountMutation)
 	results, err := service.Usage(t.Context(), mutation.Account.ID, true)
-	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Account.PlanType != "pro" || len(results[0].Metrics) != 2 || results[0].Metrics[0].Slot != providers.WeeklySlot || results[0].Metrics[1].Slot != providers.MonthlySlot || results[0].Metrics[0].Scope != providers.CursorModelsScope {
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Account.PlanType != "pro" || len(results[0].Metrics) != 2 || results[0].Metrics[0].Slot != WeeklySlot || results[0].Metrics[1].Slot != MonthlySlot || results[0].Metrics[0].Scope != providers.CursorModelsScope {
 		t.Fatalf("usage %#v, %v", results, err)
 	}
 	cached, err := service.Usage(t.Context(), mutation.Account.ID, false)

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/McMelonTV/check-usage/internal/codexapi"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 )
 
 var usageCacheMu sync.Mutex

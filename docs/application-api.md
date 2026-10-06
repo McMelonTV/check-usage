@@ -133,3 +133,5 @@ func main() {
 ```
 
 The main entry points are `Service.ListAccounts`, `RenameAccount`, `RemoveAccount`, `SaveAPIKeyAccount`, `BeginDeviceAuth`, `PollDeviceAuth`, `BeginBrowserAuth`, `PollBrowserAuth`, `Usage`, `ResetCredits`, `Settings`, and `UpdateSettings`. A custom `http.Client`, clock, accounts path, cache directory, and user agent can be supplied through `usageapi.Config` for embedding and testing.
+
+Results use only `usageapi` types (`UsageResult`, `Metric`, `UsageSnapshot`, `ResetCredits`, and so on), so they can be stored and passed around by name. Provider clients live under `internal/` and are not part of the Go API.
