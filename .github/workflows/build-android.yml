@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - "android/**"
-      - "internal/codexapi/**"
+      - "internal/providers/codexapi/**"
       - "mobile/codexlogic/**"
       - go.mod
       - go.sum

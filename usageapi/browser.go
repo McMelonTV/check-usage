@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/McMelonTV/check-usage/internal/cursorapi"
+	"github.com/McMelonTV/check-usage/internal/providers/cursorapi"
 )
 
 // BeginBrowserAuth starts Cursor's SDK browser handshake without opening a UI.

@@ -153,6 +153,6 @@ cd android
 
 The build creates a universal APK plus `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86` APKs under `android/app/build/outputs/apk/debug/`. CI publishes all five variants with stable filenames and a SHA-256 checksum manifest.
 
-The CLI and Android app share `codexapi` for device authorization, token refresh, Codex API requests, JWT identity parsing, and usage-window mapping. Android-specific UI, encrypted credential storage, background work, and widgets remain Kotlin code.
+The CLI and Android app share `internal/providers/codexapi` for device authorization, token refresh, Codex API requests, JWT identity parsing, and usage-window mapping. Android-specific UI, encrypted credential storage, background work, and widgets remain Kotlin code.
 
 The widgets should automatically refresh approximately every 15 minutes, although the exact refresh timing is controlled by Android and appears to be a bit inconsistent. You should always be able to trigger a refresh using the button in the widget.

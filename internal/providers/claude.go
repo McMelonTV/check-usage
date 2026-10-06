@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/claudeapi"
+	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
 )
 
 // ClaudeResult is the usage for a Claude account plus its possibly refreshed credentials.

@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/claudeapi"
-	"github.com/McMelonTV/check-usage/internal/codexapi"
-	"github.com/McMelonTV/check-usage/internal/cursorapi"
 	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
+	"github.com/McMelonTV/check-usage/internal/providers/cursorapi"
 )
 
 // Config controls persistence, networking, and time for an embedded Service.
@@ -387,7 +387,7 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 		if !cached || entry.ResetCredits == nil {
 			return ResetCreditsResult{}, fmt.Errorf("no cached reset credits for account %q", account.Name)
 		}
-		return ResetCreditsResult{Account: account.public(), Credits: filterCredits(entry.ResetCredits), Cached: true}, nil
+		return ResetCreditsResult{Account: account.public(), Credits: publicResetCredits(entry.ResetCredits), Cached: true}, nil
 	}
 	changed, err := service.refreshCredentials(ctx, account)
 	if err != nil {
@@ -407,7 +407,7 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 	if err := service.saveCache(account.ID, entry); err != nil {
 		return ResetCreditsResult{}, err
 	}
-	return ResetCreditsResult{Account: account.public(), Credits: filterCredits(credits)}, nil
+	return ResetCreditsResult{Account: account.public(), Credits: publicResetCredits(credits)}, nil
 }
 
 func (service *Service) usageForAccount(ctx context.Context, account *storedAccount, refresh bool) (UsageResult, bool, error) {
@@ -429,7 +429,7 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 			if usage.Plan != "" {
 				resultAccount.PlanType = usage.Plan
 			}
-			return UsageResult{Account: resultAccount, Metrics: usage.Metrics, Cached: true}, false, nil
+			return UsageResult{Account: resultAccount, Metrics: publicMetrics(usage.Metrics), Cached: true}, false, nil
 		}
 		var usage providers.Usage
 		changed := false
@@ -450,7 +450,7 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 				if cachedUsage.Plan != "" {
 					resultAccount.PlanType = cachedUsage.Plan
 				}
-				return UsageResult{Account: resultAccount, Metrics: cachedUsage.Metrics, Cached: true, Error: err.Error()}, false, nil
+				return UsageResult{Account: resultAccount, Metrics: publicMetrics(cachedUsage.Metrics), Cached: true, Error: err.Error()}, false, nil
 			}
 			return UsageResult{}, false, err
 		}
@@ -463,7 +463,7 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 		if err := service.saveCache(account.ID, entry); err != nil {
 			return UsageResult{}, false, err
 		}
-		return UsageResult{Account: account.public(), Metrics: usage.Metrics}, changed, nil
+		return UsageResult{Account: account.public(), Metrics: publicMetrics(usage.Metrics)}, changed, nil
 	}
 	if provider.ID == providerClaude {
 		return service.claudeUsage(ctx, account, refresh)
@@ -532,7 +532,7 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 		account.PlanType = &usage.PlanType
 		changed = true
 	}
-	return UsageResult{Account: account.public(), Snapshot: snapshot, Metrics: providerUsage.Metrics}, changed, nil
+	return UsageResult{Account: account.public(), Snapshot: publicSnapshot(snapshot), Metrics: publicMetrics(providerUsage.Metrics)}, changed, nil
 }
 
 func (service *Service) claudeUsage(ctx context.Context, account *storedAccount, refresh bool) (UsageResult, bool, error) {
@@ -544,7 +544,7 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 		if !cached || entry.ProviderUsage == nil {
 			return UsageResult{}, false
 		}
-		return UsageResult{Account: account.public(), Metrics: entry.ProviderUsage.Metrics, Cached: true}, true
+		return UsageResult{Account: account.public(), Metrics: publicMetrics(entry.ProviderUsage.Metrics), Cached: true}, true
 	}
 	now := service.now()
 	// The usage endpoint is rate limited: within the throttle window (shared
@@ -594,7 +594,7 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 		account.PlanType = &usage.Plan
 		changed = true
 	}
-	return UsageResult{Account: account.public(), Metrics: usage.Metrics}, changed, nil
+	return UsageResult{Account: account.public(), Metrics: publicMetrics(usage.Metrics)}, changed, nil
 }
 
 func setClaudeCredentials(account *storedAccount, credentials claudeapi.Credentials) {
@@ -620,7 +620,7 @@ func cachedUsageResult(account *storedAccount, entry cacheEntry, exists bool) (U
 		entry.ResetCredits, creditsErr, time.Unix(entry.FetchedAt, 0),
 	)
 	usage := *entry.ProviderUsage
-	return UsageResult{Account: account.public(), Snapshot: snapshot, Metrics: usage.Metrics, Cached: true}, true
+	return UsageResult{Account: account.public(), Snapshot: publicSnapshot(snapshot), Metrics: publicMetrics(usage.Metrics), Cached: true}, true
 }
 
 func (service *Service) refreshCredentials(ctx context.Context, account *storedAccount) (bool, error) {
@@ -716,15 +716,8 @@ func newAccountID(now time.Time) string {
 	return hex.EncodeToString(bytes)
 }
 
-func filterCredits(payload *codexapi.ResetCreditsPayload) *codexapi.ResetCreditsPayload {
-	filtered := *payload
-	filtered.Credits = make([]codexapi.ResetCreditDetail, 0, len(payload.Credits))
-	for _, credit := range payload.Credits {
-		if strings.EqualFold(strings.TrimSpace(credit.Status), "available") {
-			filtered.Credits = append(filtered.Credits, credit)
-		}
-	}
-	return &filtered
+func creditAvailable(credit codexapi.ResetCreditDetail) bool {
+	return strings.EqualFold(strings.TrimSpace(credit.Status), "available")
 }
 
 func firstNonEmpty(values ...string) string {

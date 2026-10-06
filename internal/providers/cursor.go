@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/cursorapi"
+	"github.com/McMelonTV/check-usage/internal/providers/cursorapi"
 )
 
 // FetchCursorUsage reads the same quota RPCs as the CLI /usage command. The

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/codexapi"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 )
 
 var client = &http.Client{Timeout: 30 * time.Second}

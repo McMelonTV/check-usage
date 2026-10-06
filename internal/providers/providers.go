@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/cursorapi"
+	"github.com/McMelonTV/check-usage/internal/providers/cursorapi"
 )
 
 const (

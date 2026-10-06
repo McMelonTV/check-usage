@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/cursorapi"
 	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/McMelonTV/check-usage/internal/providers/cursorapi"
 	"github.com/McMelonTV/check-usage/internal/storage"
 	"github.com/McMelonTV/check-usage/internal/usage"
 )
