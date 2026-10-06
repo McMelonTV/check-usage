@@ -1,15 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/McMelonTV/check-usage/codexapi"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func printTable(rows []usageRow) {
@@ -20,20 +19,85 @@ func printTable(rows []usageRow) {
 	fmt.Print(renderTable(rows, time.Now()))
 }
 
+// renderTable prints two lines per account, like the TUI with compact mode
+// off: usage percentages on the first line and muted reset times below.
 func renderTable(rows []usageRow, now time.Time) string {
-	var b bytes.Buffer
-	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	labels := usageColumnLabels(rows)
-	fmt.Fprintf(w, "ACCOUNT\tPROVIDER\tEMAIL\tPLAN\t%s\t%s\t%s\tRESETS\n", labels[0], labels[1], labels[2])
+	header := []tableCell{plainCell("ACCOUNT"), plainCell("PROVIDER"), plainCell("PLAN"), plainCell(labels[0]), plainCell(labels[1]), plainCell(labels[2]), plainCell("RESETS")}
+	for i := range header {
+		header[i].style = headerText
+	}
+	lines := [][]tableCell{header}
 	for _, row := range rows {
 		slots := usageSlots(row)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			row.Name, row.Provider, row.Email, row.Plan,
-			usageSlotText(row, slots[0], now), usageSlotText(row, slots[1], now), usageSlotText(row, slots[2], now), resetSlotText(row),
-		)
+		main := []tableCell{plainCell(row.Name), plainCell(row.Provider), plainCell(row.Plan)}
+		sub := []tableCell{dimCell(row.Email), plainCell(""), plainCell("")}
+		for _, slot := range slots {
+			main = append(main, usageSlotCell(row, slot))
+			sub = append(sub, dimCell(resetSubtitleText(row, slot, now)))
+		}
+		count, expiry, _ := strings.Cut(resetSlotText(row), ",")
+		main = append(main, tableCell{text: count, style: colorizeResetCreditsSummary})
+		sub = append(sub, dimCell(strings.TrimSpace(expiry)))
+		lines = append(lines, main, sub)
 	}
-	_ = w.Flush()
-	return colorizeTableOutput(applyUsageColors(b.String(), rows, now))
+	return formatTableCells(lines)
+}
+
+type tableCell struct {
+	text  string
+	style func(string) string
+}
+
+func plainCell(text string) tableCell { return tableCell{text: text} }
+
+func dimCell(text string) tableCell {
+	if text == "-" {
+		text = ""
+	}
+	return tableCell{text: text, style: func(s string) string { return ansiDim + s + ansiReset }}
+}
+
+func usageSlotCell(row usageRow, slot metricSlot) tableCell {
+	metric, ok := usageMetricForSlot(row, slot)
+	if !ok || metric.Kind != percentageMetric || metric.Used == nil {
+		return plainCell(usageSlotText(row, slot, time.Time{}))
+	}
+	used := percentValue(*metric.Used)
+	text := fmt.Sprintf("%.0f%% used / %.0f%% left", used, 100-used)
+	if isSlotBlockedByLongerWindow(row, slot) {
+		return tableCell{text: text, style: func(s string) string { return colorizeBlockedUsage(s, metric.Used) }}
+	}
+	return tableCell{text: text, style: func(s string) string { return colorizeUsage(s, metric.Used) }}
+}
+
+func formatTableCells(lines [][]tableCell) string {
+	var widths []int
+	for _, line := range lines {
+		for i, c := range line {
+			if i >= len(widths) {
+				widths = append(widths, 0)
+			}
+			widths[i] = max(widths[i], ansi.StringWidth(c.text))
+		}
+	}
+	var b strings.Builder
+	for _, line := range lines {
+		var out strings.Builder
+		for i, c := range line {
+			text := c.text
+			if c.style != nil && text != "" {
+				text = c.style(text)
+			}
+			out.WriteString(text)
+			if i < len(line)-1 {
+				out.WriteString(strings.Repeat(" ", widths[i]-ansi.StringWidth(c.text)+2))
+			}
+		}
+		b.WriteString(strings.TrimRight(out.String(), " "))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func metricText(metric providerMetric, now time.Time) string {
@@ -58,68 +122,11 @@ func metricText(metric providerMetric, now time.Time) string {
 	}
 }
 
-func colorizeMetric(text string, metric providerMetric) string {
-	if metric.Kind != percentageMetric {
-		return text
-	}
-	return colorizeUsage(text, metric.Used)
-}
-
-func colorizeBlockedMetric(text string, metric providerMetric) string {
-	if metric.Kind != percentageMetric || text == "-" {
-		return text
-	}
-	if metric.Used == nil {
-		return text
-	}
-	return colorizeBlockedUsage(text, metric.Used)
-}
-
 func colorizeBlockedUsage(text string, used *float64) string {
 	if used == nil || text == "-" {
 		return text
 	}
 	return ansiBlocked + text + ansiReset
-}
-
-func applyUsageColors(tableText string, rows []usageRow, now time.Time) string {
-	trimmed := strings.TrimRight(tableText, "\n")
-	if trimmed == "" {
-		return tableText
-	}
-	lines := strings.Split(trimmed, "\n")
-	for index, row := range rows {
-		lineIndex := index + 1
-		if lineIndex >= len(lines) {
-			break
-		}
-		line := lines[lineIndex]
-		resetText := resetSlotText(row)
-		line = replaceLast(line, resetText, colorizeResetCreditsSummary(resetText))
-		end := len(line)
-		slots := usageSlots(row)
-		for _, slot := range []metricSlot{slots[2], slots[1], slots[0]} {
-			metric, ok := usageMetricForSlot(row, slot)
-			if !ok {
-				continue
-			}
-			text := metricText(metric, now)
-			position := strings.LastIndex(line[:end], text)
-			if position < 0 {
-				continue
-			}
-			var colored string
-			if isSlotBlockedByLongerWindow(row, slot) {
-				colored = colorizeBlockedMetric(text, metric)
-			} else {
-				colored = colorizeMetric(text, metric)
-			}
-			line = line[:position] + colored + line[position+len(text):]
-			end = position
-		}
-		lines[lineIndex] = line
-	}
-	return strings.Join(lines, "\n") + "\n"
 }
 
 func limitSummary(rl *rateLimitDetails, primary bool, now time.Time) string {
@@ -169,12 +176,12 @@ func resetCreditsSummary(c *resetCreditsPayload, now time.Time) string {
 		return summary
 	}
 
-	expires := resetCreditTimeText(next.ExpiresAt, now, false)
-	remaining := resetCreditRemainingText(next.ExpiresAt, now)
-	if expires == "-" {
+	expiresAt, ok := parseResetCreditTime(next.ExpiresAt)
+	if !ok {
 		return summary
 	}
-	return fmt.Sprintf("%s, earliest exp. in %s (%s)", summary, remaining, expires)
+	unix := expiresAt.Unix()
+	return fmt.Sprintf("%s, exp. %s · %s", summary, resetCountdownText(&unix, now), resetDateText(&unix, now))
 }
 
 func earliestExpiringAvailableResetCredit(credits []resetCreditDetail) (resetCreditDetail, bool) {
