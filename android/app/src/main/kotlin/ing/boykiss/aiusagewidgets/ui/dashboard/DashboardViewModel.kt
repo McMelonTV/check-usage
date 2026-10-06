@@ -13,18 +13,14 @@ import ing.boykiss.aiusagewidgets.widget.WidgetUpdater
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
-enum class DashboardTab { USAGE, RESETS, SETTINGS }
-
 data class DashboardState(
     val accounts: List<ProviderAccount> = emptyList(),
     val providers: List<ProviderDescriptor> = emptyList(),
-    val selectedAccount: ProviderAccount? = null,
+    val resetAccount: ProviderAccount? = null,
     val snapshots: Map<String, ProviderUsageSnapshot> = emptyMap(),
     val loading: Boolean = true,
     val refreshing: Boolean = false,
     val refreshingResets: Boolean = false,
-    val tab: DashboardTab = DashboardTab.USAGE,
-    val settings: DashboardSettings = DashboardSettings(),
     val choosingProvider: Boolean = false,
     val connectingProvider: ProviderDescriptor? = null,
     val enteringAPIKey: Boolean = false,
@@ -37,7 +33,7 @@ data class DashboardState(
     val accountBeingRemoved: ProviderAccount? = null,
     val notice: String? = null,
 ) {
-    val snapshot: ProviderUsageSnapshot? get() = selectedAccount?.let { snapshots[it.id.value] }
+    val snapshot: ProviderUsageSnapshot? get() = resetAccount?.let { snapshots[it.id.value] }
 }
 
 sealed interface DashboardEvent {
@@ -47,9 +43,9 @@ sealed interface DashboardEvent {
     data class SubmitAPIKey(val key: String) : DashboardEvent
     data class SubmitCode(val code: String) : DashboardEvent
     data class Reauthenticate(val account: ProviderAccount) : DashboardEvent
-    data class SelectAccount(val account: ProviderAccount) : DashboardEvent
-    data class SelectTab(val tab: DashboardTab) : DashboardEvent
-    data class SaveSettings(val settings: DashboardSettings) : DashboardEvent
+    data class OpenResets(val account: ProviderAccount) : DashboardEvent
+    data object CloseResets : DashboardEvent
+    data object RefreshResets : DashboardEvent
     data class SetForeground(val active: Boolean) : DashboardEvent
     data class StartRenamingAccount(val account: ProviderAccount) : DashboardEvent
     data object CancelRenamingAccount : DashboardEvent
@@ -59,7 +55,6 @@ sealed interface DashboardEvent {
     data object RemoveAccount : DashboardEvent
     data object Refresh : DashboardEvent
     data object DismissNotice : DashboardEvent
-    data object ConfirmResetClaim : DashboardEvent
 }
 
 class DashboardViewModel(private val container: AppContainer, private val context: Context) : ViewModel() {
@@ -76,9 +71,8 @@ class DashboardViewModel(private val container: AppContainer, private val contex
     init {
         viewModelScope.launch {
             container.repository.observeAccounts().collect { accounts ->
-                val old = mutable.value.selectedAccount
-                val selected = accounts.firstOrNull { it.id == old?.id } ?: accounts.firstOrNull()
-                mutable.update { it.copy(accounts = accounts, selectedAccount = selected, loading = false) }
+                val selected = mutable.value.resetAccount?.let { old -> accounts.firstOrNull { it.id == old.id } }
+                mutable.update { it.copy(accounts = accounts, resetAccount = selected, loading = false) }
                 accounts.filter { scheduledAccounts.add(it.id.value) }.forEach {
                     UsageSyncWorker.schedule(context, it.providerId.value, it.id.value)
                 }
@@ -88,12 +82,7 @@ class DashboardViewModel(private val container: AppContainer, private val contex
         viewModelScope.launch {
             container.repository.observeSnapshots().collect { snapshots -> mutable.update { it.copy(snapshots = snapshots) } }
         }
-        viewModelScope.launch {
-            container.settings.state.collect { settings ->
-                mutable.update { it.copy(settings = settings) }
-                scheduleTimer()
-            }
-        }
+
     }
 
     fun onEvent(event: DashboardEvent) {
@@ -116,24 +105,17 @@ class DashboardViewModel(private val container: AppContainer, private val contex
                 reauthTarget = event.account
                 connect(event.account.providerId)
             }
-            is DashboardEvent.SelectAccount -> {
-                mutable.update { it.copy(selectedAccount = event.account) }
-                if (mutable.value.tab == DashboardTab.RESETS) refreshResets()
+            is DashboardEvent.OpenResets -> {
+                if (event.account.providerId.value != "codex") return
+                resetsJob?.cancel()
+                mutable.update { it.copy(resetAccount = event.account, refreshingResets = false) }
+                refreshResets()
             }
-            is DashboardEvent.SelectTab -> {
-                mutable.update { it.copy(tab = event.tab) }
-                if (event.tab == DashboardTab.RESETS) {
-                    if (mutable.value.selectedAccount?.providerId?.value != "codex") {
-                        mutable.update { it.copy(selectedAccount = it.accounts.firstOrNull { account -> account.providerId.value == "codex" }) }
-                    }
-                    refreshResets()
-                } else if (event.tab == DashboardTab.USAGE && mutable.value.selectedAccount == null) {
-                    mutable.update { it.copy(selectedAccount = it.accounts.firstOrNull()) }
-                }
+            DashboardEvent.CloseResets -> {
+                resetsJob?.cancel()
+                mutable.update { it.copy(resetAccount = null, refreshingResets = false) }
             }
-            is DashboardEvent.SaveSettings -> {
-                try { container.settings.save(event.settings) } catch (error: Exception) { showError(error) }
-            }
+            DashboardEvent.RefreshResets -> refreshResets()
             is DashboardEvent.SetForeground -> {
                 foreground = event.active
                 scheduleTimer()
@@ -145,19 +127,17 @@ class DashboardViewModel(private val container: AppContainer, private val contex
             is DashboardEvent.StartRemovingAccount -> mutable.update { it.copy(accountBeingRemoved = event.account) }
             DashboardEvent.CancelRemovingAccount -> mutable.update { it.copy(accountBeingRemoved = null) }
             DashboardEvent.RemoveAccount -> remove()
-            DashboardEvent.Refresh -> if (mutable.value.tab == DashboardTab.RESETS) refreshResets() else refresh()
+            DashboardEvent.Refresh -> refresh()
             DashboardEvent.DismissNotice -> mutable.update { it.copy(notice = null) }
-            DashboardEvent.ConfirmResetClaim -> mutable.update { it.copy(notice = "Confirmed — reset claiming is not connected yet") }
         }
     }
 
     private fun scheduleTimer() {
         timerJob?.cancel()
-        val seconds = mutable.value.settings.autoRefreshSeconds
-        if (!foreground || seconds == 0) return
+        if (!foreground) return
         timerJob = viewModelScope.launch {
             while (isActive) {
-                delay(seconds * 1000L)
+                delay(60_000L)
                 refresh()
             }
         }
@@ -204,7 +184,7 @@ class DashboardViewModel(private val container: AppContainer, private val contex
     private suspend fun saveLogin(account: ProviderAccount) {
         val saved = container.repository.saveAuthenticatedAccount(account, reauthTarget)
         reauthTarget = null
-        mutable.update { it.copy(selectedAccount = saved, authSession = null, connectingProvider = null,
+        mutable.update { it.copy(authSession = null, connectingProvider = null,
             enteringAPIKey = false, authenticating = false, authError = null) }
         UsageSyncWorker.schedule(context, saved.providerId.value, saved.id.value)
         container.repository.refresh(saved.id.value)
@@ -261,15 +241,17 @@ class DashboardViewModel(private val container: AppContainer, private val contex
     }
 
     private fun refreshResets() {
-        val account = mutable.value.selectedAccount ?: return
+        val account = mutable.value.resetAccount ?: return
         if (account.providerId.value != "codex") return
-        resetsJob?.cancel()
+        if (resetsJob?.isActive == true) return
         resetsJob = viewModelScope.launch(Dispatchers.IO) {
             mutable.update { it.copy(refreshingResets = true) }
             try {
                 container.repository.refreshResets(account.id.value)
                 updateWidgets()
-            } finally { mutable.update { it.copy(refreshingResets = false) } }
+            } finally {
+                mutable.update { if (it.resetAccount?.id == account.id) it.copy(refreshingResets = false) else it }
+            }
         }
     }
 

@@ -115,31 +115,3 @@ data class ResetCredit(
     @kotlinx.serialization.SerialName("redeem_started_at") val redeemStartedAt: String = "",
     @kotlinx.serialization.SerialName("redeemed_at") val redeemedAt: String = "",
 )
-
-@Serializable
-data class DashboardSettings(
-    val usageDisplay: String = "used",
-    val barFill: String = "left",
-    val barOrder: String = "bar_percent_reset",
-    val showPercent: Boolean = true,
-    val showReset: Boolean = true,
-    val showBar: Boolean = true,
-    val colorTheme: String = "default",
-    val autoRefreshSeconds: Int = 60,
-    val compactMode: Boolean = false,
-) {
-    companion object {
-        val barOrders = listOf("bar_percent_reset", "bar_reset_percent", "percent_bar_reset",
-            "percent_reset_bar", "reset_bar_percent", "reset_percent_bar")
-        val refreshIntervals = listOf(0, 30, 60, 300, 900)
-    }
-}
-
-/** Matches the TUI thresholds; colors always describe consumed quota. */
-enum class UsageSeverity { GOOD, WARNING, BAD }
-fun usageSeverity(usedPercent: Double?, cached: Boolean = false): UsageSeverity = when {
-    cached -> UsageSeverity.WARNING
-    (usedPercent ?: 0.0) >= 65.0 -> UsageSeverity.BAD
-    (usedPercent ?: 0.0) >= 50.0 -> UsageSeverity.WARNING
-    else -> UsageSeverity.GOOD
-}

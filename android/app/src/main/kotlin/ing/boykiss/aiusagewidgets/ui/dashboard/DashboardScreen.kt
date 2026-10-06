@@ -2,11 +2,12 @@ package ing.boykiss.aiusagewidgets.ui.dashboard
 
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
@@ -15,13 +16,14 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
+import ing.boykiss.aiusagewidgets.R
 import ing.boykiss.aiusagewidgets.domain.*
 import java.time.Duration
 import java.time.Instant
@@ -39,74 +41,50 @@ fun DashboardScreen(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("AI Usage Widgets") }, actions = {
-                TextButton(onClick = { onEvent(DashboardEvent.AddAccount) }) { Text("+ Account") }
-                TextButton(onClick = { onEvent(DashboardEvent.Refresh) }, enabled = !state.refreshing && !state.refreshingResets) { Text("Refresh") }
+            TopAppBar(title = { Text("Usage") }, actions = {
+                IconButton(onClick = { onEvent(DashboardEvent.Refresh) }, enabled = !state.refreshing && state.accounts.isNotEmpty()) {
+                    Icon(painterResource(R.drawable.ic_widget_refresh), contentDescription = "Refresh usage")
+                }
             })
         },
-        bottomBar = {
-            NavigationBar {
-                DashboardTab.entries.forEach { tab ->
-                    val label = tab.name.lowercase().replaceFirstChar { it.uppercase() }
-                    NavigationBarItem(selected = state.tab == tab,
-                        onClick = { onEvent(DashboardEvent.SelectTab(tab)) },
-                        icon = { Text(when (tab) { DashboardTab.USAGE -> "▥"; DashboardTab.RESETS -> "↻"; DashboardTab.SETTINGS -> "⚙" }) },
-                        label = { Text(label) })
-                }
-            }
+        floatingActionButton = {
+            if (!state.loading && state.accounts.isNotEmpty()) ExtendedFloatingActionButton(
+                onClick = { onEvent(DashboardEvent.AddAccount) },
+                icon = { Icon(painterResource(R.drawable.ic_add), contentDescription = null) },
+                text = { Text("Add account") },
+            )
         },
     ) { padding ->
-        PullToRefreshBox(
-            isRefreshing = if (state.tab == DashboardTab.RESETS) state.refreshingResets else state.refreshing,
-            onRefresh = { onEvent(DashboardEvent.Refresh) }, modifier = Modifier.fillMaxSize().padding(padding),
-        ) {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (state.loading) item { CircularProgressIndicator() }
-                else when (state.tab) {
-                    DashboardTab.USAGE -> {
-                        if (state.accounts.isEmpty()) item {
-                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Text("Your limits, at a glance", style = MaterialTheme.typography.headlineLarge)
-                                Text("Connect Codex, Claude, Cursor, OpenCode or DeepSeek to track all your accounts.")
-                                Button(onClick = { onEvent(DashboardEvent.AddAccount) }) { Text("Connect an account") }
-                            }
-                        }
-                        items(state.accounts, key = { it.id.value }) { account ->
-                            AccountCard(account, state.snapshots[account.id.value], state.settings, now, onEvent)
-                        }
+        PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = { onEvent(DashboardEvent.Refresh) },
+            modifier = Modifier.fillMaxSize().padding(padding)) {
+            when {
+                state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                state.accounts.isEmpty() -> Column(
+                    Modifier.fillMaxSize().padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text("Your limits, at a glance", style = MaterialTheme.typography.headlineLarge)
+                    Spacer(Modifier.height(12.dp))
+                    Text("Connect your AI accounts to see remaining usage and keep it on your home screen.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(24.dp))
+                    Button(onClick = { onEvent(DashboardEvent.AddAccount) }) { Text("Connect an account") }
+                }
+                else -> LazyVerticalGrid(
+                    columns = GridCells.Adaptive(340.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 100.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    gridItems(state.accounts, key = { it.id.value }) { account ->
+                        AccountCard(account, state.providers.firstOrNull { it.id == account.providerId }?.displayName
+                            ?: account.providerId.value, state.snapshots[account.id.value], now, onEvent)
                     }
-                    DashboardTab.RESETS -> {
-                        val accounts = state.accounts.filter { it.providerId.value == "codex" }
-                        if (accounts.isEmpty()) item { Text("Reset credits are available for Codex accounts. Connect Codex to see them here.") }
-                        else {
-                            item {
-                                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    accounts.forEach { account ->
-                                        FilterChip(state.selectedAccount?.id == account.id,
-                                            onClick = { onEvent(DashboardEvent.SelectAccount(account)) }, label = { Text(account.displayName) })
-                                    }
-                                }
-                            }
-                            val snapshot = state.snapshot
-                            item {
-                                Text("Reset credits", style = MaterialTheme.typography.headlineMedium)
-                                Text("${snapshot?.credits?.availableCount ?: "—"} available · ${snapshot?.credits?.totalEarnedCount ?: "—"} earned")
-                                Text("Claim confirmation is a preview; claiming is not connected yet.", style = MaterialTheme.typography.bodySmall)
-                                snapshot?.resetsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                            }
-                            val credits = snapshot?.resetDetails
-                            if (credits == null) item { Text(if (state.refreshingResets) "Loading reset details…" else "Refresh to load reset details.") }
-                            else if (credits.isEmpty()) item { Text("No reset credits for this account.") }
-                            else items(credits.sortedBy { runCatching { Instant.parse(it.expiresAt) }.getOrNull() ?: Instant.MAX }) { credit ->
-                                ResetCard(credit, onEvent)
-                            }
-                        }
-                    }
-                    DashboardTab.SETTINGS -> item { SettingsContent(state.settings) { onEvent(DashboardEvent.SaveSettings(it)) } }
                 }
             }
         }
     }
+    state.resetAccount?.let { account -> ResetDetailsSheet(account, state.snapshot, state.refreshingResets, onEvent) }
     AccountDialogs(state, onEvent)
     AuthenticationDialogs(state, onEvent)
     state.notice?.let { notice ->
@@ -116,151 +94,174 @@ fun DashboardScreen(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
 }
 
 @Composable
-private fun AccountCard(account: ProviderAccount, snapshot: ProviderUsageSnapshot?, settings: DashboardSettings, now: Long, onEvent: (DashboardEvent) -> Unit) {
+private fun AccountCard(account: ProviderAccount, providerName: String, snapshot: ProviderUsageSnapshot?, now: Long, onEvent: (DashboardEvent) -> Unit) {
     var menu by remember { mutableStateOf(false) }
+    val isBalance = account.providerId.value == "deepseek"
+    val cached = snapshot != null && (snapshot.freshness != DataFreshness.FRESH || now - snapshot.fetchedAtEpochMillis > 30 * 60_000L)
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(if (settings.compactMode) 12.dp else 20.dp), verticalArrangement = Arrangement.spacedBy(if (settings.compactMode) 6.dp else 12.dp)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(account.displayName, style = MaterialTheme.typography.titleLarge)
-                    Text(listOfNotNull(account.providerId.value, snapshot?.planLabel ?: account.planLabel).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
-                    if (!settings.compactMode) account.identityLabel?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    Text(listOfNotNull(providerName, (snapshot?.planLabel ?: account.planLabel).takeUnless { isBalance })
+                        .joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    account.identityLabel?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 Box {
-                    TextButton(onClick = { menu = true }) { Text("Manage") }
+                    IconButton(onClick = { menu = true }) {
+                        Icon(painterResource(R.drawable.ic_more_vert), contentDescription = "Manage ${account.displayName}")
+                    }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onEvent(DashboardEvent.StartRenamingAccount(account)) })
                         DropdownMenuItem(text = { Text("Sign in again") }, onClick = { menu = false; onEvent(DashboardEvent.Reauthenticate(account)) })
-                        DropdownMenuItem(text = { Text("Remove") }, onClick = { menu = false; onEvent(DashboardEvent.StartRemovingAccount(account)) })
+                        DropdownMenuItem(text = { Text("Remove account") }, onClick = { menu = false; onEvent(DashboardEvent.StartRemovingAccount(account)) })
                     }
                 }
             }
             if (account.authenticationState == AuthenticationState.SIGN_IN_REQUIRED) {
-                Text("Sign-in required", color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = { onEvent(DashboardEvent.Reauthenticate(account)) }) { Text("Sign in again") }
+                Text("Sign in to update your usage", color = MaterialTheme.colorScheme.error)
+                OutlinedButton(onClick = { onEvent(DashboardEvent.Reauthenticate(account)) }) { Text("Sign in again") }
             }
             if (snapshot == null) {
                 Text("Loading usage…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             } else {
-                snapshot.windows.forEach { window -> UsageMetric(window, settings, now, snapshot.freshness != DataFreshness.FRESH) }
-                if (snapshot.windows.isEmpty() && account.providerId.value != "deepseek" && snapshot.errorMessage == null) Text("No usage windows reported")
-                snapshot.credits?.let { Text("${it.availableCount ?: "—"} reset credits available", style = MaterialTheme.typography.labelLarge) }
-                snapshot.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                snapshot.resetsError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                if (snapshot.fetchedAtEpochMillis > 0) Text(
-                    "Updated ${ago(snapshot.fetchedAtEpochMillis, now)}${if (snapshot.freshness != DataFreshness.FRESH) " · cached" else ""}",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-@Composable
-private fun UsageMetric(window: UsageWindow, settings: DashboardSettings, now: Long, cached: Boolean) {
-    val value = if (settings.usageDisplay == "used") window.usedPercent else window.remainingPercent
-    val severity = usageSeverity(window.usedPercent, cached)
-    val color = when (settings.colorTheme) {
-        "monochrome" -> MaterialTheme.colorScheme.onSurface
-        "colorblind" -> when (severity) {
-            UsageSeverity.GOOD -> Color(0xFF2879C7)
-            UsageSeverity.WARNING -> Color(0xFFD97706)
-            UsageSeverity.BAD -> Color(0xFFC04FA2)
-        }
-        else -> when (severity) {
-            UsageSeverity.GOOD -> MaterialTheme.colorScheme.primary
-            UsageSeverity.WARNING -> Color(0xFFB8860B)
-            UsageSeverity.BAD -> MaterialTheme.colorScheme.error
-        }
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(window.label, style = MaterialTheme.typography.labelLarge)
-        settings.barOrder.split('_').forEach { part ->
-            when (part) {
-                "percent" -> if (settings.showPercent) Text("${value?.roundToInt()?.let { "$it%" } ?: "—"} ${settings.usageDisplay}",
-                    style = if (settings.compactMode) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold, color = color)
-                "bar" -> if (settings.showBar) {
-                    Box(Modifier.fillMaxWidth().height(8.dp), contentAlignment = if (settings.barFill == "right") Alignment.CenterEnd else Alignment.CenterStart) {
-                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) {}
-                        value?.takeIf { it > 0 }?.let {
-                            Surface(Modifier.fillMaxWidth((it / 100).toFloat().coerceIn(0f, 1f)).fillMaxHeight(), color = color, shape = MaterialTheme.shapes.small) {}
-                        }
+                if (isBalance) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Available balance", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(snapshot.planLabel ?: account.planLabel ?: "—", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     }
                 }
-                "reset" -> if (settings.showReset) Text(resetText(window.resetsAtEpochSeconds, now), style = MaterialTheme.typography.bodySmall)
+                snapshot.windows.forEach { window -> UsageMetric(window, now) }
+                if (snapshot.windows.isEmpty() && !isBalance && snapshot.errorMessage == null) Text("No usage windows reported")
+                snapshot.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                if (snapshot.fetchedAtEpochMillis > 0) Text(
+                    "Updated ${ago(snapshot.fetchedAtEpochMillis, now)}${if (cached) " · saved usage" else ""}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (account.providerId.value == "codex") {
+                Surface(onClick = { onEvent(DashboardEvent.OpenResets(account)) }, shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.secondaryContainer) {
+                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Reset credits", style = MaterialTheme.typography.titleSmall)
+                            Text("View details", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(snapshot?.credits?.availableCount?.let { "$it available" } ?: "—", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun ResetCard(credit: ResetCredit, onEvent: (DashboardEvent) -> Unit) {
-    var confirming by remember(credit) { mutableStateOf(false) }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(credit.title.ifBlank { "Reset credit" }, style = MaterialTheme.typography.titleMedium)
-            Text(credit.status.replace('_', ' '))
-            if (credit.grantedAt.isNotBlank()) Text("Granted: ${formatDate(credit.grantedAt)}", style = MaterialTheme.typography.bodySmall)
-            if (credit.expiresAt.isNotBlank()) Text("Expires: ${formatDate(credit.expiresAt)}", style = MaterialTheme.typography.bodySmall)
-            if (credit.redeemStartedAt.isNotBlank()) Text("Claim started: ${formatDate(credit.redeemStartedAt)}", style = MaterialTheme.typography.bodySmall)
-            if (credit.redeemedAt.isNotBlank()) Text("Redeemed: ${formatDate(credit.redeemedAt)}", style = MaterialTheme.typography.bodySmall)
-            if (credit.status.equals("available", true)) TextButton(onClick = { confirming = true }) { Text("Claim…") }
+private fun UsageMetric(window: UsageWindow, now: Long) {
+    val remaining = window.remainingPercent
+    val color = if ((window.usedPercent ?: 0.0) >= 80.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(when (window.label) {
+                "5H" -> "5-hour window"
+                "7D", "WEEKLY" -> "Weekly"
+                "SESSION" -> "Session"
+                "MONTHLY" -> "Monthly"
+                else -> window.label
+            }, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+            Text(remaining?.roundToInt()?.let { "$it% left" } ?: "—", style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold, color = color)
+        }
+        if (remaining == null) Surface(Modifier.fillMaxWidth().height(8.dp), color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = MaterialTheme.shapes.small) {}
+        else LinearProgressIndicator(progress = { (remaining / 100).toFloat().coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().height(8.dp), color = color)
+        window.resetsAtEpochSeconds?.let { Text(resetText(it, now), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ResetDetailsSheet(account: ProviderAccount, snapshot: ProviderUsageSnapshot?, refreshing: Boolean, onEvent: (DashboardEvent) -> Unit) {
+    ModalBottomSheet(onDismissRequest = { onEvent(DashboardEvent.CloseResets) }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Reset credits", style = MaterialTheme.typography.headlineSmall)
+                    Text(account.displayName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { onEvent(DashboardEvent.CloseResets) }) { Text("Done") }
+            }
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text("${snapshot?.credits?.availableCount ?: "—"} available", style = MaterialTheme.typography.titleLarge)
+                            snapshot?.credits?.totalEarnedCount?.let { Text("$it total earned", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                        TextButton(onClick = { onEvent(DashboardEvent.RefreshResets) }, enabled = !refreshing) { Text("Refresh") }
+                    }
+                    if (refreshing) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
+                    snapshot?.resetsError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp)) }
+                    if (account.authenticationState == AuthenticationState.SIGN_IN_REQUIRED) TextButton(onClick = {
+                        onEvent(DashboardEvent.CloseResets)
+                        onEvent(DashboardEvent.Reauthenticate(account))
+                    }) { Text("Sign in again") }
+                }
+                val credits = snapshot?.resetDetails
+                if (credits == null && !refreshing) item { Text("Refresh to load credit details.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                else if (credits?.isEmpty() == true) item { Text("No reset credits for this account.") }
+                else if (credits != null) items(credits.sortedBy { runCatching { Instant.parse(it.expiresAt) }.getOrNull() ?: Instant.MAX }) { credit ->
+                    ResetCreditRow(credit)
+                }
+            }
         }
     }
-    if (confirming) AlertDialog(onDismissRequest = { confirming = false }, title = { Text("Confirm claim") },
-        text = { Text("Confirm this reset credit? Claiming is not connected yet and will not change the credit.") },
-        confirmButton = { TextButton(onClick = { confirming = false; onEvent(DashboardEvent.ConfirmResetClaim) }) { Text("Confirm") } },
-        dismissButton = { TextButton(onClick = { confirming = false }) { Text("Cancel") } })
 }
 
 @Composable
-private fun SettingsContent(settings: DashboardSettings, save: (DashboardSettings) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Settings", style = MaterialTheme.typography.headlineMedium)
-        SettingChoice("Usage display", listOf("used", "remaining"), settings.usageDisplay) { save(settings.copy(usageDisplay = it)) }
-        SettingChoice("Bar fill", listOf("left", "right"), settings.barFill) { save(settings.copy(barFill = it)) }
-        SettingChoice("Metric order", DashboardSettings.barOrders, settings.barOrder) { save(settings.copy(barOrder = it)) }
-        SettingToggle("Show percentage", settings.showPercent) { save(settings.copy(showPercent = it)) }
-        SettingToggle("Show bar", settings.showBar) { save(settings.copy(showBar = it)) }
-        SettingToggle("Show reset countdown", settings.showReset) { save(settings.copy(showReset = it)) }
-        SettingChoice("Semantic colors", listOf("default", "colorblind", "monochrome"), settings.colorTheme) { save(settings.copy(colorTheme = it)) }
-        Text("Automatic refresh", style = MaterialTheme.typography.titleMedium)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DashboardSettings.refreshIntervals.forEach { seconds ->
-                FilterChip(selected = settings.autoRefreshSeconds == seconds, onClick = { save(settings.copy(autoRefreshSeconds = seconds)) },
-                    label = { Text(when { seconds == 0 -> "Off"; seconds < 60 -> "${seconds}s"; else -> "${seconds / 60}m" }) })
+private fun ResetCreditRow(credit: ResetCredit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(credit.title.ifBlank { "Reset credit" }, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+            val available = credit.status.equals("available", true)
+            Surface(shape = MaterialTheme.shapes.small,
+                color = if (available) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant) {
+                Text(credit.status.replace('_', ' ').ifBlank { "Unknown" }.replaceFirstChar { it.uppercase() },
+                    Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
             }
         }
-        Text("Applies while the app is open. Widgets refresh approximately every 15 minutes, as scheduled by Android.", style = MaterialTheme.typography.bodySmall)
-        SettingToggle("Compact account rows", settings.compactMode) { save(settings.copy(compactMode = it)) }
-    }
-}
-
-@Composable private fun SettingChoice(label: String, values: List<String>, selected: String, change: (String) -> Unit) {
-    Column {
-        Text(label, style = MaterialTheme.typography.titleMedium)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            values.forEach { value -> FilterChip(selected == value, onClick = { change(value) }, label = { Text(value.replace('_', ' ')) }) }
-        }
-    }
-}
-@Composable private fun SettingToggle(label: String, enabled: Boolean, change: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f)); Switch(checked = enabled, onCheckedChange = change)
+        if (credit.expiresAt.isNotBlank()) Text("Expires ${formatDate(credit.expiresAt)}", style = MaterialTheme.typography.bodyMedium)
+        if (credit.grantedAt.isNotBlank()) Text("Granted ${formatDate(credit.grantedAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (credit.redeemStartedAt.isNotBlank()) Text("Claim started ${formatDate(credit.redeemStartedAt)}", style = MaterialTheme.typography.bodySmall)
+        if (credit.redeemedAt.isNotBlank()) Text("Redeemed ${formatDate(credit.redeemedAt)}", style = MaterialTheme.typography.bodySmall)
+        HorizontalDivider(Modifier.padding(top = 8.dp))
     }
 }
 
 @Composable
 private fun AuthenticationDialogs(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
     val context = LocalContext.current
-    if (state.choosingProvider) AlertDialog(onDismissRequest = { onEvent(DashboardEvent.CancelAuthentication) },
-        title = { Text("Connect an account") }, text = {
-            Column { state.providers.forEach { provider ->
-                TextButton(onClick = { onEvent(DashboardEvent.ConnectProvider(provider.id)) }) { Text(provider.displayName) }
-                if (provider.id.value == "cursor") TextButton(onClick = { onEvent(DashboardEvent.ConnectProvider(provider.id, true)) }) { Text("Cursor with API key") }
-            } }
-        }, confirmButton = {}, dismissButton = { TextButton(onClick = { onEvent(DashboardEvent.CancelAuthentication) }) { Text("Cancel") } })
+    if (state.choosingProvider) {
+        var choosingCursorMethod by rememberSaveable { mutableStateOf(false) }
+        AlertDialog(onDismissRequest = { onEvent(DashboardEvent.CancelAuthentication) },
+            title = { Text(if (choosingCursorMethod) "Connect Cursor" else "Connect an account") },
+            text = {
+                Column {
+                    if (choosingCursorMethod) {
+                        TextButton(onClick = { onEvent(DashboardEvent.ConnectProvider(ProviderId("cursor"))) }) { Text("Sign in with browser") }
+                        TextButton(onClick = { onEvent(DashboardEvent.ConnectProvider(ProviderId("cursor"), true)) }) { Text("Use an API key") }
+                        TextButton(onClick = { choosingCursorMethod = false }) { Text("Back to providers") }
+                    } else state.providers.forEach { provider ->
+                        TextButton(onClick = {
+                            if (provider.id.value == "cursor") choosingCursorMethod = true
+                            else onEvent(DashboardEvent.ConnectProvider(provider.id))
+                        }, modifier = Modifier.fillMaxWidth()) { Text(provider.displayName) }
+                    }
+                }
+            }, confirmButton = {}, dismissButton = {
+                TextButton(onClick = { onEvent(DashboardEvent.CancelAuthentication) }) { Text("Cancel") }
+            })
+    }
     state.connectingProvider?.let { provider ->
         var code by rememberSaveable(provider.id.value, state.authSession?.sessionId) { mutableStateOf("") }
         val session = state.authSession
@@ -275,7 +276,7 @@ private fun AuthenticationDialogs(state: DashboardState, onEvent: (DashboardEven
                             Text("Enter this code on the verification page:")
                             SelectionContainer { Text(session.userCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
                         }
-                        SelectionContainer { Text(session.verificationUrl, style = MaterialTheme.typography.bodySmall) }
+                        if (session.requiresCode) Text("Sign in in your browser, then paste the authorization code here.")
                         if (session.requiresCode) TextField(value = code, onValueChange = { code = it }, label = { Text("Authorization code") }, singleLine = true, enabled = !state.authenticating)
                         else Text("Waiting for browser approval…")
                     }

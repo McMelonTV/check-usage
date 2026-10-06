@@ -17,6 +17,5 @@ class AppContainer(context: Context) {
     val providers = ProviderRegistry(listOf(codex) + listOf(
         "claude" to "Claude", "cursor" to "Cursor", "opencode-go" to "OpenCode", "deepseek" to "DeepSeek",
     ).map { (id, name) -> ing.boykiss.aiusagewidgets.providers.shared.SharedUsageProvider(id, name, credentialStore, json) })
-    val settings = ing.boykiss.aiusagewidgets.data.repository.SettingsStore(context)
     val repository = UsageRepository(database.dao(), providers)
 }

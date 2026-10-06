@@ -130,11 +130,11 @@ The SDK's documented `Agent.getUsage()` reports costs for an individual agent. A
 
 The app signs in separately from the CLI and supports the same five providers: Codex device login, Claude browser login with a pasted authorization code, Cursor browser login or an API key, and OpenCode Go / DeepSeek API keys.
 
-Like the TUI, the app has **Usage**, **Resets**, and **Settings** tabs. Usage shows all accounts, including session, weekly, monthly and model-specific limits, and DeepSeek balances. Each account's **Manage** menu lets you rename it, sign in again, or remove it. Signing in again preserves its name and widget assignments. Removing an account clears its credentials, cached usage and widget assignments.
+The app uses a mobile account overview with remaining-usage cards, model-specific limits, and DeepSeek balances. Pull down to refresh, or use the refresh button. Cards arrange into multiple columns on wider screens. Add an account with the floating button; each account's overflow menu lets you rename it, sign in again, or remove it. Signing in again preserves its name and widget assignments. Removing an account clears its credentials, cached usage and widget assignments.
 
-Resets shows individual Codex credits, statuses, grant/expiry dates and redemption dates. Cached details appear while refreshing, including when there are zero credits. The claim confirmation matches the TUI's UI-only placeholder and does not call an API.
+Tap **Reset credits** on a Codex card to view its credit statuses and grant, expiry, and redemption dates in a bottom sheet. Cached details appear while refreshing, including when there are zero credits. Reset claiming is not implemented.
 
-Settings persist the same display options as the TUI: used or remaining percentages, left or right bar fill, all six percent/bar/countdown orders, visibility of each part, default/colorblind/monochrome semantic palettes, compact rows, and automatic refresh (off, 30 seconds, 1 minute, 5 minutes or 15 minutes). Automatic refresh runs while the app is visible; Claude requests respect its five-minute minimum and rate-limit backoff. Widgets retain their own remaining-usage layout and Android's approximately 15-minute background schedule.
+The app follows Android's system theme and wallpaper colors. Foreground usage refreshes automatically every minute; Claude respects its five-minute minimum and rate-limit backoff. Widget styles are chosen separately for each widget, and background refresh follows Android's approximately 15-minute schedule.
 
 Cached usage is displayed immediately and all accounts refresh in parallel. Failed requests retain the last values and show an error or sign-in prompt. The database upgrade preserves existing Codex accounts, snapshots and widget configurations.
 
