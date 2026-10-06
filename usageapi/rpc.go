@@ -166,9 +166,8 @@ func (server RPCServer) Handle(ctx context.Context, request RPCRequest) RPCRespo
 		}
 	case "resets.get":
 		var params struct {
-			Account            string `json:"account"`
-			Refresh            *bool  `json:"refresh"`
-			IncludeUnavailable bool   `json:"include_unavailable"`
+			Account string `json:"account"`
+			Refresh *bool  `json:"refresh"`
 		}
 		if err = decodeParams(request.Params, &params); err == nil {
 			err = requireStrings(map[string]string{"account": params.Account})
@@ -178,7 +177,7 @@ func (server RPCServer) Handle(ctx context.Context, request RPCRequest) RPCRespo
 			if params.Refresh != nil {
 				refresh = *params.Refresh
 			}
-			result, err = server.Service.ResetCredits(ctx, params.Account, refresh, params.IncludeUnavailable)
+			result, err = server.Service.ResetCredits(ctx, params.Account, refresh)
 		}
 	case "settings.get":
 		if err = requireEmptyParams(request.Params); err == nil {
@@ -268,7 +267,7 @@ func discoverResult() any {
 			{"auth.browser.begin", "Begin Cursor browser authorization.", `{"provider":"cursor"}`},
 			{"auth.browser.poll", "Poll and persist browser authorization.", `{"provider":"cursor","session_id":"...","name":"optional","account":"optional id|name"}`},
 			{"usage.get", "Get usage for one or all accounts; refresh defaults to true.", `{"account":"optional","refresh":true}`},
-			{"resets.get", "Get reset credits for one account; refresh defaults to true.", `{"account":"...","refresh":true,"include_unavailable":false}`},
+			{"resets.get", "Get reset credits for one account; refresh defaults to true.", `{"account":"...","refresh":true}`},
 			{"settings.get", "Get application settings.", "{}"},
 			{"settings.set", "Replace application settings; invalid values are normalized.", `Settings object`},
 		},

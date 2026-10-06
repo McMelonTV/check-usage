@@ -292,7 +292,7 @@ func setResetCredits(row *Row, credits *codexapi.ResetCreditsPayload, now time.T
 }
 
 func earliestExpiringAvailableResetCredit(credits []codexapi.ResetCreditDetail) (codexapi.ResetCreditDetail, bool) {
-	available := FilteredResetCredits(credits, false)
+	available := FilteredResetCredits(credits)
 	if len(available) == 0 {
 		return codexapi.ResetCreditDetail{}, false
 	}
@@ -522,10 +522,10 @@ func ApplyResetCreditStatusColors(tableText string, credits []codexapi.ResetCred
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func FilteredResetCredits(credits []codexapi.ResetCreditDetail, showUsed bool) []codexapi.ResetCreditDetail {
+func FilteredResetCredits(credits []codexapi.ResetCreditDetail) []codexapi.ResetCreditDetail {
 	filtered := make([]codexapi.ResetCreditDetail, 0, len(credits))
 	for _, credit := range credits {
-		if showUsed || ResetCreditAvailable(credit) {
+		if ResetCreditAvailable(credit) {
 			filtered = append(filtered, credit)
 		}
 	}

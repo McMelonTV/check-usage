@@ -150,7 +150,7 @@ func TestUsageRefreshAndCachedResetCredits(t *testing.T) {
 	if got := *usage[0].Snapshot.Windows[0].Remaining; got != 75 {
 		t.Fatalf("remaining = %v, want 75", got)
 	}
-	credits, err := service.ResetCredits(context.Background(), "one", false, false)
+	credits, err := service.ResetCredits(context.Background(), "one", false)
 	if err != nil {
 		t.Fatal(err)
 	}

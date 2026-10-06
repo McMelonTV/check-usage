@@ -128,7 +128,7 @@ func fetchClaudeUsage(ctx context.Context, client *http.Client, account storage.
 		planCheckedAt = time.Unix(entry.PlanCheckedAt, 0)
 	}
 	fetchPlan := providers.ClaudePlanDue(storage.StringValue(account.PlanType), planCheckedAt, now)
-	result, err := providers.FetchClaudeUsage(ctx, client, credentials, claudeapi.DefaultUserAgent, now, fetchPlan)
+	result, err := providers.FetchClaudeUsage(ctx, client, credentials, now, fetchPlan)
 	changed := result.CredentialsChanged
 	if changed {
 		storage.SetClaudeCredentials(&account, result.Credentials)

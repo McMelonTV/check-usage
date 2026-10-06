@@ -62,7 +62,7 @@ func TestCompleteLoginExchangesCodeAndReadsProfile(t *testing.T) {
 		t.Fatalf("unexpected request %s", request.URL)
 		return nil, nil
 	})}
-	login, err := CompleteLogin(t.Context(), client, session, " abc#state \n", "", now)
+	login, err := CompleteLogin(t.Context(), client, session, " abc#state \n", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestCompleteLoginRejectsForeignState(t *testing.T) {
 		t.Fatal("no request expected")
 		return nil, nil
 	})}
-	if _, err := CompleteLogin(t.Context(), client, AuthSession{State: "state", Verifier: "v"}, "abc#other", "", time.Now()); err == nil {
+	if _, err := CompleteLogin(t.Context(), client, AuthSession{State: "state", Verifier: "v"}, "abc#other", time.Now()); err == nil {
 		t.Fatal("foreign state was accepted")
 	}
 }
@@ -120,7 +120,7 @@ func TestOrganizationWithoutOAuthIsNotASignInError(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return response(http.StatusForbidden, `{"error":{"message":"OAuth not allowed","details":{"error_code":"oauth_not_allowed_for_organization"}}}`), nil
 	})}
-	_, err := FetchUsage(t.Context(), client, "token", "")
+	_, err := FetchUsage(t.Context(), client, "token")
 	if err != ErrUsageUnavailable || IsAuthenticationError(err) {
 		t.Fatalf("error = %v", err)
 	}
@@ -138,9 +138,34 @@ func TestRateLimitDelayHonorsRetryAfter(t *testing.T) {
 			}
 			return resp, nil
 		})}
-		_, err := FetchUsage(t.Context(), client, "token", "")
+		_, err := FetchUsage(t.Context(), client, "token")
 		if delay, limited := RateLimitDelay(err); !limited || delay != tc.want || IsAuthenticationError(err) {
 			t.Fatalf("Retry-After %q: delay = %v, limited = %v, err = %v", tc.header, delay, limited, err)
+		}
+	}
+}
+
+func TestRequestsUseClaudeCodeUserAgent(t *testing.T) {
+	seen := map[string]string{}
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		seen[request.URL.String()] = request.Header.Get("User-Agent")
+		switch request.URL.String() {
+		case TokenURL:
+			return response(http.StatusOK, `{"access_token":"a","refresh_token":"r","expires_in":60}`), nil
+		case ProfileURL:
+			return response(http.StatusOK, `{}`), nil
+		}
+		return response(http.StatusOK, `{}`), nil
+	})}
+	if _, err := CompleteLogin(t.Context(), client, AuthSession{State: "s", Verifier: "v"}, "code#s", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FetchUsage(t.Context(), client, "a"); err != nil {
+		t.Fatal(err)
+	}
+	for _, endpoint := range []string{TokenURL, ProfileURL, UsageURL} {
+		if seen[endpoint] != UserAgent || !strings.HasPrefix(UserAgent, "claude-code/") {
+			t.Fatalf("%s User-Agent = %q", endpoint, seen[endpoint])
 		}
 	}
 }

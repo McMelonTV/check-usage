@@ -28,8 +28,11 @@ const (
 	UsageURL          = "https://api.anthropic.com/api/oauth/usage"
 	ProfileURL        = "https://api.anthropic.com/api/oauth/profile"
 	OAuthBeta         = "oauth-2025-04-20"
-	DefaultUserAgent  = "check-usage/1.0.0"
-	refreshSkew       = 60 * time.Second
+	// UserAgent is the one Claude Code sends to these endpoints. The usage
+	// endpoint rate-limits unrecognized clients far more aggressively (a
+	// "check-usage/…" agent got persistent 429s where this one succeeds).
+	UserAgent   = "claude-code/2.1.291"
+	refreshSkew = 60 * time.Second
 	// defaultTokenLifetime is assumed when a token response omits expires_in.
 	defaultTokenLifetime = 3600
 )
@@ -242,7 +245,7 @@ func ParseSessionID(id string) (AuthSession, error) {
 
 // CompleteLogin exchanges the pasted "code#state" value for tokens and loads
 // the account profile. The profile is best-effort and only supplies the plan.
-func CompleteLogin(ctx context.Context, client *http.Client, session AuthSession, pasted, userAgent string, now time.Time) (Login, error) {
+func CompleteLogin(ctx context.Context, client *http.Client, session AuthSession, pasted string, now time.Time) (Login, error) {
 	code, state, hasState := strings.Cut(strings.TrimSpace(pasted), "#")
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -265,7 +268,7 @@ func CompleteLogin(ctx context.Context, client *http.Client, session AuthSession
 	if tokens.Account != nil {
 		login.Email, login.AccountUUID = tokens.Account.EmailAddress, tokens.Account.UUID
 	}
-	if profile, err := FetchProfile(ctx, client, tokens.AccessToken, userAgent); err == nil {
+	if profile, err := FetchProfile(ctx, client, tokens.AccessToken); err == nil {
 		login.Plan = profile.PlanName()
 		if login.Email == "" {
 			login.Email = profile.Account.Email
@@ -295,17 +298,17 @@ func RefreshCredentials(ctx context.Context, client *http.Client, current Creden
 	return credentialsFrom(tokens, current.RefreshToken, now), true, nil
 }
 
-func FetchUsage(ctx context.Context, client *http.Client, accessToken, userAgent string) (*UsagePayload, error) {
+func FetchUsage(ctx context.Context, client *http.Client, accessToken string) (*UsagePayload, error) {
 	var out UsagePayload
-	if err := getAuthenticated(ctx, client, UsageURL, accessToken, userAgent, "Claude usage request", &out); err != nil {
+	if err := getAuthenticated(ctx, client, UsageURL, accessToken, "Claude usage request", &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func FetchProfile(ctx context.Context, client *http.Client, accessToken, userAgent string) (*Profile, error) {
+func FetchProfile(ctx context.Context, client *http.Client, accessToken string) (*Profile, error) {
 	var out Profile
-	if err := getAuthenticated(ctx, client, ProfileURL, accessToken, userAgent, "Claude profile request", &out); err != nil {
+	if err := getAuthenticated(ctx, client, ProfileURL, accessToken, "Claude profile request", &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -368,6 +371,7 @@ func requestTokens(ctx context.Context, client *http.Client, body map[string]str
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 	var out TokenResponse
 	if err := doJSON(client, req, operation, &out); err != nil {
 		return nil, err
@@ -378,7 +382,7 @@ func requestTokens(ctx context.Context, client *http.Client, body map[string]str
 	return &out, nil
 }
 
-func getAuthenticated(ctx context.Context, client *http.Client, endpoint, accessToken, userAgent, operation string, out any) error {
+func getAuthenticated(ctx context.Context, client *http.Client, endpoint, accessToken, operation string, out any) error {
 	if strings.TrimSpace(accessToken) == "" {
 		return ErrMissingCredentials
 	}
@@ -389,7 +393,7 @@ func getAuthenticated(ctx context.Context, client *http.Client, endpoint, access
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("anthropic-beta", OAuthBeta)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", firstNonEmpty(strings.TrimSpace(userAgent), DefaultUserAgent))
+	req.Header.Set("User-Agent", UserAgent)
 	return doJSON(client, req, operation, out)
 }
 

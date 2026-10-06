@@ -85,7 +85,7 @@ func TestFetchClaudeUsageMapsWindowsAndPlan(t *testing.T) {
 		t.Fatalf("unexpected request %s", request.URL)
 		return nil, nil
 	})}
-	result, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, "test", now, true)
+	result, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, now, true)
 	if err != nil || result.CredentialsChanged || result.Usage.Plan != "Pro" || len(result.Usage.Metrics) != 2 {
 		t.Fatalf("result = %#v, error = %v", result, err)
 	}
@@ -149,7 +149,7 @@ func TestFetchClaudeUsageRefreshesAndRetriesAfterUnauthorized(t *testing.T) {
 		}
 		return response(http.StatusNotFound, `{}`), nil
 	})}
-	result, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "old", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, "test", now, true)
+	result, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "old", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, now, true)
 	if err != nil || usageCalls != 2 || !result.CredentialsChanged || result.Credentials.RefreshToken != "new-refresh" || *result.Usage.Metrics[0].Used != 5 {
 		t.Fatalf("result = %#v, calls = %d, error = %v", result, usageCalls, err)
 	}
@@ -163,7 +163,7 @@ func TestFetchClaudeUsageSkipsProfileWhenPlanKnown(t *testing.T) {
 		}
 		return response(http.StatusOK, `{"five_hour":{"utilization":5,"resets_at":null}}`), nil
 	})}
-	if _, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, "test", now, false); err != nil {
+	if _, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, now, false); err != nil {
 		t.Fatal(err)
 	}
 }

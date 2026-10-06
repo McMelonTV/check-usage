@@ -21,12 +21,11 @@ func runResetsCommand(args []string) int {
 	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", storage.DefaultAccountsPath(), "path to accounts.json")
 	timeout := fs.Int("timeout", 20, "HTTP timeout in seconds")
-	showUsed := fs.Bool("show-used", false, "include redeemed, expired, and other unavailable reset credits")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: check-usage resets [--accounts-file path] [--timeout seconds] [--show-used] <account name/email/id>")
+		fmt.Fprintln(os.Stderr, "usage: check-usage resets [--accounts-file path] [--timeout seconds] <account name/email/id>")
 		return 2
 	}
 	target := strings.TrimSpace(fs.Arg(0))
@@ -77,24 +76,20 @@ func runResetsCommand(args []string) int {
 		return 1
 	}
 
-	printResetCreditsDetails(updated, credits, *showUsed, time.Now())
+	printResetCreditsDetails(updated, credits, time.Now())
 	return 0
 }
 
-func printResetCreditsDetails(account storage.Account, payload *codexapi.ResetCreditsPayload, showUsed bool, now time.Time) {
+func printResetCreditsDetails(account storage.Account, payload *codexapi.ResetCreditsPayload, now time.Time) {
 	fmt.Printf("%s %s\n", usage.HeaderText("Account:"), account.Name)
 	fmt.Printf("%s %s\n", usage.HeaderText("Email:"), usage.ValueOrDash(account.Email))
 	fmt.Printf("%s %s\n", usage.HeaderText("Available reset credits:"), usage.ColorizeAvailableResetCreditCount(payload.AvailableCount))
 	fmt.Printf("%s %d\n", usage.HeaderText("Total earned reset credits:"), payload.TotalEarnedCount)
 
-	credits := usage.FilteredResetCredits(payload.Credits, showUsed)
+	credits := usage.FilteredResetCredits(payload.Credits)
 	if len(credits) == 0 {
 		fmt.Println()
-		if showUsed {
-			fmt.Println("No reset credits found.")
-		} else {
-			fmt.Println("No available reset credits found. Use --show-used to include redeemed or expired credits.")
-		}
+		fmt.Println("No available reset credits found.")
 		return
 	}
 
@@ -102,19 +97,17 @@ func printResetCreditsDetails(account storage.Account, payload *codexapi.ResetCr
 	fmt.Println()
 	var b bytes.Buffer
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "#\tSTATUS\tTITLE\tGAINED\tEXPIRES\tREMAINING\tREDEEM STARTED\tREDEEMED")
+	fmt.Fprintln(w, "#\tSTATUS\tTITLE\tGAINED\tEXPIRES\tREMAINING")
 	for i, credit := range credits {
 		fmt.Fprintf(
 			w,
-			"%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%d\t%s\t%s\t%s\t%s\t%s\n",
 			i+1,
 			usage.ValueOrUnknown(credit.Status),
 			usage.ValueOrDashString(credit.Title),
 			usage.ResetCreditTimeText(credit.GrantedAt, now, false),
 			usage.ResetCreditTimeText(credit.ExpiresAt, now, false),
 			usage.ResetCreditRemainingText(credit.ExpiresAt, now),
-			usage.ResetCreditTimeText(credit.RedeemStartedAt, now, false),
-			usage.ResetCreditTimeText(credit.RedeemedAt, now, false),
 		)
 	}
 	_ = w.Flush()

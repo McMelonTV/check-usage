@@ -30,7 +30,7 @@ func RunClaude(accountName string, client *http.Client, openBrowser bool) (stora
 }
 
 func CompleteClaude(client *http.Client, session claudeapi.AuthSession, accountName, code string) (storage.Account, error) {
-	login, err := claudeapi.CompleteLogin(context.Background(), client, session, code, claudeapi.DefaultUserAgent, time.Now())
+	login, err := claudeapi.CompleteLogin(context.Background(), client, session, code, time.Now())
 	if err != nil {
 		return storage.Account{}, err
 	}

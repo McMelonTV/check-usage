@@ -231,7 +231,7 @@ func (service *Service) CompleteOAuthAuth(ctx context.Context, request OAuthComp
 	if err != nil {
 		return DeviceAuthResult{}, err
 	}
-	login, err := claudeapi.CompleteLogin(ctx, service.client, session, request.Code, service.userAgent, service.now())
+	login, err := claudeapi.CompleteLogin(ctx, service.client, session, request.Code, service.now())
 	if err != nil {
 		return DeviceAuthResult{}, err
 	}
@@ -362,9 +362,8 @@ func (service *Service) Usage(ctx context.Context, target string, refresh bool) 
 	return results, nil
 }
 
-// ResetCredits returns credits for one account, optionally using cache only and
-// optionally retaining redeemed, expired, and otherwise unavailable entries.
-func (service *Service) ResetCredits(ctx context.Context, target string, refresh, includeUnavailable bool) (ResetCreditsResult, error) {
+// ResetCredits returns available credits for one account, optionally using cache only.
+func (service *Service) ResetCredits(ctx context.Context, target string, refresh bool) (ResetCreditsResult, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	store, err := service.loadAccounts()
@@ -388,7 +387,7 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 		if !cached || entry.ResetCredits == nil {
 			return ResetCreditsResult{}, fmt.Errorf("no cached reset credits for account %q", account.Name)
 		}
-		return ResetCreditsResult{Account: account.public(), Credits: filterCredits(entry.ResetCredits, includeUnavailable), Cached: true}, nil
+		return ResetCreditsResult{Account: account.public(), Credits: filterCredits(entry.ResetCredits), Cached: true}, nil
 	}
 	changed, err := service.refreshCredentials(ctx, account)
 	if err != nil {
@@ -408,7 +407,7 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 	if err := service.saveCache(account.ID, entry); err != nil {
 		return ResetCreditsResult{}, err
 	}
-	return ResetCreditsResult{Account: account.public(), Credits: filterCredits(credits, includeUnavailable)}, nil
+	return ResetCreditsResult{Account: account.public(), Credits: filterCredits(credits)}, nil
 }
 
 func (service *Service) usageForAccount(ctx context.Context, account *storedAccount, refresh bool) (UsageResult, bool, error) {
@@ -563,7 +562,7 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 		credentials.ExpiresAt = *account.AuthData.ExpiresAt
 	}
 	fetchPlan := providers.ClaudePlanDue(stringValue(account.PlanType), time.Unix(entry.PlanCheckedAt, 0), now)
-	fetched, err := providers.FetchClaudeUsage(ctx, service.client, credentials, service.userAgent, now, fetchPlan)
+	fetched, err := providers.FetchClaudeUsage(ctx, service.client, credentials, now, fetchPlan)
 	changed := fetched.CredentialsChanged
 	if changed {
 		setClaudeCredentials(account, fetched.Credentials)
@@ -717,10 +716,7 @@ func newAccountID(now time.Time) string {
 	return hex.EncodeToString(bytes)
 }
 
-func filterCredits(payload *codexapi.ResetCreditsPayload, includeUnavailable bool) *codexapi.ResetCreditsPayload {
-	if includeUnavailable {
-		return payload
-	}
+func filterCredits(payload *codexapi.ResetCreditsPayload) *codexapi.ResetCreditsPayload {
 	filtered := *payload
 	filtered.Credits = make([]codexapi.ResetCreditDetail, 0, len(payload.Credits))
 	for _, credit := range payload.Credits {
