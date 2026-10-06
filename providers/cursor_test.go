@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/McMelonTV/check-usage/cursorapi"
 )
 
 func cursorJWT(now time.Time) string {
@@ -35,9 +33,7 @@ func TestCursorUsageMatchesDashboardPools(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/aiserver.v1.DashboardService/GetCurrentPeriodUsage":
-			return response(200, `{"billingCycleEnd":"1791590400000","planUsage":{"autoPercentUsed":0,"apiPercentUsed":30},"spendLimitUsage":{"individualUsed":123}}`), nil
-		case "/aiserver.v1.DashboardService/GetHardLimit":
-			return response(200, `{"hardLimit":0}`), nil
+			return response(200, `{"billingCycleEnd":"1791590400000","planUsage":{"autoPercentUsed":0,"apiPercentUsed":30}}`), nil
 		case "/aiserver.v1.DashboardService/GetPlanInfo":
 			return response(200, `{"planInfo":{"planName":"pro"}}`), nil
 		default:
@@ -46,7 +42,7 @@ func TestCursorUsageMatchesDashboardPools(t *testing.T) {
 		}
 	})}
 	usage, bearer, err := FetchCursorUsage(t.Context(), client, "key-secret", "", now)
-	if err != nil || bearer != token || usage.Plan != "pro" || len(usage.Metrics) != 3 {
+	if err != nil || bearer != token || usage.Plan != "pro" || len(usage.Metrics) != 2 {
 		t.Fatalf("usage = %#v, %v", usage, err)
 	}
 	reset := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC).Unix()
@@ -55,9 +51,6 @@ func TestCursorUsageMatchesDashboardPools(t *testing.T) {
 		if metric.Used == nil || *metric.Used != want || metric.ResetAt == nil || *metric.ResetAt != reset {
 			t.Fatalf("pool %d = %#v", i, metric)
 		}
-	}
-	if usage.Metrics[2].Text != "Disabled" {
-		t.Fatalf("on-demand = %#v", usage.Metrics[2])
 	}
 	if _, _, err = FetchCursorUsage(t.Context(), client, "key-secret", bearer, now); err != nil || exchanges != 1 {
 		t.Fatalf("cached bearer: %v, exchanges %d", err, exchanges)
@@ -72,7 +65,7 @@ func TestCursorUsageMissingValuesAndOptionalMetadata(t *testing.T) {
 		return response(503, `{"error":"unavailable"}`), nil
 	})}
 	usage, _, err := FetchCursorUsage(t.Context(), client, "key", cursorJWT(time.Now()), time.Now())
-	if err != nil || usage.Metrics[0].Used != nil || usage.Metrics[0].ResetAt != nil || usage.Metrics[2].Text != "" {
+	if err != nil || usage.Metrics[0].Used != nil || usage.Metrics[0].ResetAt != nil || len(usage.Metrics) != 2 {
 		t.Fatalf("missing data = %#v, %v", usage, err)
 	}
 	for _, body := range []string{`{}`, `{"billingCycleEnd":"bad","planUsage":{}}`, `{"planUsage":{"autoPercentUsed":"bad"}}`} {
@@ -80,31 +73,6 @@ func TestCursorUsageMissingValuesAndOptionalMetadata(t *testing.T) {
 		if _, _, err := FetchCursorUsage(t.Context(), client, "key", cursorJWT(time.Now()), time.Now()); err == nil {
 			t.Fatalf("accepted incompatible response %s", body)
 		}
-	}
-}
-
-func TestCursorSpendUsesCorrectUnitsAndScopes(t *testing.T) {
-	cents := int64(1000)
-	pooled := int64(10000)
-	for _, test := range []struct {
-		name   string
-		spend  *cursorapi.SpendLimitUsage
-		policy *cursorapi.HardLimit
-		want   string
-	}{
-		{"individual cents", &cursorapi.SpendLimitUsage{IndividualUsed: 123, IndividualLimit: &cents}, &cursorapi.HardLimit{HardLimit: 50}, "USD 1.23 / 10.00"},
-		{"hard limit dollars", &cursorapi.SpendLimitUsage{IndividualUsed: 123}, &cursorapi.HardLimit{HardLimit: 10}, "USD 1.23 / 10.00"},
-		{"unlimited", &cursorapi.SpendLimitUsage{IndividualUsed: 123}, &cursorapi.HardLimit{HardLimit: 2147483647}, "USD 1.23 spent (unlimited)"},
-		{"organization disabled", &cursorapi.SpendLimitUsage{IndividualLimit: &cents}, &cursorapi.HardLimit{DisabledByOrganization: true}, "Disabled"},
-		{"team shared pool", &cursorapi.SpendLimitUsage{IndividualUsed: 123, PooledLimit: &pooled, LimitType: "team"}, nil, "USD 1.23 spent (team)"},
-		{"no metadata", nil, nil, ""},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			got := cursorSpendText(cursorapi.UsageData{Current: cursorapi.CurrentPeriodUsage{SpendLimitUsage: test.spend}, HardLimit: test.policy})
-			if got != test.want {
-				t.Fatalf("got %q want %q", got, test.want)
-			}
-		})
 	}
 }
 

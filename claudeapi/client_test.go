@@ -125,3 +125,22 @@ func TestOrganizationWithoutOAuthIsNotASignInError(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestRateLimitDelayHonorsRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   time.Duration
+	}{{"600", 10 * time.Minute}, {"", RateLimitBackoff}, {"30", RateLimitBackoff}} {
+		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			resp := response(http.StatusTooManyRequests, `{"error":{"type":"rate_limit_error"}}`)
+			if tc.header != "" {
+				resp.Header.Set("Retry-After", tc.header)
+			}
+			return resp, nil
+		})}
+		_, err := FetchUsage(t.Context(), client, "token", "")
+		if delay, limited := RateLimitDelay(err); !limited || delay != tc.want || IsAuthenticationError(err) {
+			t.Fatalf("Retry-After %q: delay = %v, limited = %v, err = %v", tc.header, delay, limited, err)
+		}
+	}
+}

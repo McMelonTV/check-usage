@@ -85,7 +85,7 @@ func TestFetchClaudeUsageMapsWindowsAndPlan(t *testing.T) {
 		t.Fatalf("unexpected request %s", request.URL)
 		return nil, nil
 	})}
-	result, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, "test", now)
+	result, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, "test", now, true)
 	if err != nil || result.CredentialsChanged || result.Usage.Plan != "Pro" || len(result.Usage.Metrics) != 2 {
 		t.Fatalf("result = %#v, error = %v", result, err)
 	}
@@ -109,7 +109,7 @@ func TestClaudeUsagePrefersLimitsArray(t *testing.T) {
 	if *usage.Metrics[0].Used != 58 || *usage.Metrics[1].Used != 14 || usage.Metrics[1].ResetAt == nil {
 		t.Fatalf("metrics = %#v", usage.Metrics)
 	}
-	if len(usage.Metrics) != 3 || usage.Metrics[2].Slot != MonthlySlot || usage.Metrics[2].Model != "Fable" || *usage.Metrics[2].Used != 90 {
+	if len(usage.Metrics) != 3 || usage.Metrics[2].Slot != MonthlySlot || usage.Metrics[2].Scope != "Fable weekly" || *usage.Metrics[2].Used != 90 {
 		t.Fatalf("model metric = %#v", usage.Metrics)
 	}
 }
@@ -149,8 +149,21 @@ func TestFetchClaudeUsageRefreshesAndRetriesAfterUnauthorized(t *testing.T) {
 		}
 		return response(http.StatusNotFound, `{}`), nil
 	})}
-	result, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "old", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, "test", now)
+	result, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "old", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, "test", now, true)
 	if err != nil || usageCalls != 2 || !result.CredentialsChanged || result.Credentials.RefreshToken != "new-refresh" || *result.Usage.Metrics[0].Used != 5 {
 		t.Fatalf("result = %#v, calls = %d, error = %v", result, usageCalls, err)
+	}
+}
+
+func TestFetchClaudeUsageSkipsProfileWhenPlanKnown(t *testing.T) {
+	now := time.Unix(1000, 0)
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != claudeapi.UsageURL {
+			t.Fatalf("unexpected request %s", request.URL)
+		}
+		return response(http.StatusOK, `{"five_hour":{"utilization":5,"resets_at":null}}`), nil
+	})}
+	if _, err := FetchClaudeUsage(t.Context(), client, claudeapi.Credentials{AccessToken: "a", RefreshToken: "r", ExpiresAt: now.Unix() + 3600}, "test", now, false); err != nil {
+		t.Fatal(err)
 	}
 }

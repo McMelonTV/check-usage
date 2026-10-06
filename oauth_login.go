@@ -73,12 +73,7 @@ func runOAuthLogin(accountName string, client *http.Client, openBrowser bool) (s
 		_ = server.Serve(listener)
 	}()
 
-	fmt.Printf("Open this URL to continue login:\n%s\n", authURL)
-	if openBrowser {
-		if err := openBrowserURL(authURL); err != nil {
-			fmt.Printf("Could not open browser automatically: %v\n", err)
-		}
-	}
+	printSignInLink("Codex", authURL, openBrowser)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(oauthTimeout)*time.Second)
 	defer cancel()
@@ -150,12 +145,8 @@ func runDeviceAuthLogin(accountName string, client *http.Client, openBrowser boo
 		return storedAccount{}, err
 	}
 
-	printDeviceCodePrompt(deviceCode.UserCode)
-	if openBrowser {
-		if err := openBrowserURL(deviceAuthVerificationURL); err != nil {
-			fmt.Printf("Could not open browser automatically: %v\n", err)
-		}
-	}
+	printSignInLink("Codex", deviceAuthVerificationURL, openBrowser)
+	fmt.Printf("Enter this code when asked: %s\n\n", deviceCode.UserCode)
 
 	pollResp, err := pollDeviceToken(client, deviceCode)
 	if err != nil {
@@ -203,10 +194,14 @@ func parseIntervalSeconds(v string) int {
 	return n
 }
 
-func printDeviceCodePrompt(userCode string) {
-	fmt.Printf("\nDevice auth login:\n")
-	fmt.Printf("1) Open: %s\n", deviceAuthVerificationURL)
-	fmt.Printf("2) Enter code: %s\n\n", userCode)
+// printSignInLink is how every browser login presents its link in the CLI.
+func printSignInLink(providerName, link string, openBrowser bool) {
+	fmt.Printf("Sign in to %s in your browser:\n%s\n\n", providerName, link)
+	if openBrowser {
+		if err := openBrowserURL(link); err != nil {
+			fmt.Printf("Could not open the browser automatically (%v); open the link above.\n\n", err)
+		}
+	}
 }
 
 func buildStoredAccount(requestedName string, email, planType, accountID *string, tokens *oauthTokenResponse) storedAccount {

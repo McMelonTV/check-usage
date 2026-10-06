@@ -42,6 +42,8 @@ type usageRow struct {
 	Plan                 string
 	Metrics              []providerMetric
 	ResetCredits         string
+	// ResetCreditsExpireAt is when the earliest available reset credit expires (unix seconds).
+	ResetCreditsExpireAt *int64
 	SupportsResetCredits bool
 	SortName             string
 	Loading              bool
@@ -69,6 +71,11 @@ type usageCacheEntry struct {
 	FetchedAt      int64                `json:"fetched_at"`
 	ResetFetchedAt int64                `json:"reset_fetched_at,omitempty"`
 	ProviderUsage  *providerUsage       `json:"provider_usage,omitempty"`
+	// NextFetchAt (unix seconds) throttles rate-limited providers: until then
+	// the cached usage is shown instead of asking the provider again.
+	NextFetchAt int64 `json:"next_fetch_at,omitempty"`
+	// PlanCheckedAt (unix seconds) is when the plan was last read from the provider.
+	PlanCheckedAt int64 `json:"plan_checked_at,omitempty"`
 }
 
 type accountResult struct {

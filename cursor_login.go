@@ -19,10 +19,8 @@ func runCursorBrowserLogin(name string, client *http.Client, browser bool) (stor
 	if err != nil {
 		return storedAccount{}, err
 	}
-	fmt.Printf("Sign in to Cursor in your browser:\n%s\n", session.LoginURL)
-	if browser {
-		_ = openBrowserURL(session.LoginURL)
-	}
+	printSignInLink("Cursor", session.LoginURL, browser)
+	fmt.Println("Waiting for approval…")
 	return waitForCursorLogin(ctx, client, session, name)
 }
 

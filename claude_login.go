@@ -18,12 +18,7 @@ func runClaudeLogin(accountName string, client *http.Client, openBrowser bool) (
 	if err != nil {
 		return storedAccount{}, err
 	}
-	fmt.Printf("Open this URL to sign in to Claude:\n%s\n\n", session.URL)
-	if openBrowser {
-		if err := openBrowserURL(session.URL); err != nil {
-			fmt.Printf("Could not open browser automatically: %v\n", err)
-		}
-	}
+	printSignInLink("Claude", session.URL, openBrowser)
 	fmt.Print("Paste the authorization code shown after signing in: ")
 	code, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil && (err != io.EOF || strings.TrimSpace(code) == "") {

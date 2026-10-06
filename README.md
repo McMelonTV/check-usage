@@ -106,7 +106,7 @@ API keys are stored in that file with owner-only permissions. Prefer `--api-key-
 
 ## Cursor setup
 
-Cursor displays two separate monthly allowances: **Cursor Models** and **Other Models**. The CLI shows both percentages and their billing-cycle reset date, plus whether on-demand spending is disabled or its spending and limit in USD. In a dashboard containing Codex, Claude, or OpenCode alongside Cursor, the columns read `SESSION (~5h)/CURSOR`, `WEEKLY/OTHER`, and `MONTHLY/SPEND`; Cursor's two pools both reset monthly. Compact rows use the full pool names.
+Cursor displays two separate monthly allowances: **Cursor Models** and **Other Models**. The CLI shows both percentages and their billing-cycle reset date; on-demand spending is not shown. Cursor has no session window, so its SESSION column stays empty; Cursor Models appears under WEEKLY and Other Models under MONTHLY as provider-specific limits. Each value is marked with a violet ✦ and named on the line below it (for example `Cursor models · 12d`), the same way Claude's Fable weekly limit appears under MONTHLY. A column header gets a ✦ when any row borrows it.
 
 Run the following command and complete sign-in in the browser. Add `--no-browser` to open the printed URL yourself:
 
@@ -124,7 +124,7 @@ An existing Cursor user API key also works:
 ./check-usage accounts add --provider cursor --api-key-env CURSOR_API_KEY
 ```
 
-The SDK's documented `Agent.getUsage()` reports costs for an individual agent. Account quota fetching instead uses the bearer-authenticated `GetCurrentPeriodUsage`, `GetHardLimit`, and `GetPlanInfo` RPCs used by Cursor CLI's `/usage` command. These internal APIs can change. Individual plans exposing `autoPercentUsed` and `apiPercentUsed` are supported; missing pools display `-`. Percentages are not inferred from subscription prices or spending totals. Cursor reset credits and Android widgets are not supported by this integration.
+The SDK's documented `Agent.getUsage()` reports costs for an individual agent. Account quota fetching instead uses the bearer-authenticated `GetCurrentPeriodUsage` and `GetPlanInfo` RPCs used by Cursor CLI's `/usage` command. These internal APIs can change. Individual plans exposing `autoPercentUsed` and `apiPercentUsed` are supported; missing pools display `-`. Percentages are not inferred from subscription prices or spending totals. Cursor reset credits and Android widgets are not supported by this integration.
 
 ## Android app ("AI Usage Widgets")
 

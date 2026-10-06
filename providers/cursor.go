@@ -2,8 +2,8 @@ package providers
 
 import (
 	"context"
-	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/McMelonTV/check-usage/cursorapi"
@@ -45,59 +45,37 @@ func cursorUsage(data cursorapi.UsageData) Usage {
 		resetAt = &value
 	}
 	plan := data.Current.PlanUsage
+	// Cursor's pools both run on the monthly billing cycle and have no session
+	// window. Like Claude's Fable limit, they borrow the weekly and monthly
+	// columns as scoped metrics.
 	for _, pool := range []struct {
 		slot    MetricSlot
-		label   string
+		scope   string
 		percent *float64
 	}{
-		{CursorModelsSlot, "CURSOR MODELS", plan.AutoPercentUsed},
-		{OtherModelsSlot, "OTHER MODELS", plan.APIPercentUsed},
+		{WeeklySlot, CursorModelsScope, plan.AutoPercentUsed},
+		{MonthlySlot, OtherModelsScope, plan.APIPercentUsed},
 	} {
-		metric := Metric{Kind: Percentage, Slot: pool.slot, Label: pool.label, ResetAt: resetAt}
+		metric := Metric{Kind: Percentage, Slot: pool.slot, Label: strings.ToUpper(pool.scope), Scope: pool.scope, ResetAt: resetAt}
 		if pool.percent != nil {
 			value := clampPercent(*pool.percent)
 			metric.Used = &value
 		}
 		usage.Metrics = append(usage.Metrics, metric)
 	}
-	usage.Metrics = append(usage.Metrics, Metric{Kind: Text, Slot: OnDemandSlot, Label: "ON-DEMAND", Text: cursorSpendText(data)})
 	return usage
 }
-func cursorSpendText(data cursorapi.UsageData) string {
-	spend, policy := data.Current.SpendLimitUsage, data.HardLimit
-	if policy != nil && (policy.NoUsageBasedAllowed || policy.DisabledByOrganization) {
-		return "Disabled"
+
+// Cursor metric scopes, shown in place of the slot names.
+const (
+	CursorModelsScope = "Cursor models"
+	OtherModelsScope  = "Other models"
+)
+
+// CursorMetrics returns Cursor's placeholder metrics before usage is loaded.
+func CursorMetrics() []Metric {
+	return []Metric{
+		{Kind: Percentage, Slot: WeeklySlot, Label: strings.ToUpper(CursorModelsScope), Scope: CursorModelsScope},
+		{Kind: Percentage, Slot: MonthlySlot, Label: strings.ToUpper(OtherModelsScope), Scope: OtherModelsScope},
 	}
-	used := int64(0)
-	if spend != nil {
-		used = spend.IndividualUsed
-		if used < 0 {
-			return ""
-		}
-		if spend.IndividualLimit != nil {
-			if *spend.IndividualLimit <= 0 {
-				return "Disabled"
-			}
-			return fmt.Sprintf("USD %.2f / %.2f", float64(used)/100, float64(*spend.IndividualLimit)/100)
-		}
-		if spend.LimitType == "team" {
-			if policy != nil && policy.HardLimit <= 0 {
-				return "Disabled"
-			}
-			if policy != nil || (spend.PooledLimit != nil && *spend.PooledLimit > 0) {
-				return fmt.Sprintf("USD %.2f spent (team)", float64(used)/100)
-			}
-			return ""
-		}
-	}
-	if policy == nil {
-		return ""
-	}
-	if policy.HardLimit <= 0 {
-		return "Disabled"
-	}
-	if policy.HardLimit >= 2147483647 {
-		return fmt.Sprintf("USD %.2f spent (unlimited)", float64(used)/100)
-	}
-	return fmt.Sprintf("USD %.2f / %.2f", float64(used)/100, float64(policy.HardLimit))
 }

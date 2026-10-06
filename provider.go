@@ -33,9 +33,6 @@ const (
 	weeklySlot           = providers.WeeklySlot
 	monthlySlot          = providers.MonthlySlot
 	textMetric           = providers.Text
-	cursorModelsSlot     = providers.CursorModelsSlot
-	otherModelsSlot      = providers.OtherModelsSlot
-	onDemandSlot         = providers.OnDemandSlot
 )
 
 type providerDefinition struct {
@@ -53,6 +50,10 @@ type providerFetchResult struct {
 	ResetCredits   *resetCreditsPayload
 	ResetError     error
 	RateLimit      *rateLimitDetails
+	// NextFetchAt, when set, is the earliest time to ask the provider again.
+	NextFetchAt time.Time
+	// PlanCheckedAt, when set, is when the plan was read from the provider.
+	PlanCheckedAt time.Time
 }
 
 func providerDefinitions() []providerDefinition {
@@ -100,7 +101,7 @@ func emptyProviderMetrics(providerID string) []providerMetric {
 	case providerDeepSeek:
 		return nil
 	case providerCursor:
-		return []providerMetric{{Kind: percentageMetric, Slot: cursorModelsSlot, Label: "CURSOR MODELS"}, {Kind: percentageMetric, Slot: otherModelsSlot, Label: "OTHER MODELS"}, {Kind: textMetric, Slot: onDemandSlot, Label: "ON-DEMAND"}}
+		return providers.CursorMetrics()
 	default:
 		return nil
 	}
@@ -144,20 +145,36 @@ func fetchClaudeUsage(ctx context.Context, client *http.Client, account storedAc
 	if account.AuthData.ExpiresAt != nil {
 		credentials.ExpiresAt = *account.AuthData.ExpiresAt
 	}
-	result, err := providers.FetchClaudeUsage(ctx, client, credentials, claudeapi.DefaultUserAgent, time.Now())
+	now := time.Now()
+	var planCheckedAt time.Time
+	if entry, ok, err := loadAccountUsageCache(account.ID); err == nil && ok && entry.PlanCheckedAt > 0 {
+		planCheckedAt = time.Unix(entry.PlanCheckedAt, 0)
+	}
+	fetchPlan := providers.ClaudePlanDue(stringValue(account.PlanType), planCheckedAt, now)
+	result, err := providers.FetchClaudeUsage(ctx, client, credentials, claudeapi.DefaultUserAgent, now, fetchPlan)
 	changed := result.CredentialsChanged
 	if changed {
 		setClaudeCredentials(&account, result.Credentials)
 	}
 	if err != nil {
 		// Keep rotated tokens even when the usage request itself fails.
-		return providerFetchResult{Account: account, AccountChanged: changed}, err
+		fetch := providerFetchResult{Account: account, AccountChanged: changed}
+		if delay, limited := claudeapi.RateLimitDelay(err); limited {
+			fetch.NextFetchAt = now.Add(delay)
+		}
+		return fetch, err
 	}
 	if result.Usage.Plan != "" && stringValue(account.PlanType) != result.Usage.Plan {
 		account.PlanType = strPtr(result.Usage.Plan)
 		changed = true
 	}
-	return providerFetchResult{Usage: result.Usage, Account: account, AccountChanged: changed}, nil
+	// Keep the account's plan when the profile was not requested this time.
+	result.Usage.Plan = firstNonEmpty(result.Usage.Plan, stringValue(account.PlanType))
+	fetch := providerFetchResult{Usage: result.Usage, Account: account, AccountChanged: changed, NextFetchAt: now.Add(claudeapi.MinRefreshInterval)}
+	if result.PlanChecked {
+		fetch.PlanCheckedAt = now
+	}
+	return fetch, nil
 }
 
 func setClaudeCredentials(account *storedAccount, credentials claudeapi.Credentials) {

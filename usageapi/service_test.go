@@ -358,7 +358,7 @@ func TestClaudeOAuthLoginAndUsagePersistTokens(t *testing.T) {
 		t.Fatal("codex accepted browser code authentication")
 	}
 	session, err := service.BeginOAuthAuth(providerClaude)
-	if err != nil || !strings.HasPrefix(session.AuthorizationURL, claudeapi.AuthorizeURL) {
+	if err != nil || !strings.HasPrefix(session.VerificationURL, claudeapi.AuthorizeURL) {
 		t.Fatalf("session = %#v, %v", session, err)
 	}
 	state, _, _ := strings.Cut(session.SessionID, ".")
@@ -373,5 +373,94 @@ func TestClaudeOAuthLoginAndUsagePersistTokens(t *testing.T) {
 	usage, err := service.Usage(context.Background(), result.Account.ID, true)
 	if err != nil || len(usage) != 1 || usage[0].Error != "" || len(usage[0].Metrics) != 2 || *usage[0].Metrics[1].Used != 20 {
 		t.Fatalf("usage = %#v, %v", usage, err)
+	}
+}
+
+func TestClaudeUsageIsThrottledAndBacksOffAfterRateLimit(t *testing.T) {
+	usageCalls, limited := 0, false
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.String() {
+		case claudeapi.TokenURL:
+			return jsonResponse(http.StatusOK, `{"access_token":"a","refresh_token":"r","expires_in":36000,"account":{"uuid":"u","email_address":"me@example.com"}}`), nil
+		case claudeapi.ProfileURL:
+			return jsonResponse(http.StatusOK, `{"organization":{"organization_type":"claude_pro"}}`), nil
+		case claudeapi.UsageURL:
+			usageCalls++
+			if limited {
+				return jsonResponse(http.StatusTooManyRequests, `{}`), nil
+			}
+			return jsonResponse(http.StatusOK, `{"five_hour":{"utilization":10,"resets_at":null}}`), nil
+		}
+		t.Fatalf("unexpected request %s", request.URL)
+		return nil, nil
+	})}
+	now := time.Unix(1_000_000, 0)
+	service := testService(t, client)
+	service.now = func() time.Time { return now }
+	session, _ := service.BeginOAuthAuth(providerClaude)
+	state, _, _ := strings.Cut(session.SessionID, ".")
+	login, err := service.CompleteOAuthAuth(context.Background(), OAuthComplete{Provider: providerClaude, SessionID: session.SessionID, Code: "c#" + state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := login.Account.ID
+	if results, _ := service.Usage(context.Background(), id, true); results[0].Cached || usageCalls != 1 {
+		t.Fatalf("first refresh = %#v, calls = %d", results, usageCalls)
+	}
+	now = now.Add(time.Minute)
+	if results, _ := service.Usage(context.Background(), id, true); !results[0].Cached || results[0].Error != "" || usageCalls != 1 {
+		t.Fatalf("throttled refresh = %#v, calls = %d", results, usageCalls)
+	}
+	now, limited = now.Add(claudeapi.MinRefreshInterval), true
+	if results, _ := service.Usage(context.Background(), id, true); !results[0].Cached || !strings.Contains(results[0].Error, "Too Many Requests") || usageCalls != 2 {
+		t.Fatalf("rate limited refresh = %#v, calls = %d", results, usageCalls)
+	}
+	now = now.Add(time.Minute)
+	if results, _ := service.Usage(context.Background(), id, true); !results[0].Cached || usageCalls != 2 {
+		t.Fatalf("refresh during backoff = %#v, calls = %d", results, usageCalls)
+	}
+}
+
+func TestClaudePlanIsRecheckedPeriodically(t *testing.T) {
+	plan, profileCalls := "claude_pro", 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.String() {
+		case claudeapi.TokenURL:
+			return jsonResponse(http.StatusOK, `{"access_token":"a","refresh_token":"r","expires_in":360000,"account":{"uuid":"u","email_address":"me@example.com"}}`), nil
+		case claudeapi.ProfileURL:
+			profileCalls++
+			return jsonResponse(http.StatusOK, `{"organization":{"organization_type":"`+plan+`"}}`), nil
+		case claudeapi.UsageURL:
+			return jsonResponse(http.StatusOK, `{"five_hour":{"utilization":10,"resets_at":null}}`), nil
+		}
+		t.Fatalf("unexpected request %s", request.URL)
+		return nil, nil
+	})}
+	now := time.Unix(1_000_000, 0)
+	service := testService(t, client)
+	service.now = func() time.Time { return now }
+	session, _ := service.BeginOAuthAuth(providerClaude)
+	state, _, _ := strings.Cut(session.SessionID, ".")
+	login, err := service.CompleteOAuthAuth(context.Background(), OAuthComplete{Provider: providerClaude, SessionID: session.SessionID, Code: "c#" + state})
+	if err != nil || login.Account.PlanType != "Pro" {
+		t.Fatalf("login = %#v, %v", login, err)
+	}
+	id := login.Account.ID
+	// Sign-in does not record a check time, so the first refresh checks the
+	// plan once; the next one within the hour skips the profile.
+	service.Usage(context.Background(), id, true)
+	now = now.Add(claudeapi.MinRefreshInterval)
+	service.Usage(context.Background(), id, true)
+	if profileCalls != 2 {
+		t.Fatalf("profile calls = %d, want sign-in plus first plan check", profileCalls)
+	}
+	plan = "claude_max"
+	now = now.Add(claudeapi.MinRefreshInterval)
+	if results, _ := service.Usage(context.Background(), id, true); results[0].Account.PlanType != "Pro" || profileCalls != 2 {
+		t.Fatalf("plan rechecked too early: %#v, calls = %d", results[0].Account, profileCalls)
+	}
+	now = now.Add(time.Hour)
+	if results, _ := service.Usage(context.Background(), id, true); results[0].Account.PlanType != "Max" || profileCalls != 3 {
+		t.Fatalf("plan change not picked up: %#v, calls = %d", results[0].Account, profileCalls)
 	}
 }

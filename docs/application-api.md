@@ -5,7 +5,7 @@
 - Go applications can import `github.com/McMelonTV/check-usage/usageapi`.
 - Applications in any language can spawn `check-usage api serve` and exchange newline-delimited JSON-RPC 2.0 messages over stdin/stdout.
 
-The protocol version is `1.3`. Call `rpc.discover` to inspect the methods supported by the installed binary. Account and authentication results never include API keys, access tokens, refresh tokens, or ID tokens. Credentials remain in the configured `accounts.json` file.
+The protocol version is `1.4`. Call `rpc.discover` to inspect the methods supported by the installed binary. Account and authentication results never include API keys, access tokens, refresh tokens, or ID tokens. Credentials remain in the configured `accounts.json` file.
 
 ## One-shot JSON commands
 
@@ -68,7 +68,7 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 
 `refresh` defaults to `true`. With `false`, usage and reset methods perform no network access and return the cache used by the CLI dashboard. When refreshing every account, a provider failure is returned in that account's `error` field so successful accounts are not discarded.
 
-Provider metrics are returned in `UsageResult.metrics`. Percentage metrics include `used_percent` and optional `reset_at`. A metric with a `model` field is a per-model weekly limit (for example Claude's Fable limit); it uses the `monthly` slot for display but is not a monthly window. API keys are accepted as input only and are never returned.
+Provider metrics are returned in `UsageResult.metrics`. Percentage metrics include `used_percent` and optional `reset_at`. A metric with a `scope` field is a provider-specific limit placed in a shared slot for display, such as Claude's `Fable weekly` limit in `monthly` or Cursor's pools; it is not that slot's own window. Every browser sign-in begin method returns the link to open as `verification_url`. API keys are accepted as input only and are never returned.
 
 ### Cursor login and metrics
 
@@ -81,7 +81,7 @@ Use the same `Service` instance or persistent `api serve` process for both calls
 
 An existing user API key can be saved with `accounts.api_key.save` and `provider: "cursor"`. Public metadata reports `auth_type: "api_key"`. Replacing credentials invalidates cached usage. See [Cursor setup](../README.md#cursor-setup) for protocol details.
 
-Cursor `usage.get` responses use `cursor_models` and `other_models` slots with `kind: "percentage"` and the shared monthly billing-cycle `reset_at` when available. A missing percentage is omitted rather than reported as zero. The `on_demand` slot has `kind: "text"` and a `text` field such as `Disabled`, `USD 1.23 / 10.00`, or `USD 1.23 spent (unlimited)`; absent data omits `text`. These pools are independent and do not correspond to session or weekly windows. Cursor does not support `resets.get`.
+Cursor `usage.get` responses put `Cursor models` in the `weekly` slot and `Other models` in the `monthly` slot (`kind: "percentage"`), each with a `scope` naming what it really is; Cursor has no `session` metric. Both use the monthly billing-cycle `reset_at` when available. On-demand spending is not reported. A missing percentage is omitted rather than reported as zero. The pools are independent and are not session or weekly windows; the slot only places them in a column. Cursor does not support `resets.get`.
 
 ### Device authentication
 
@@ -95,7 +95,7 @@ Cursor `usage.get` responses use `cursor_models` and `other_models` slots with `
 Claude accounts sign in with a pasted authorization code instead of a device code.
 
 1. Call `auth.oauth.begin` with `provider: "claude"`.
-2. Open `authorization_url`. After the user approves, claude.com shows a code in the form `code#state`.
+2. Open `verification_url`. After the user approves, claude.com shows a code in the form `code#state`.
 3. Call `auth.oauth.complete` with the same `session_id` and the pasted `code`. The service exchanges it, saves the credentials, and returns the public account.
 
 The `session_id` contains the PKCE verifier for this login, so keep it private to the calling process and discard it afterward.

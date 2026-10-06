@@ -25,10 +25,12 @@ const (
 	ansiGreen      = "\x1b[38;2;34;197;94m"
 	ansiLightGreen = "\x1b[38;2;134;239;172m"
 
-	ansiStrike        = "\x1b[9m"
-	ansiMutedDarkRed  = "\x1b[38;2;110;35;35m"
-	ansiDim           = "\x1b[2m"
-	ansiBlocked       = "\x1b[9;38;2;110;35;35m"
+	ansiStrike       = "\x1b[9m"
+	ansiMutedDarkRed = "\x1b[38;2;110;35;35m"
+	ansiDim          = "\x1b[2m"
+	ansiBlocked      = "\x1b[9;38;2;110;35;35m"
+	// ansiScoped is the violet of the ✦ scoped-limit marker (the TUI's scopedColor).
+	ansiScoped = "\x1b[1;38;2;179;146;240m"
 )
 
 const (

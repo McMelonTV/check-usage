@@ -35,6 +35,10 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 			updated := account
 			tokenRefreshed := false
 			var cache *usageCacheEntry
+			if throttled, ok := throttledUsageRow(account, previous, time.Now()); ok {
+				results <- accountResult{Index: idx, Row: throttled, Updated: updated}
+				return
+			}
 			result, fetchErr := fetchProviderUsage(context.Background(), client, account)
 			if fetchErr != nil {
 				if providerCredentialError(fetchErr) || authenticationRequired(fetchErr) {
@@ -42,22 +46,37 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 				} else {
 					row = cachedOrUnavailableUsageRow(account, previous, time.Now())
 				}
+				if !result.NextFetchAt.IsZero() {
+					// Rate limited: back off, and show the cache as a throttled
+					// row instead of a stale one while it is still recent.
+					cache = &usageCacheEntry{NextFetchAt: result.NextFetchAt.Unix()}
+					previous.NextFetchAt = cache.NextFetchAt
+					if throttled, ok := throttledUsageRow(account, previous, time.Now()); ok {
+						row = throttled
+					}
+				}
 				if result.AccountChanged {
 					updated, tokenRefreshed = result.Account, true
 				}
-				results <- accountResult{Index: idx, Row: row, Updated: updated, TokenRefreshed: tokenRefreshed}
+				results <- accountResult{Index: idx, Row: row, Updated: updated, TokenRefreshed: tokenRefreshed, Cache: cache}
 				return
 			}
 			updated, tokenRefreshed = result.Account, result.AccountChanged
 			applyProviderUsage(&row, result.Usage)
 			now := time.Now()
 			cache = &usageCacheEntry{PlanType: row.Plan, ProviderUsage: &result.Usage, RateLimit: result.RateLimit, FetchedAt: now.Unix()}
+			if !result.NextFetchAt.IsZero() {
+				cache.NextFetchAt = result.NextFetchAt.Unix()
+			}
+			if !result.PlanCheckedAt.IsZero() {
+				cache.PlanCheckedAt = result.PlanCheckedAt.Unix()
+			}
 			if result.ResetCredits != nil {
 				cache.ResetCredits, cache.ResetFetchedAt = result.ResetCredits, now.Unix()
-				row.ResetCredits = resetCreditsSummary(result.ResetCredits, now)
+				setResetCredits(&row, result.ResetCredits, now)
 			} else if row.SupportsResetCredits {
 				if previous.ResetCredits != nil {
-					row.ResetCredits = resetCreditsSummary(previous.ResetCredits, now)
+					setResetCredits(&row, previous.ResetCredits, now)
 					row.ResetsStale = true
 				} else if result.ResetError != nil {
 					row.ResetCredits = "unavailable"
@@ -123,7 +142,7 @@ func cachedUsageRows(accounts []storedAccount, cache map[string]usageCacheEntry,
 			applyProviderUsage(&row, *entry.ProviderUsage)
 			if row.SupportsResetCredits {
 				if entry.ResetCredits != nil {
-					row.ResetCredits = resetCreditsSummary(entry.ResetCredits, now)
+					setResetCredits(&row, entry.ResetCredits, now)
 				} else {
 					row.ResetCredits = "unavailable"
 				}
@@ -141,20 +160,42 @@ func cachedUsageRows(accounts []storedAccount, cache map[string]usageCacheEntry,
 	return rows, newest
 }
 
+// throttledStaleAfter is how old throttled cached usage may be before the
+// dashboard marks it stale anyway.
+const throttledStaleAfter = 30 * time.Minute
+
+// throttledUsageRow returns the cached row for an account whose provider must
+// not be asked again yet (see usageCacheEntry.NextFetchAt).
+func throttledUsageRow(account storedAccount, entry usageCacheEntry, now time.Time) (usageRow, bool) {
+	if entry.NextFetchAt <= now.Unix() || entry.ProviderUsage == nil || entry.FetchedAt <= 0 {
+		return usageRow{}, false
+	}
+	rows, _ := cachedUsageRows([]storedAccount{account}, map[string]usageCacheEntry{account.ID: entry}, now)
+	row := rows[0]
+	row.Stale = now.Sub(time.Unix(entry.FetchedAt, 0)) > throttledStaleAfter
+	return row, true
+}
+
 func applyProviderUsage(row *usageRow, usage providerUsage) {
 	row.Plan = firstNonEmpty(usage.Plan, row.Plan)
 	row.Metrics = append([]providerMetric(nil), usage.Metrics...)
 }
 
-// modelScopedMarker flags a per-model weekly limit shown in the monthly column.
-const modelScopedMarker = "✦"
+// scopedMarker flags a provider-specific limit shown in a borrowed column.
+const scopedMarker = "✦"
 
-// slotLabel is the short label for a slot, naming the model for per-model limits.
+// usageSlots are the three usage columns shared by every provider.
+var usageSlots = [3]metricSlot{sessionSlot, weeklySlot, monthlySlot}
+
+// usageColumnLabels are the headers of the usage columns.
+var usageColumnLabels = [3]string{"SESSION (~5h)", "WEEKLY", "MONTHLY"}
+
+// slotLabel is the short label for a slot, naming the scope for scoped metrics.
 func slotLabel(row usageRow, slot metricSlot) string {
-	if metric, ok := usageMetricForSlot(row, slot); ok && metric.IsModelScoped() {
-		return strings.ToUpper(metric.Model)
+	if metric, ok := usageMetricForSlot(row, slot); ok && metric.IsScoped() {
+		return strings.ToUpper(metric.Scope)
 	}
-	return usageSlotLabel(slot)
+	return strings.ToUpper(string(slot))
 }
 
 func usageMetricForSlot(row usageRow, slot metricSlot) (providerMetric, bool) {
@@ -173,22 +214,23 @@ func providerSupportsUsageSlot(providerID string, slot metricSlot) bool {
 	case providerOpenCodeGo:
 		return slot == sessionSlot || slot == weeklySlot || slot == monthlySlot
 	case providerCursor:
-		return slot == cursorModelsSlot || slot == otherModelsSlot || slot == onDemandSlot
+		return slot == weeklySlot || slot == monthlySlot
 	default:
 		return false
 	}
 }
 
 func usageSlotText(row usageRow, slot metricSlot, now time.Time) string {
-	if row.AuthRequired && slot == usageSlots(row)[0] {
+	if row.AuthRequired && slot == sessionSlot {
 		return credentialRequiredText(row)
 	}
 	if metric, ok := usageMetricForSlot(row, slot); ok {
 		if row.Loading && metric.Used == nil && metric.Text == "" {
 			return "loading…"
 		}
-		if metric.IsModelScoped() {
-			return modelScopedMarker + " " + metric.Model + " weekly: " + metricText(metric, now)
+		if text := metricText(metric, now); metric.IsScoped() && text != "-" {
+			// The scope name is shown with the reset time below the value.
+			return scopedMarker + " " + text
 		}
 		return metricText(metric, now)
 	}
@@ -196,41 +238,6 @@ func usageSlotText(row usageRow, slot metricSlot, now time.Time) string {
 		return "loading…"
 	}
 	return "-"
-}
-
-func usageSlots(row usageRow) [3]metricSlot {
-	if row.ProviderID == providerCursor {
-		return [3]metricSlot{cursorModelsSlot, otherModelsSlot, onDemandSlot}
-	}
-	return [3]metricSlot{sessionSlot, weeklySlot, monthlySlot}
-}
-
-func usageSlotLabel(slot metricSlot) string {
-	switch slot {
-	case cursorModelsSlot:
-		return "CURSOR MODELS"
-	case otherModelsSlot:
-		return "OTHER MODELS"
-	case onDemandSlot:
-		return "ON-DEMAND"
-	default:
-		return strings.ToUpper(string(slot))
-	}
-}
-
-func usageColumnLabels(rows []usageRow) [3]string {
-	var cursor, windows bool
-	for _, row := range rows {
-		cursor = cursor || row.ProviderID == providerCursor
-		windows = windows || row.ProviderID == providerCodex || row.ProviderID == providerOpenCodeGo || row.ProviderID == providerClaude
-	}
-	if cursor && windows {
-		return [3]string{"SESSION (~5h)/CURSOR", "WEEKLY/OTHER", "MONTHLY/SPEND"}
-	}
-	if cursor {
-		return [3]string{"CURSOR MODELS", "OTHER MODELS", "ON-DEMAND"}
-	}
-	return [3]string{"SESSION (~5h)", "WEEKLY", "MONTHLY"}
 }
 
 func resetSlotText(row usageRow) string {
@@ -286,13 +293,13 @@ func isSlotBlockedByLongerWindow(row usageRow, slot metricSlot) bool {
 	if !ok {
 		return false
 	}
-	if target, ok := usageMetricForSlot(row, slot); ok && target.IsModelScoped() {
-		// A per-model weekly limit is blocked only by the all-models weekly limit.
+	if target, ok := usageMetricForSlot(row, slot); ok && target.IsScoped() {
+		// A scoped limit is blocked only by a longer shared limit (the weekly window).
 		rank, _ = slotRank(sessionSlot)
 	}
 	for _, metric := range row.Metrics {
-		// Exhausting one model's limit leaves the other windows usable.
-		if metric.IsModelScoped() {
+		// Exhausting a scoped limit leaves the other windows usable.
+		if metric.IsScoped() {
 			continue
 		}
 		otherRank, ok := slotRank(metric.Slot)

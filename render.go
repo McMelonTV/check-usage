@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"math"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/McMelonTV/check-usage/codexapi"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/term"
 )
 
 func printTable(rows []usageRow) {
@@ -16,29 +19,73 @@ func printTable(rows []usageRow) {
 		fmt.Println("No accounts found.")
 		return
 	}
-	fmt.Print(renderTable(rows, time.Now()))
+	width := 0
+	if term.IsTerminal(os.Stdout.Fd()) {
+		if columns, _, err := term.GetSize(os.Stdout.Fd()); err == nil {
+			width = columns
+		}
+	}
+	fmt.Print(renderTableFitting(rows, time.Now(), width))
+}
+
+// renderTableFitting renders the table with full reset-credit expiry dates,
+// falling back to countdowns only (as the TUI does) when that is wider than
+// maxWidth. A maxWidth of zero never shortens the dates.
+func renderTableFitting(rows []usageRow, now time.Time, maxWidth int) string {
+	table := renderTableExpiry(rows, now, true)
+	if maxWidth > 0 && tableWidth(table) > maxWidth {
+		return renderTableExpiry(rows, now, false)
+	}
+	return table
+}
+
+func tableWidth(table string) int {
+	widest := 0
+	for _, line := range strings.Split(table, "\n") {
+		widest = max(widest, ansi.StringWidth(line))
+	}
+	return widest
 }
 
 // renderTable prints two lines per account, like the TUI with compact mode
 // off: usage percentages on the first line and muted reset times below.
 func renderTable(rows []usageRow, now time.Time) string {
-	labels := usageColumnLabels(rows)
+	return renderTableExpiry(rows, now, true)
+}
+
+// renderTableExpiry renders the table; expiryDates adds the date to each
+// reset-credit expiry countdown on the second line.
+func renderTableExpiry(rows []usageRow, now time.Time, expiryDates bool) string {
+	labels := usageColumnLabels
+	for index, slot := range usageSlots {
+		for _, row := range rows {
+			if metric, ok := usageMetricForSlot(row, slot); ok && metric.IsScoped() {
+				labels[index] += " " + scopedMarker
+				break
+			}
+		}
+	}
 	header := []tableCell{plainCell("ACCOUNT"), plainCell("PROVIDER"), plainCell("PLAN"), plainCell(labels[0]), plainCell(labels[1]), plainCell(labels[2]), plainCell("RESETS")}
 	for i := range header {
-		header[i].style = headerText
+		header[i].style = func(s string) string { return colorizeScopedMarker(s, headerText) }
 	}
 	lines := [][]tableCell{header}
 	for _, row := range rows {
-		slots := usageSlots(row)
+		slots := usageSlots
 		main := []tableCell{plainCell(row.Name), plainCell(row.Provider), plainCell(row.Plan)}
-		sub := []tableCell{dimCell(row.Email), plainCell(""), plainCell("")}
+		sub := []tableCell{plainCell(""), plainCell(""), plainCell("")}
 		for _, slot := range slots {
 			main = append(main, usageSlotCell(row, slot))
 			sub = append(sub, dimCell(resetSubtitleText(row, slot, now)))
 		}
-		count, expiry, _ := strings.Cut(resetSlotText(row), ",")
+		count, _, _ := strings.Cut(resetSlotText(row), ",")
 		main = append(main, tableCell{text: count, style: colorizeResetCreditsSummary})
-		sub = append(sub, dimCell(strings.TrimSpace(expiry)))
+		// The earliest expiry sits under the count, like reset times under usage.
+		expiry := resetCountdownText(row.ResetCreditsExpireAt, now)
+		if expiryDates && row.SupportsResetCredits {
+			expiry = creditExpirySubtitle(row, now, math.MaxInt)
+		}
+		sub = append(sub, dimCell(expiry))
 		lines = append(lines, main, sub)
 	}
 	return formatTableCells(lines)
@@ -61,14 +108,42 @@ func dimCell(text string) tableCell {
 func usageSlotCell(row usageRow, slot metricSlot) tableCell {
 	metric, ok := usageMetricForSlot(row, slot)
 	if !ok || metric.Kind != percentageMetric || metric.Used == nil {
-		return plainCell(usageSlotText(row, slot, time.Time{}))
+		return tableCell{text: usageSlotText(row, slot, time.Time{}), style: func(s string) string { return colorizeScopedMarker(s, nil) }}
 	}
 	used := percentValue(*metric.Used)
 	text := fmt.Sprintf("%.0f%% used / %.0f%% left", used, 100-used)
-	if isSlotBlockedByLongerWindow(row, slot) {
-		return tableCell{text: text, style: func(s string) string { return colorizeBlockedUsage(s, metric.Used) }}
+	if metric.IsScoped() {
+		// The scope name is on the reset line below.
+		text = scopedMarker + " " + text
 	}
-	return tableCell{text: text, style: func(s string) string { return colorizeUsage(s, metric.Used) }}
+	if isSlotBlockedByLongerWindow(row, slot) {
+		return tableCell{text: text, style: func(s string) string {
+			return colorizeScopedMarker(s, func(rest string) string { return colorizeBlockedUsage(rest, metric.Used) })
+		}}
+	}
+	return tableCell{text: text, style: func(s string) string {
+		return colorizeScopedMarker(s, func(rest string) string { return colorizeUsage(rest, metric.Used) })
+	}}
+}
+
+// colorizeScopedMarker paints any ✦ marker in s violet and the remaining text
+// with style (unstyled when style is nil), so the marker never takes on the
+// usage or header color.
+func colorizeScopedMarker(s string, style func(string) string) string {
+	if style == nil {
+		style = func(text string) string { return text }
+	}
+	parts := strings.Split(s, scopedMarker)
+	var out strings.Builder
+	for index, part := range parts {
+		if index > 0 {
+			out.WriteString(ansiScoped + scopedMarker + ansiReset)
+		}
+		if part != "" {
+			out.WriteString(style(part))
+		}
+	}
+	return out.String()
 }
 
 func formatTableCells(lines [][]tableCell) string {
@@ -182,6 +257,20 @@ func resetCreditsSummary(c *resetCreditsPayload, now time.Time) string {
 	}
 	unix := expiresAt.Unix()
 	return fmt.Sprintf("%s, exp. %s · %s", summary, resetCountdownText(&unix, now), resetDateText(&unix, now))
+}
+
+// setResetCredits fills the row's reset-credit summary and earliest expiry.
+func setResetCredits(row *usageRow, credits *resetCreditsPayload, now time.Time) {
+	row.ResetCredits, row.ResetCreditsExpireAt = resetCreditsSummary(credits, now), nil
+	if credits == nil {
+		return
+	}
+	if next, ok := earliestExpiringAvailableResetCredit(credits.Credits); ok {
+		if expiresAt, ok := parseResetCreditTime(next.ExpiresAt); ok {
+			unix := expiresAt.Unix()
+			row.ResetCreditsExpireAt = &unix
+		}
+	}
 }
 
 func earliestExpiringAvailableResetCredit(credits []resetCreditDetail) (resetCreditDetail, bool) {

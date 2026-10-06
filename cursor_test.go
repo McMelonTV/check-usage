@@ -57,8 +57,6 @@ func TestCursorUsageFetchAndRendering(t *testing.T) {
 			body = `{"accessToken":"access-secret"}`
 		case "/aiserver.v1.DashboardService/GetCurrentPeriodUsage":
 			body = `{"billingCycleEnd":"1791590400000","planUsage":{"autoPercentUsed":0,"apiPercentUsed":100}}`
-		case "/aiserver.v1.DashboardService/GetHardLimit":
-			body = `{"hardLimit":0}`
 		case "/aiserver.v1.DashboardService/GetPlanInfo":
 			body = `{"planInfo":{"planName":"pro"}}`
 		}
@@ -71,38 +69,51 @@ func TestCursorUsageFetchAndRendering(t *testing.T) {
 	}
 	row := baseUsageRow(account)
 	applyProviderUsage(&row, result.Usage)
-	if isSlotBlockedByLongerWindow(row, cursorModelsSlot) || isSlotBlockedByLongerWindow(row, otherModelsSlot) {
+	if isSlotBlockedByLongerWindow(row, weeklySlot) || isSlotBlockedByLongerWindow(row, monthlySlot) {
 		t.Fatal("one Cursor pool blocked the other")
 	}
-	if providerSupportsUsageSlot(providerCursor, sessionSlot) {
-		t.Fatal("Cursor was labeled as a session window")
+	for _, metric := range row.Metrics {
+		if !metric.IsScoped() {
+			t.Fatalf("Cursor metric %#v is not scoped, so it would read as a session/weekly/monthly window", metric)
+		}
 	}
 	now := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
 	plain := ansi.Strip(renderTable([]usageRow{row}, now))
-	for _, want := range []string{"CURSOR MODELS", "OTHER MODELS", "ON-DEMAND", "0% used / 100% left", "100% used / 0% left", "Disabled", "Oct 10"} {
+	for _, want := range []string{"SESSION (~5h)", "✦ 0% used / 100% left", "✦ 100% used / 0% left", "Cursor models · ", "Other models · "} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("table missing %q:\n%s", want, plain)
 		}
 	}
 	model := tuiModel{settings: defaultAppSettings(), rows: []usageRow{row}}
-	for _, view := range []string{model.renderWideList(120, 24), model.renderCompactList(80, 24)} {
-		for _, want := range []string{"CURSOR MODELS", "OTHER MODELS", "ON-DEMAND", "Disabled"} {
-			if !strings.Contains(ansi.Strip(view), want) {
-				t.Fatalf("dashboard missing %q:\n%s", want, view)
-			}
+	wide, compact := ansi.Strip(model.renderWideList(120, 24)), ansi.Strip(model.renderCompactList(80, 24))
+	if strings.Contains(wide, "SESSION (~5h) ✦") || strings.Contains(plain, "Disabled") || strings.Contains(wide, "USD") {
+		t.Fatalf("Cursor still uses the session column or shows spend:\n%s", wide)
+	}
+	if usageSlotText(row, sessionSlot, now) != "-" || !strings.Contains(slotLabel(row, weeklySlot), "CURSOR") || !strings.Contains(slotLabel(row, monthlySlot), "OTHER") {
+		t.Fatalf("Cursor pools are in the wrong columns: %#v", row.Metrics)
+	}
+	for _, want := range []string{"WEEKLY ✦", "MONTHLY ✦", "Cursor models · ", "Other models · "} {
+		if !strings.Contains(wide, want) {
+			t.Fatalf("dashboard missing %q:\n%s", want, wide)
 		}
 	}
-	mixed := ansi.Strip(renderTable([]usageRow{baseUsageRow(storedAccount{Provider: providerCodex}), row}, now))
-	if !strings.Contains(mixed, "SESSION (~5h)/CURSOR") || !strings.Contains(mixed, "WEEKLY/OTHER") || !strings.Contains(mixed, "Disabled") {
-		t.Fatalf("mixed providers = %s", mixed)
+	for _, want := range []string{"CURSOR MODELS", "OTHER MODELS"} {
+		if !strings.Contains(compact, want) {
+			t.Fatalf("compact dashboard missing %q:\n%s", want, compact)
+		}
+	}
+	for _, text := range []string{wide, ansi.Strip(renderTable([]usageRow{baseUsageRow(storedAccount{Provider: providerCodex}), row}, now))} {
+		if strings.Contains(text, "/CURSOR") || strings.Contains(text, "/OTHER") || strings.Contains(text, "/SPEND") {
+			t.Fatalf("combined column names are back:\n%s", text)
+		}
 	}
 	loading := baseUsageRow(account)
 	loading.Loading = true
-	if usageSlotText(loading, onDemandSlot, now) != "loading…" {
+	if usageSlotText(loading, weeklySlot, now) != "loading…" || usageSlotText(loading, monthlySlot, now) != "loading…" || usageSlotText(loading, sessionSlot, now) != "-" {
 		t.Fatal("missing loading state")
 	}
 	auth := authenticationRequiredUsageRow(account)
-	if !strings.Contains(usageSlotText(auth, cursorModelsSlot, now), "Sign in") {
+	if !strings.Contains(usageSlotText(auth, sessionSlot, now), "Sign in") {
 		t.Fatal("missing sign-in recovery message")
 	}
 }
@@ -114,8 +125,9 @@ func TestCursorTUIUsesBrowserLoginAndCancels(t *testing.T) {
 	if command == nil || !model.authLoading || model.authSelectingProvider || model.authCursorSession == nil || model.authProviderUsesAPIKey() {
 		t.Fatal("Cursor did not start browser login")
 	}
-	view := ansi.Strip(model.renderAuthentication(120, 24))
-	if !strings.Contains(view, "cursor.com/loginDeepControl") || !strings.Contains(view, "Esc cancels") || strings.Contains(view, model.authCursorSession.Verifier) {
+	model.width, model.height = 120, 24
+	view := ansi.Strip(model.View())
+	if !strings.Contains(view, "cursor.com/loginDeepControl") || !strings.Contains(view, "esc cancel") || strings.Contains(view, model.authCursorSession.Verifier) {
 		t.Fatalf("incorrect browser login view: %s", view)
 	}
 	version := model.authVersion

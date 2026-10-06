@@ -789,7 +789,7 @@ func TestTUIAuthenticationRendersDeviceCodeAndCancels(t *testing.T) {
 		t.Fatalf("authorization code state = %#v", m)
 	}
 	view := ansi.Strip(m.View())
-	for _, want := range []string{"Add account", deviceAuthVerificationURL, "ABCD-EFGH", "Waiting for approval", "Esc cancels"} {
+	for _, want := range []string{"Add account", deviceAuthVerificationURL, "ABCD-EFGH", "Waiting for approval", "ctrl+y copy link   esc cancel"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("authentication view missing %q:\n%s", want, view)
 		}
@@ -972,11 +972,11 @@ func TestTUIMarksModelScopedLimitInMonthlyColumn(t *testing.T) {
 	used := 40.0
 	reset := time.Now().Add(48 * time.Hour).Unix()
 	row := usageRow{Name: "Claude", ProviderID: providerClaude, Provider: "Claude", Metrics: []providerMetric{
-		{Kind: percentageMetric, Slot: monthlySlot, Label: "FABLE", Model: "Fable", Used: &used, ResetAt: &reset},
+		{Kind: percentageMetric, Slot: monthlySlot, Label: "FABLE", Scope: "Fable weekly", Used: &used, ResetAt: &reset},
 	}}
 	m := tuiModel{width: 120, height: 24, initialized: true, rows: []usageRow{row}, settings: defaultAppSettings()}
 	view := m.View()
-	if !strings.Contains(view, "MONTHLY ✦") || !strings.Contains(view, "✦ ━") || !strings.Contains(view, "Fable · ") {
+	if !strings.Contains(view, "MONTHLY ✦") || !strings.Contains(view, "✦ ━") || !strings.Contains(view, "Fable weekly · ") {
 		t.Fatalf("view = %s", view)
 	}
 }
@@ -1018,5 +1018,75 @@ func TestTUICodeLoginCopiesLinkAndKeepsLayoutWidth(t *testing.T) {
 		if lipgloss.Width(line) > m.width {
 			t.Fatalf("line wider than terminal (%d): %q", lipgloss.Width(line), line)
 		}
+	}
+}
+
+func TestTUIBrowserFlowsShareLinkPresentation(t *testing.T) {
+	codex := tuiModel{width: 110, height: 24, authActive: true, authLoading: true, authProviderID: providerCodex, authVersion: 1}
+	updated, _ := codex.Update(authCodeLoadedMsg{code: &deviceUserCodeResponse{UserCode: "ABCD-EFGH"}, version: 1})
+	codex = updated.(tuiModel)
+	start := func(id string) tuiModel {
+		m := tuiModel{width: 110, height: 24, authActive: true, authSelectingProvider: true, authProviderID: id}
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		return updated.(tuiModel)
+	}
+	for name, m := range map[string]tuiModel{"codex": codex, "claude": start(providerClaude), "cursor": start(providerCursor)} {
+		if m.authLink == "" {
+			t.Fatalf("%s: no sign-in link", name)
+		}
+		view := m.View()
+		plain := ansi.Strip(view)
+		if !strings.Contains(view, "\x1b]8;;"+m.authLink) || !strings.Contains(plain, "in the browser window that opened") ||
+			!strings.Contains(plain, "click the link below") || !strings.Contains(plain, "ctrl+y copy link") {
+			t.Fatalf("%s: inconsistent link presentation:\n%s", name, plain)
+		}
+		if _, command := m.Update(tea.KeyMsg{Type: tea.KeyCtrlY}); command == nil {
+			t.Fatalf("%s: ctrl+y did not copy the link", name)
+		}
+	}
+}
+
+func TestTUIAuthDialogsAnimateFromTheStart(t *testing.T) {
+	if _, command := (tuiModel{width: 102, height: 24}).startAccountAdd(); command == nil {
+		t.Fatal("add account did not start the spinner")
+	}
+	account := storedAccount{ID: "one", Name: "One", Provider: providerCodex}
+	if _, command := (tuiModel{width: 102, height: 24, accounts: []storedAccount{account}}).startAccountReauthentication(account); command == nil {
+		t.Fatal("reauthentication did not start the spinner")
+	}
+	m := tuiModel{authActive: true}
+	updated, command := m.Update(spinnerTickMsg{})
+	if step := updated.(tuiModel).spinnerStep; command == nil || spinnerStepAt(time.Now())-step > 1 || step <= 0 {
+		t.Fatal("spinner frame is not derived from the clock")
+	}
+}
+
+func TestTUIShowsEarliestResetCreditExpiry(t *testing.T) {
+	exp := time.Now().Add(26*time.Hour + 5*time.Minute).Unix()
+	row := usageRow{Name: "Codex", ProviderID: providerCodex, Provider: "Codex", SupportsResetCredits: true, ResetCredits: "2, exp. stale text", ResetCreditsExpireAt: &exp}
+	for _, compact := range []bool{false, true} {
+		settings := defaultAppSettings()
+		settings.CompactMode = compact
+		m := tuiModel{width: 120, height: 24, rows: []usageRow{row}, settings: settings}
+		lines := strings.Split(ansi.Strip(m.renderWideList(tuiContentWidth(120), 24)), "\n")
+		var countLine, nextLine string
+		for index, line := range lines {
+			if strings.Contains(line, "Codex") {
+				countLine, nextLine = line, lines[min(index+1, len(lines)-1)]
+				break
+			}
+		}
+		if compact && !strings.HasSuffix(strings.TrimSpace(countLine), "2 1d2h") {
+			t.Fatalf("compact row = %q", countLine)
+		}
+		if !compact && (!strings.HasSuffix(strings.TrimSpace(nextLine), "1d2h") || ansi.StringWidth(nextLine[:strings.Index(nextLine, "1d2h")]) != ansi.StringWidth(countLine[:strings.LastIndex(countLine, "2")])) {
+			t.Fatalf("expiry not under the count:\n%q\n%q", countLine, nextLine)
+		}
+		if strings.Contains(strings.Join(lines, "\n"), "stale text") {
+			t.Fatal("rendered the fetch-time summary instead of a live countdown")
+		}
+	}
+	if got := creditExpirySubtitle(row, time.Now(), 40); !strings.HasPrefix(got, "1d2h · ") {
+		t.Fatalf("wide subtitle = %q", got)
 	}
 }

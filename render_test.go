@@ -150,8 +150,9 @@ func TestRenderTableUsesFixedUsageColumns(t *testing.T) {
 	used := 25.0
 	now := time.Now()
 	reset := now.Add(90*time.Minute + 30*time.Second).Unix()
+	expiry := now.Add(26*time.Hour + 30*time.Second).Unix()
 	rows := []usageRow{
-		{Name: "Codex", ProviderID: providerCodex, Provider: "Codex", Email: "me@example.com", Plan: "plus", Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used, ResetAt: &reset}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "2, exp. 1d2h · Jul 11 14:00", SupportsResetCredits: true},
+		{Name: "Codex", ProviderID: providerCodex, Provider: "Codex", Email: "me@example.com", Plan: "plus", Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION", Used: &used, ResetAt: &reset}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY", Used: &used}}, ResetCredits: "2, exp. 1d2h · Jul 11 14:00", ResetCreditsExpireAt: &expiry, SupportsResetCredits: true},
 		{Name: "DeepSeek", ProviderID: providerDeepSeek, Provider: "DeepSeek", Email: "-", Plan: "USD 12.50"},
 	}
 	output := ansi.Strip(renderTable(rows, now))
@@ -165,7 +166,7 @@ func TestRenderTableUsesFixedUsageColumns(t *testing.T) {
 	if got := strings.Join(strings.Fields(lines[1]), " "); got != "Codex Codex plus 25% used / 75% left 25% used / 75% left - 2" {
 		t.Fatalf("usage line = %q", got)
 	}
-	if got := strings.Join(strings.Fields(lines[2]), " "); got != "me@example.com 1h30m · "+resetDateText(&reset, now)+" exp. 1d2h · Jul 11 14:00" {
+	if got := strings.Join(strings.Fields(lines[2]), " "); got != "1h30m · "+resetDateText(&reset, now)+" 1d2h · "+resetDateText(&expiry, now) || strings.Contains(output, "@") || strings.Contains(output, "exp.") {
 		t.Fatalf("subtitle line = %q", got)
 	}
 	if !strings.Contains(lines[3], "USD 12.50  -") {
@@ -176,5 +177,34 @@ func TestRenderTableUsesFixedUsageColumns(t *testing.T) {
 	}
 	if strings.Count(renderTable(rows[:1], now), ansiGreen+"25%") != 2 {
 		t.Fatalf("identical usage percentages were not colored independently")
+	}
+}
+
+func TestRenderTableColorsScopedMarkerSeparately(t *testing.T) {
+	used := 81.0
+	rows := []usageRow{{Name: "Claude", ProviderID: providerClaude, Provider: "Claude", Metrics: []providerMetric{
+		{Kind: percentageMetric, Slot: monthlySlot, Scope: "Fable weekly", Used: &used},
+	}}}
+	output := renderTable(rows, time.Now())
+	marker := ansiScoped + scopedMarker + ansiReset
+	if strings.Count(output, marker) != 2 {
+		t.Fatalf("header and cell markers are not violet:\n%q", output)
+	}
+	if strings.Contains(output, ansiHeader+"MONTHLY "+scopedMarker) || !strings.Contains(output, " "+colorizeUsage("81% used / 19% left", &used)) {
+		t.Fatalf("marker took the header or usage color:\n%q", output)
+	}
+}
+
+func TestRenderTableDropsExpiryDateToFitTerminal(t *testing.T) {
+	now := time.Now()
+	expiry := now.Add(26*time.Hour + 30*time.Second).Unix()
+	rows := []usageRow{{Name: "Codex", ProviderID: providerCodex, Provider: "Codex", ResetCredits: "2", ResetCreditsExpireAt: &expiry, SupportsResetCredits: true}}
+	full := renderTableFitting(rows, now, 0)
+	if !strings.Contains(ansi.Strip(full), "1d2h · "+resetDateText(&expiry, now)) {
+		t.Fatalf("full table = %s", ansi.Strip(full))
+	}
+	narrow := renderTableFitting(rows, now, tableWidth(full)-1)
+	if plain := ansi.Strip(narrow); !strings.Contains(plain, "1d2h") || strings.Contains(plain, resetDateText(&expiry, now)) || tableWidth(narrow) >= tableWidth(full) {
+		t.Fatalf("narrow table = %s", plain)
 	}
 }

@@ -15,11 +15,23 @@ type ClaudeResult struct {
 	Usage              Usage
 	Credentials        claudeapi.Credentials
 	CredentialsChanged bool
+	// PlanChecked reports that the profile was read, so Usage.Plan is current.
+	PlanChecked bool
+}
+
+// ClaudePlanCheckInterval is how often the plan is re-read from the profile
+// to notice upgrades or downgrades without spending the usage rate limit.
+const ClaudePlanCheckInterval = time.Hour
+
+// ClaudePlanDue reports whether the plan should be re-read.
+func ClaudePlanDue(plan string, lastChecked, now time.Time) bool {
+	return plan == "" || now.Sub(lastChecked) >= ClaudePlanCheckInterval
 }
 
 // FetchClaudeUsage refreshes credentials when needed, then reads the session
-// and weekly windows. The plan comes from the profile and is best-effort.
-func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials claudeapi.Credentials, userAgent string, now time.Time) (ClaudeResult, error) {
+// and weekly windows. The plan comes from the profile, which is requested only
+// when fetchPlan is set because every request counts against the rate limit.
+func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials claudeapi.Credentials, userAgent string, now time.Time, fetchPlan bool) (ClaudeResult, error) {
 	credentials, changed, err := claudeapi.RefreshCredentials(ctx, client, credentials, now)
 	if err != nil {
 		return ClaudeResult{}, err
@@ -29,7 +41,9 @@ func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials clau
 	profileDone := make(chan struct{})
 	go func() {
 		defer close(profileDone)
-		profile, _ = claudeapi.FetchProfile(ctx, client, credentials.AccessToken, userAgent)
+		if fetchPlan {
+			profile, _ = claudeapi.FetchProfile(ctx, client, credentials.AccessToken, userAgent)
+		}
 	}()
 	payload, err := claudeapi.FetchUsage(ctx, client, credentials.AccessToken, userAgent)
 	<-profileDone
@@ -49,14 +63,14 @@ func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials clau
 	}
 	result.Usage = ClaudeUsage(payload)
 	if profile != nil {
-		result.Usage.Plan = profile.PlanName()
+		result.Usage.Plan, result.PlanChecked = profile.PlanName(), true
 	}
 	return result, nil
 }
 
 // ClaudeUsage maps the Claude usage payload to session and weekly metrics.
 // A per-model weekly limit (e.g. Fable), when present, is placed in the
-// otherwise unused monthly slot and marked with Model.
+// otherwise unused monthly slot and marked with Scope.
 func ClaudeUsage(payload *claudeapi.UsagePayload) Usage {
 	usage := Usage{Metrics: []Metric{
 		claudeMetric(SessionSlot, "SESSION", payload.Session()),
@@ -64,7 +78,7 @@ func ClaudeUsage(payload *claudeapi.UsagePayload) Usage {
 	}}
 	if model, window := payload.ModelWeekly(); window != nil {
 		metric := claudeMetric(MonthlySlot, strings.ToUpper(model), window)
-		metric.Model = model
+		metric.Scope = model + " weekly"
 		usage.Metrics = append(usage.Metrics, metric)
 	}
 	return usage

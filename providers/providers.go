@@ -54,12 +54,9 @@ const (
 	Percentage MetricKind = "percentage"
 	Text       MetricKind = "text"
 
-	SessionSlot      MetricSlot = "session"
-	WeeklySlot       MetricSlot = "weekly"
-	MonthlySlot      MetricSlot = "monthly"
-	CursorModelsSlot MetricSlot = "cursor_models"
-	OtherModelsSlot  MetricSlot = "other_models"
-	OnDemandSlot     MetricSlot = "on_demand"
+	SessionSlot MetricSlot = "session"
+	WeeklySlot  MetricSlot = "weekly"
+	MonthlySlot MetricSlot = "monthly"
 )
 
 type Metric struct {
@@ -69,14 +66,15 @@ type Metric struct {
 	Used    *float64   `json:"used_percent,omitempty"`
 	ResetAt *int64     `json:"reset_at,omitempty"`
 	Text    string     `json:"text,omitempty"`
-	// Model is set for a per-model weekly limit. Such a metric borrows the
-	// monthly slot for display and is not a monthly window.
-	Model string `json:"model,omitempty"`
+	// Scope names a provider-specific limit, such as Claude's Fable weekly
+	// limit or Cursor's model pools. A scoped metric borrows its slot for
+	// display only: it is not that slot's session, weekly, or monthly window.
+	Scope string `json:"scope,omitempty"`
 }
 
-// IsModelScoped reports whether the metric is a per-model limit.
-func (metric Metric) IsModelScoped() bool {
-	return metric.Model != ""
+// IsScoped reports whether the metric is a provider-specific limit placed in a borrowed slot.
+func (metric Metric) IsScoped() bool {
+	return metric.Scope != ""
 }
 
 type Usage struct {

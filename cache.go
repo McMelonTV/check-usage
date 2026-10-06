@@ -78,6 +78,12 @@ func mergeAccountUsageCache(accountID string, update usageCacheEntry) error {
 	if update.ProviderUsage != nil {
 		current.ProviderUsage = update.ProviderUsage
 	}
+	if update.NextFetchAt > 0 {
+		current.NextFetchAt = update.NextFetchAt
+	}
+	if update.PlanCheckedAt > 0 {
+		current.PlanCheckedAt = update.PlanCheckedAt
+	}
 	if update.ResetCredits != nil && update.ResetFetchedAt >= current.ResetFetchedAt {
 		current.ResetCredits = update.ResetCredits
 		current.ResetFetchedAt = update.ResetFetchedAt

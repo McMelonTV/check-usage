@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -38,6 +39,25 @@ type HTTPError struct {
 	StatusCode int
 	Status     string
 	Body       string
+	// RetryAfter is the server's Retry-After delay, when it sent one.
+	RetryAfter time.Duration
+}
+
+// The usage endpoint is tightly rate limited. MinRefreshInterval matches how
+// often Claude Code and similar tools poll it, and RateLimitBackoff is how
+// long to wait after a 429 that carries no Retry-After header.
+const (
+	MinRefreshInterval = 5 * time.Minute
+	RateLimitBackoff   = 5 * time.Minute
+)
+
+// RateLimitDelay reports whether err is a 429 and how long to wait before retrying.
+func RateLimitDelay(err error) (time.Duration, bool) {
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusTooManyRequests {
+		return 0, false
+	}
+	return max(httpErr.RetryAfter, RateLimitBackoff), true
 }
 
 func (e *HTTPError) Error() string {
@@ -391,7 +411,11 @@ func doJSON(client *http.Client, req *http.Request, operation string, out any) e
 		if len(text) > 300 {
 			text = text[:300] + "..."
 		}
-		return &HTTPError{Operation: operation, StatusCode: resp.StatusCode, Status: resp.Status, Body: text}
+		httpErr := &HTTPError{Operation: operation, StatusCode: resp.StatusCode, Status: resp.Status, Body: text}
+		if seconds, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && seconds > 0 {
+			httpErr.RetryAfter = time.Duration(seconds) * time.Second
+		}
+		return httpErr
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("decode %s response: %w", operation, err)

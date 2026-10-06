@@ -98,30 +98,17 @@ type PlanUsage struct {
 	AutoPercentUsed *float64 `json:"autoPercentUsed"`
 	APIPercentUsed  *float64 `json:"apiPercentUsed"`
 }
-type SpendLimitUsage struct {
-	IndividualUsed  int64  `json:"individualUsed"`  // cents
-	IndividualLimit *int64 `json:"individualLimit"` // cents
-	PooledLimit     *int64 `json:"pooledLimit"`
-	LimitType       string `json:"limitType"`
-}
 type CurrentPeriodUsage struct {
-	BillingCycleEnd Millis           `json:"billingCycleEnd"`
-	PlanUsage       *PlanUsage       `json:"planUsage"`
-	SpendLimitUsage *SpendLimitUsage `json:"spendLimitUsage"`
-}
-type HardLimit struct {
-	HardLimit              int64 `json:"hardLimit"` // dollars, unlike spendLimitUsage
-	NoUsageBasedAllowed    bool  `json:"noUsageBasedAllowed"`
-	DisabledByOrganization bool  `json:"onDemandSpendDisabledByOrganization"`
+	BillingCycleEnd Millis     `json:"billingCycleEnd"`
+	PlanUsage       *PlanUsage `json:"planUsage"`
 }
 type PlanInfo struct {
 	PlanName        string `json:"planName"`
 	BillingCycleEnd Millis `json:"billingCycleEnd"`
 }
 type UsageData struct {
-	Current   CurrentPeriodUsage
-	HardLimit *HardLimit
-	PlanInfo  *PlanInfo
+	Current  CurrentPeriodUsage
+	PlanInfo *PlanInfo
 }
 
 func FetchUsage(ctx context.Context, client *http.Client, token string) (UsageData, error) {
@@ -132,11 +119,7 @@ func FetchUsage(ctx context.Context, client *http.Client, token string) (UsageDa
 	if result.Current.PlanUsage == nil {
 		return result, fmt.Errorf("Cursor account does not expose individual model-pool quotas")
 	}
-	// These metadata requests are optional in the CLI too.
-	var policy HardLimit
-	if err := rpc(ctx, client, token, "GetHardLimit", struct{}{}, &policy); err == nil {
-		result.HardLimit = &policy
-	}
+	// The plan name is optional metadata, as in the Cursor CLI.
 	var plan struct {
 		PlanInfo *PlanInfo `json:"planInfo"`
 	}

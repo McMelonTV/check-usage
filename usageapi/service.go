@@ -219,7 +219,7 @@ func (service *Service) BeginOAuthAuth(provider string) (OAuthSession, error) {
 	if err != nil {
 		return OAuthSession{}, err
 	}
-	return OAuthSession{Provider: providerClaude, SessionID: session.SessionID(), AuthorizationURL: session.URL}, nil
+	return OAuthSession{Provider: providerClaude, SessionID: session.SessionID(), VerificationURL: session.URL}, nil
 }
 
 // CompleteOAuthAuth exchanges the pasted code and persists the account.
@@ -547,22 +547,34 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 		}
 		return UsageResult{Account: account.public(), Metrics: entry.ProviderUsage.Metrics, Cached: true}, true
 	}
-	if !refresh {
+	now := service.now()
+	// The usage endpoint is rate limited: within the throttle window (shared
+	// with the dashboard through the cache) serve the cache instead.
+	if !refresh || entry.NextFetchAt > now.Unix() {
 		if result, ok := cachedResult(); ok {
 			return result, false, nil
 		}
-		return UsageResult{}, false, fmt.Errorf("no cached usage for account %q", account.Name)
+		if !refresh {
+			return UsageResult{}, false, fmt.Errorf("no cached usage for account %q", account.Name)
+		}
 	}
 	credentials := claudeapi.Credentials{AccessToken: stringValue(account.AuthData.AccessToken), RefreshToken: stringValue(account.AuthData.RefreshToken)}
 	if account.AuthData.ExpiresAt != nil {
 		credentials.ExpiresAt = *account.AuthData.ExpiresAt
 	}
-	fetched, err := providers.FetchClaudeUsage(ctx, service.client, credentials, service.userAgent, service.now())
+	fetchPlan := providers.ClaudePlanDue(stringValue(account.PlanType), time.Unix(entry.PlanCheckedAt, 0), now)
+	fetched, err := providers.FetchClaudeUsage(ctx, service.client, credentials, service.userAgent, now, fetchPlan)
 	changed := fetched.CredentialsChanged
 	if changed {
 		setClaudeCredentials(account, fetched.Credentials)
 	}
 	if err != nil {
+		if delay, limited := claudeapi.RateLimitDelay(err); limited {
+			entry.NextFetchAt = now.Add(delay).Unix()
+			if saveErr := service.saveCache(account.ID, entry); saveErr != nil {
+				return UsageResult{}, changed, saveErr
+			}
+		}
 		if result, ok := cachedResult(); ok {
 			result.Error = err.Error()
 			return result, changed, nil
@@ -570,7 +582,12 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 		return UsageResult{}, changed, err
 	}
 	usage := fetched.Usage
-	entry.PlanType, entry.ProviderUsage, entry.FetchedAt = usage.Plan, &usage, service.now().Unix()
+	usage.Plan = firstNonEmpty(usage.Plan, stringValue(account.PlanType))
+	entry.PlanType, entry.ProviderUsage, entry.FetchedAt = usage.Plan, &usage, now.Unix()
+	entry.NextFetchAt = now.Add(claudeapi.MinRefreshInterval).Unix()
+	if fetched.PlanChecked {
+		entry.PlanCheckedAt = now.Unix()
+	}
 	if err := service.saveCache(account.ID, entry); err != nil {
 		return UsageResult{}, changed, err
 	}
@@ -712,4 +729,13 @@ func filterCredits(payload *codexapi.ResetCreditsPayload, includeUnavailable boo
 		}
 	}
 	return &filtered
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

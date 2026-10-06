@@ -200,7 +200,7 @@ func TestCollectUsageRowsDoesNotShowCachedQuotaWhenAuthenticationExpires(t *test
 
 func TestModelScopedLimitBlocking(t *testing.T) {
 	full, half := 100.0, 50.0
-	fable := providerMetric{Kind: percentageMetric, Slot: monthlySlot, Label: "FABLE", Model: "Fable", Used: &full}
+	fable := providerMetric{Kind: percentageMetric, Slot: monthlySlot, Label: "FABLE", Scope: "Fable weekly", Used: &full}
 	row := usageRow{Metrics: []providerMetric{
 		{Kind: percentageMetric, Slot: sessionSlot, Used: &half},
 		{Kind: percentageMetric, Slot: weeklySlot, Used: &half},
@@ -213,7 +213,42 @@ func TestModelScopedLimitBlocking(t *testing.T) {
 	if !isSlotBlockedByLongerWindow(row, monthlySlot) {
 		t.Fatal("exhausted weekly limit did not block the model limit")
 	}
-	if slotLabel(row, monthlySlot) != "FABLE" || !strings.Contains(usageSlotText(row, monthlySlot, time.Now()), "✦ Fable weekly: 100% used") {
+	if slotLabel(row, monthlySlot) != "FABLE WEEKLY" || !strings.HasPrefix(usageSlotText(row, monthlySlot, time.Now()), "✦ 100% used") {
 		t.Fatalf("label = %q, text = %q", slotLabel(row, monthlySlot), usageSlotText(row, monthlySlot, time.Now()))
+	}
+}
+
+func TestThrottledClaudeRowUsesRecentCacheWithoutStale(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	used := 38.0
+	account := storedAccount{ID: "c", Name: "Claude", Provider: providerClaude}
+	entry := usageCacheEntry{FetchedAt: now.Add(-2 * time.Minute).Unix(), NextFetchAt: now.Add(3 * time.Minute).Unix(),
+		ProviderUsage: &providerUsage{Metrics: []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Used: &used}}}}
+	row, ok := throttledUsageRow(account, entry, now)
+	if !ok || row.Stale || row.Loading || *row.Metrics[0].Used != 38 {
+		t.Fatalf("recent throttled row = %#v, ok = %v", row, ok)
+	}
+	entry.FetchedAt = now.Add(-time.Hour).Unix()
+	if row, ok := throttledUsageRow(account, entry, now); !ok || !row.Stale {
+		t.Fatalf("old throttled row = %#v, ok = %v", row, ok)
+	}
+	entry.NextFetchAt = now.Add(-time.Second).Unix()
+	if _, ok := throttledUsageRow(account, entry, now); ok {
+		t.Fatal("throttle window over but the cache was still used")
+	}
+}
+
+func TestClaudeRateLimitSetsBackoff(t *testing.T) {
+	client := &http.Client{Transport: usageRoundTripper(func(request *http.Request) (*http.Response, error) {
+		header := make(http.Header)
+		header.Set("Retry-After", "900")
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Status: "429 Too Many Requests", Header: header, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})}
+	expires := time.Now().Add(time.Hour).Unix()
+	plan := "Pro"
+	account := storedAccount{Provider: providerClaude, PlanType: &plan, AuthData: authData{AccessToken: strPtr("a"), RefreshToken: strPtr("r"), ExpiresAt: &expires}}
+	result, err := fetchProviderUsage(t.Context(), client, account)
+	if err == nil || authenticationRequired(err) || time.Until(result.NextFetchAt) < 14*time.Minute {
+		t.Fatalf("next fetch = %v, err = %v", result.NextFetchAt, err)
 	}
 }

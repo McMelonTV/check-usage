@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.
-const ProtocolVersion = "1.3"
+const ProtocolVersion = "1.4"
 
 // Account is the public, credential-free representation of a saved account.
 type Account struct {
@@ -53,9 +53,9 @@ type DeviceAuthPoll struct {
 // OAuthSession contains the URL an app opens to begin browser login. The user
 // pastes the code shown after signing in into auth.oauth.complete.
 type OAuthSession struct {
-	Provider         string `json:"provider"`
-	SessionID        string `json:"session_id"`
-	AuthorizationURL string `json:"authorization_url"`
+	Provider        string `json:"provider"`
+	SessionID       string `json:"session_id"`
+	VerificationURL string `json:"verification_url"`
 }
 
 // OAuthComplete finishes a browser login with the code pasted by the user.
@@ -151,6 +151,8 @@ type cacheEntry struct {
 	FetchedAt      int64                         `json:"fetched_at"`
 	ResetFetchedAt int64                         `json:"reset_fetched_at,omitempty"`
 	ProviderUsage  *providers.Usage              `json:"provider_usage,omitempty"`
+	NextFetchAt    int64                         `json:"next_fetch_at,omitempty"`
+	PlanCheckedAt  int64                         `json:"plan_checked_at,omitempty"`
 }
 
 func (account storedAccount) public() Account {

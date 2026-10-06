@@ -28,8 +28,6 @@ func TestCursorRPCFetchCacheAndKeyReplacement(t *testing.T) {
 		switch r.URL.Path {
 		case "/aiserver.v1.DashboardService/GetCurrentPeriodUsage":
 			return jsonResponse(200, `{"planUsage":{"autoPercentUsed":0,"apiPercentUsed":30}}`), nil
-		case "/aiserver.v1.DashboardService/GetHardLimit":
-			return jsonResponse(200, `{"hardLimit":0}`), nil
 		case "/aiserver.v1.DashboardService/GetPlanInfo":
 			return jsonResponse(200, `{"planInfo":{"planName":"pro"}}`), nil
 		default:
@@ -45,11 +43,11 @@ func TestCursorRPCFetchCacheAndKeyReplacement(t *testing.T) {
 	}
 	mutation := response.Result.(AccountMutation)
 	results, err := service.Usage(t.Context(), mutation.Account.ID, true)
-	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Account.PlanType != "pro" || len(results[0].Metrics) != 3 || results[0].Metrics[0].Slot != providers.CursorModelsSlot || results[0].Metrics[2].Text != "Disabled" {
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Account.PlanType != "pro" || len(results[0].Metrics) != 2 || results[0].Metrics[0].Slot != providers.WeeklySlot || results[0].Metrics[1].Slot != providers.MonthlySlot || results[0].Metrics[0].Scope != providers.CursorModelsScope {
 		t.Fatalf("usage %#v, %v", results, err)
 	}
 	cached, err := service.Usage(t.Context(), mutation.Account.ID, false)
-	if err != nil || !cached[0].Cached || calls != 4 {
+	if err != nil || !cached[0].Cached || calls != 3 {
 		t.Fatalf("cache: %#v, %v, calls %d", cached, err, calls)
 	}
 	if _, err = service.Usage(t.Context(), mutation.Account.ID, true); err != nil || exchanges != 1 {
