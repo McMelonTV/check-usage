@@ -27,4 +27,16 @@ class ModelsTest {
             normalizedAccountDisplayName("a".repeat(MAX_ACCOUNT_DISPLAY_NAME_LENGTH + 1))
         }
     }
+
+    @Test fun legacyWidgetStyleNamesMapToRenamedStyles() {
+        assertEquals(WidgetVisualStyle.TONAL, WidgetVisualStyle.fromStoredName("MATERIAL_YOU"))
+        assertEquals(WidgetVisualStyle.FROSTED, WidgetVisualStyle.fromStoredName("GLASS"))
+        assertEquals(WidgetVisualStyle.DOT_MATRIX, WidgetVisualStyle.fromStoredName("NOTHING"))
+    }
+
+    @Test fun currentAndUnknownWidgetStyleNamesResolve() {
+        WidgetVisualStyle.entries.forEach { assertEquals(it, WidgetVisualStyle.fromStoredName(it.name)) }
+        assertEquals(WidgetVisualStyle.Default, WidgetVisualStyle.fromStoredName("NOT_A_STYLE"))
+        assertEquals(WidgetVisualStyle.Default, WidgetVisualStyle.fromStoredName(null))
+    }
 }

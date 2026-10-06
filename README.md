@@ -128,7 +128,7 @@ The SDK's documented `Agent.getUsage()` reports costs for an individual agent. A
 
 ## Android app ("AI Usage Widgets")
 
-The app signs in separately from the CLI and displays remaining usage windows and "reset credits". It offers Glass and Material You widgets, plus a Nothing-inspired style available on Nothing devices. Each widget can use a different account and style.
+The app signs in separately from the CLI and displays remaining usage windows and "reset credits". It offers Tonal (wallpaper-based colors), Frosted, Midnight and Sunset widget styles, plus a Dot Matrix style available on devices with the NDot system fonts. Each widget can use a different account and style.
 
 ### Screenshots
 

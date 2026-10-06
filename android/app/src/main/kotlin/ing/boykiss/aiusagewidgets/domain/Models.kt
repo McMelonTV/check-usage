@@ -8,7 +8,26 @@ import androidx.compose.runtime.Immutable
 enum class UsageMetricKind { SHORT_WINDOW, LONG_WINDOW, RESET_CREDITS }
 enum class AuthenticationState { CONNECTED, SIGN_IN_REQUIRED }
 enum class DataFreshness { FRESH, STALE, ERROR }
-enum class WidgetVisualStyle { NOTHING, GLASS, MATERIAL_YOU }
+enum class WidgetVisualStyle(val displayName: String) {
+    TONAL("Tonal"),
+    FROSTED("Frosted"),
+    MIDNIGHT("Midnight"),
+    SUNSET("Sunset"),
+    DOT_MATRIX("Dot Matrix"),
+    ;
+
+    companion object {
+        val Default = TONAL
+
+        /** Resolves a persisted style name, including names written before the styles were renamed. */
+        fun fromStoredName(name: String?): WidgetVisualStyle = when (name) {
+            "MATERIAL_YOU" -> TONAL
+            "GLASS" -> FROSTED
+            "NOTHING" -> DOT_MATRIX
+            else -> entries.firstOrNull { it.name == name } ?: Default
+        }
+    }
+}
 
 const val MAX_ACCOUNT_DISPLAY_NAME_LENGTH = 50
 
