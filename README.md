@@ -85,7 +85,7 @@ To see individual reset credits for an account:
 ./check-usage resets "My Account"
 ```
 
-An account can be identified by its name, email, or ID. Add `--show-used` to include redeemed and expired credits.
+An account can be identified by its name, email, or ID.
 
 ## Commands
 
@@ -96,7 +96,7 @@ check-usage accounts login --provider codex|claude|cursor [--name name] [--no-br
 check-usage accounts reauth [--api-key key|--api-key-env name] <account-name-email-or-id>
 check-usage accounts remove <id-or-name>
 check-usage accounts rename <id-or-name> <new-name>
-check-usage resets [--show-used] <account-name-email-or-id>
+check-usage resets <account-name-email-or-id>
 check-usage api [--accounts-file path] [--cache-dir path] <method|serve> [params-json|-]
 ```
 

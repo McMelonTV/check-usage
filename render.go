@@ -274,7 +274,7 @@ func setResetCredits(row *usageRow, credits *resetCreditsPayload, now time.Time)
 }
 
 func earliestExpiringAvailableResetCredit(credits []resetCreditDetail) (resetCreditDetail, bool) {
-	available := filteredResetCredits(credits, false)
+	available := filteredResetCredits(credits)
 	if len(available) == 0 {
 		return resetCreditDetail{}, false
 	}
