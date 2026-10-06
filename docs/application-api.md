@@ -14,7 +14,7 @@ The simplest integration is one process per request:
 ```bash
 check-usage api accounts.list
 check-usage api usage.get '{"refresh":true}'
-check-usage api resets.get '{"account":"My Account","include_unavailable":true}'
+check-usage api resets.get '{"account":"My Account"}'
 check-usage api --pretty settings.get
 ```
 
@@ -62,7 +62,7 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 | `auth.browser.begin` | `{"provider":"cursor"}` | Session ID, verification URL, and polling interval |
 | `auth.browser.poll` | `{"provider":"cursor","session_id":"...","name":"optional","account":"optional id/name/email"}` | `pending`, or `complete` with the persisted public account |
 | `usage.get` | `{"account":"optional","refresh":true}` | One result per selected account with typed provider metrics; omitting `account` selects all |
-| `resets.get` | `{"account":"...","refresh":true,"include_unavailable":false}` | Reset-credit payload for one account |
+| `resets.get` | `{"account":"...","refresh":true}` | Available reset credits for one account |
 | `settings.get` | `{}` | Current settings |
 | `settings.set` | Complete settings object | Normalized, persisted settings |
 
