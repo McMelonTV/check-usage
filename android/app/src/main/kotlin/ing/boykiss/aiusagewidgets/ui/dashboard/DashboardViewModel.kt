@@ -1,171 +1,286 @@
 package ing.boykiss.aiusagewidgets.ui.dashboard
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import ing.boykiss.aiusagewidgets.AppContainer
-import ing.boykiss.aiusagewidgets.domain.ProviderAccount
-import ing.boykiss.aiusagewidgets.domain.ProviderUsageSnapshot
+import ing.boykiss.aiusagewidgets.domain.*
 import ing.boykiss.aiusagewidgets.providers.api.AuthenticationProgress
 import ing.boykiss.aiusagewidgets.providers.api.AuthenticationSession
 import ing.boykiss.aiusagewidgets.sync.UsageSyncWorker
-import ing.boykiss.aiusagewidgets.widget.WidgetRenderWorker
-import android.content.Context
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
+import ing.boykiss.aiusagewidgets.widget.WidgetUpdater
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+
+enum class DashboardTab { USAGE, RESETS, SETTINGS }
 
 data class DashboardState(
     val accounts: List<ProviderAccount> = emptyList(),
+    val providers: List<ProviderDescriptor> = emptyList(),
     val selectedAccount: ProviderAccount? = null,
-    val snapshot: ProviderUsageSnapshot? = null,
+    val snapshots: Map<String, ProviderUsageSnapshot> = emptyMap(),
     val loading: Boolean = true,
     val refreshing: Boolean = false,
+    val refreshingResets: Boolean = false,
+    val tab: DashboardTab = DashboardTab.USAGE,
+    val settings: DashboardSettings = DashboardSettings(),
+    val choosingProvider: Boolean = false,
+    val connectingProvider: ProviderDescriptor? = null,
+    val enteringAPIKey: Boolean = false,
+    val authenticating: Boolean = false,
     val authSession: AuthenticationSession? = null,
     val authError: String? = null,
     val accountBeingRenamed: ProviderAccount? = null,
     val renamingAccount: Boolean = false,
     val renameError: String? = null,
-)
+    val accountBeingRemoved: ProviderAccount? = null,
+    val notice: String? = null,
+) {
+    val snapshot: ProviderUsageSnapshot? get() = selectedAccount?.let { snapshots[it.id.value] }
+}
 
 sealed interface DashboardEvent {
     data object AddAccount : DashboardEvent
     data object CancelAuthentication : DashboardEvent
+    data class ConnectProvider(val id: ProviderId, val useAPIKey: Boolean = false) : DashboardEvent
+    data class SubmitAPIKey(val key: String) : DashboardEvent
+    data class SubmitCode(val code: String) : DashboardEvent
+    data class Reauthenticate(val account: ProviderAccount) : DashboardEvent
     data class SelectAccount(val account: ProviderAccount) : DashboardEvent
+    data class SelectTab(val tab: DashboardTab) : DashboardEvent
+    data class SaveSettings(val settings: DashboardSettings) : DashboardEvent
+    data class SetForeground(val active: Boolean) : DashboardEvent
     data class StartRenamingAccount(val account: ProviderAccount) : DashboardEvent
     data object CancelRenamingAccount : DashboardEvent
     data class RenameAccount(val displayName: String) : DashboardEvent
+    data class StartRemovingAccount(val account: ProviderAccount) : DashboardEvent
+    data object CancelRemovingAccount : DashboardEvent
+    data object RemoveAccount : DashboardEvent
     data object Refresh : DashboardEvent
+    data object DismissNotice : DashboardEvent
+    data object ConfirmResetClaim : DashboardEvent
 }
 
-class DashboardViewModel(
-    private val container: AppContainer,
-    private val context: Context,
-) : ViewModel() {
-    private val _state = MutableStateFlow(DashboardState())
-    val state: StateFlow<DashboardState> = _state.asStateFlow()
-    private var snapshotJob: Job? = null
+class DashboardViewModel(private val container: AppContainer, private val context: Context) : ViewModel() {
+    private val mutable = MutableStateFlow(DashboardState(providers = container.providers.all().map { it.descriptor }))
+    val state = mutable.asStateFlow()
     private var authJob: Job? = null
+    private var refreshJob: Job? = null
+    private var resetsJob: Job? = null
+    private var timerJob: Job? = null
+    private var foreground = false
+    private val scheduledAccounts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private var reauthTarget: ProviderAccount? = null
 
     init {
         viewModelScope.launch {
-            container.repository.observeAccounts().collectLatest { accounts ->
-                val selected = _state.value.selectedAccount?.let { old -> accounts.firstOrNull { it.id == old.id } }
-                    ?: accounts.firstOrNull()
-                _state.update { it.copy(accounts = accounts, selectedAccount = selected, loading = false) }
-                observeSnapshot(selected)
+            container.repository.observeAccounts().collect { accounts ->
+                val old = mutable.value.selectedAccount
+                val selected = accounts.firstOrNull { it.id == old?.id } ?: accounts.firstOrNull()
+                mutable.update { it.copy(accounts = accounts, selectedAccount = selected, loading = false) }
+                accounts.filter { scheduledAccounts.add(it.id.value) }.forEach {
+                    UsageSyncWorker.schedule(context, it.providerId.value, it.id.value)
+                }
+                if (foreground && accounts.any { it.id.value !in mutable.value.snapshots }) refresh()
+            }
+        }
+        viewModelScope.launch {
+            container.repository.observeSnapshots().collect { snapshots -> mutable.update { it.copy(snapshots = snapshots) } }
+        }
+        viewModelScope.launch {
+            container.settings.state.collect { settings ->
+                mutable.update { it.copy(settings = settings) }
+                scheduleTimer()
             }
         }
     }
 
     fun onEvent(event: DashboardEvent) {
         when (event) {
-            DashboardEvent.AddAccount -> authenticate()
+            DashboardEvent.AddAccount -> {
+                reauthTarget = null
+                mutable.update { it.copy(choosingProvider = true, authError = null) }
+            }
             DashboardEvent.CancelAuthentication -> cancelAuthentication()
+            is DashboardEvent.ConnectProvider -> connect(event.id, event.useAPIKey)
+            is DashboardEvent.SubmitAPIKey -> completeAuthentication {
+                container.providers.require(mutable.value.connectingProvider!!.id).authenticator.addAPIKey(event.key)
+            }
+            is DashboardEvent.SubmitCode -> {
+                val session = mutable.value.authSession ?: return
+                completeAuthentication { container.providers.require(session.providerId).authenticator.completeCode(session, event.code) }
+            }
+            is DashboardEvent.Reauthenticate -> {
+                cancelAuthentication()
+                reauthTarget = event.account
+                connect(event.account.providerId)
+            }
             is DashboardEvent.SelectAccount -> {
-                _state.update { it.copy(selectedAccount = event.account, snapshot = null) }
-                observeSnapshot(event.account)
+                mutable.update { it.copy(selectedAccount = event.account) }
+                if (mutable.value.tab == DashboardTab.RESETS) refreshResets()
             }
-            is DashboardEvent.StartRenamingAccount -> _state.update {
-                it.copy(accountBeingRenamed = event.account, renameError = null)
-            }
-            DashboardEvent.CancelRenamingAccount -> {
-                if (!_state.value.renamingAccount) {
-                    _state.update { it.copy(accountBeingRenamed = null, renameError = null) }
+            is DashboardEvent.SelectTab -> {
+                mutable.update { it.copy(tab = event.tab) }
+                if (event.tab == DashboardTab.RESETS) {
+                    if (mutable.value.selectedAccount?.providerId?.value != "codex") {
+                        mutable.update { it.copy(selectedAccount = it.accounts.firstOrNull { account -> account.providerId.value == "codex" }) }
+                    }
+                    refreshResets()
+                } else if (event.tab == DashboardTab.USAGE && mutable.value.selectedAccount == null) {
+                    mutable.update { it.copy(selectedAccount = it.accounts.firstOrNull()) }
                 }
             }
-            is DashboardEvent.RenameAccount -> renameAccount(event.displayName)
-            DashboardEvent.Refresh -> refresh()
+            is DashboardEvent.SaveSettings -> {
+                try { container.settings.save(event.settings) } catch (error: Exception) { showError(error) }
+            }
+            is DashboardEvent.SetForeground -> {
+                foreground = event.active
+                scheduleTimer()
+                if (foreground) refresh()
+            }
+            is DashboardEvent.StartRenamingAccount -> mutable.update { it.copy(accountBeingRenamed = event.account, renameError = null) }
+            DashboardEvent.CancelRenamingAccount -> if (!mutable.value.renamingAccount) mutable.update { it.copy(accountBeingRenamed = null, renameError = null) }
+            is DashboardEvent.RenameAccount -> rename(event.displayName)
+            is DashboardEvent.StartRemovingAccount -> mutable.update { it.copy(accountBeingRemoved = event.account) }
+            DashboardEvent.CancelRemovingAccount -> mutable.update { it.copy(accountBeingRemoved = null) }
+            DashboardEvent.RemoveAccount -> remove()
+            DashboardEvent.Refresh -> if (mutable.value.tab == DashboardTab.RESETS) refreshResets() else refresh()
+            DashboardEvent.DismissNotice -> mutable.update { it.copy(notice = null) }
+            DashboardEvent.ConfirmResetClaim -> mutable.update { it.copy(notice = "Confirmed — reset claiming is not connected yet") }
         }
     }
 
-    private fun renameAccount(displayName: String) {
-        val account = _state.value.accountBeingRenamed ?: return
-        if (_state.value.renamingAccount) return
-        viewModelScope.launch(Dispatchers.IO) {
-            _state.update { it.copy(renamingAccount = true, renameError = null) }
-            runCatching {
-                container.repository.renameAccount(account.id.value, displayName)
-                runCatching {
-                    container.database.dao().widgetIdsForAccount(account.id.value).forEach { widgetId ->
-                        WidgetRenderWorker.enqueue(context, widgetId)
-                    }
-                }
-            }.fold(
-                onSuccess = {
-                    _state.update {
-                        it.copy(accountBeingRenamed = null, renamingAccount = false, renameError = null)
-                    }
-                },
-                onFailure = { error ->
-                    _state.update {
-                        it.copy(renamingAccount = false, renameError = error.message ?: "Could not rename account")
-                    }
-                },
-            )
-        }
-    }
-
-    private fun observeSnapshot(account: ProviderAccount?) {
-        snapshotJob?.cancel()
-        if (account == null) {
-            _state.update { it.copy(snapshot = null) }
-            return
-        }
-        snapshotJob = viewModelScope.launch {
-            container.repository.observeSnapshot(account.id.value).collectLatest { snapshot ->
-                _state.update { it.copy(snapshot = snapshot) }
+    private fun scheduleTimer() {
+        timerJob?.cancel()
+        val seconds = mutable.value.settings.autoRefreshSeconds
+        if (!foreground || seconds == 0) return
+        timerJob = viewModelScope.launch {
+            while (isActive) {
+                delay(seconds * 1000L)
+                refresh()
             }
         }
-        if (_state.value.snapshot == null) refresh()
     }
 
-    private fun authenticate() {
+    private fun connect(id: ProviderId, apiKey: Boolean = false) {
         if (authJob?.isActive == true) return
+        val provider = container.providers.require(id)
+        val usesKey = apiKey || id.value in listOf("opencode-go", "deepseek")
+        mutable.update { it.copy(choosingProvider = false, connectingProvider = provider.descriptor,
+            enteringAPIKey = usesKey, authenticating = !usesKey, authError = null) }
+        if (usesKey) return
         authJob = viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                val provider = container.providers.require(ing.boykiss.aiusagewidgets.domain.ProviderId("codex"))
+            try {
                 val session = provider.authenticator.beginAuthentication()
-                _state.update { it.copy(authSession = session, authError = null) }
-                repeat(180) {
+                mutable.update { it.copy(authSession = session, authenticating = false) }
+                if (session.requiresCode) return@launch
+                repeat(600) {
                     delay(session.pollIntervalSeconds * 1000L)
                     when (val progress = provider.authenticator.pollAuthentication(session)) {
                         AuthenticationProgress.Pending -> Unit
-                        is AuthenticationProgress.Complete -> {
-                            container.repository.saveAccount(progress.account)
-                            UsageSyncWorker.schedule(context, progress.account.providerId.value, progress.account.id.value)
-                            container.repository.refresh(progress.account.id.value)
-                            _state.update { it.copy(authSession = null) }
-                            return@runCatching
-                        }
+                        is AuthenticationProgress.Complete -> { saveLogin(progress.account); return@launch }
                     }
                 }
-                error("Sign-in timed out")
-            }.onFailure { error ->
-                _state.update { it.copy(authSession = null, authError = error.message ?: "Sign-in failed") }
+                error("Sign-in timed out; start again")
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                mutable.update { it.copy(authSession = null, authenticating = false, authError = error.message ?: "Sign-in failed") }
             }
         }
+    }
+
+    private fun completeAuthentication(login: suspend () -> ProviderAccount) {
+        if (authJob?.isActive == true) return
+        mutable.update { it.copy(authenticating = true, authError = null) }
+        authJob = viewModelScope.launch(Dispatchers.IO) {
+            try { saveLogin(login()) } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                mutable.update { it.copy(authenticating = false, authError = error.message ?: "Sign-in failed") }
+            }
+        }
+    }
+
+    private suspend fun saveLogin(account: ProviderAccount) {
+        val saved = container.repository.saveAuthenticatedAccount(account, reauthTarget)
+        reauthTarget = null
+        mutable.update { it.copy(selectedAccount = saved, authSession = null, connectingProvider = null,
+            enteringAPIKey = false, authenticating = false, authError = null) }
+        UsageSyncWorker.schedule(context, saved.providerId.value, saved.id.value)
+        container.repository.refresh(saved.id.value)
+        updateWidgets()
     }
 
     private fun cancelAuthentication() {
         authJob?.cancel()
-        _state.update { it.copy(authSession = null) }
+        reauthTarget = null
+        mutable.update { it.copy(choosingProvider = false, connectingProvider = null, authSession = null,
+            enteringAPIKey = false, authenticating = false, authError = null) }
+    }
+
+    private fun rename(name: String) {
+        val account = mutable.value.accountBeingRenamed ?: return
+        if (mutable.value.renamingAccount) return
+        mutable.update { it.copy(renamingAccount = true) }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                container.repository.renameAccount(account.id.value, name)
+                mutable.update { it.copy(accountBeingRenamed = null, renamingAccount = false) }
+                updateWidgets()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                mutable.update { it.copy(renamingAccount = false, renameError = error.message) }
+            }
+        }
+    }
+
+    private fun remove() {
+        val account = mutable.value.accountBeingRemoved ?: return
+        mutable.update { it.copy(accountBeingRemoved = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                container.repository.removeAccount(account)
+                scheduledAccounts.remove(account.id.value)
+                UsageSyncWorker.cancel(context, account.providerId.value, account.id.value)
+                updateWidgets()
+            } catch (error: Exception) { if (error is CancellationException) throw error; showError(error) }
+        }
     }
 
     private fun refresh() {
-        val account = _state.value.selectedAccount ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            _state.update { it.copy(refreshing = true) }
-            container.repository.refresh(account.id.value)
-            _state.update { it.copy(refreshing = false) }
+        if (refreshJob?.isActive == true) return
+        val accounts = mutable.value.accounts
+        if (accounts.isEmpty()) return
+        refreshJob = viewModelScope.launch(Dispatchers.IO) {
+            mutable.update { it.copy(refreshing = true) }
+            try {
+                coroutineScope { accounts.map { account -> async { container.repository.refresh(account.id.value) } }.awaitAll() }
+                updateWidgets()
+            } finally { mutable.update { it.copy(refreshing = false) } }
         }
     }
+
+    private fun refreshResets() {
+        val account = mutable.value.selectedAccount ?: return
+        if (account.providerId.value != "codex") return
+        resetsJob?.cancel()
+        resetsJob = viewModelScope.launch(Dispatchers.IO) {
+            mutable.update { it.copy(refreshingResets = true) }
+            try {
+                container.repository.refreshResets(account.id.value)
+                updateWidgets()
+            } finally { mutable.update { it.copy(refreshingResets = false) } }
+        }
+    }
+
+    private suspend fun updateWidgets() {
+        try { WidgetUpdater.updateAll(context) } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            showError(error)
+        }
+    }
+
+    private fun showError(error: Exception) { mutable.update { it.copy(notice = error.message ?: "Operation failed") } }
 
     class Factory(private val container: AppContainer, private val context: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

@@ -60,6 +60,11 @@ import ing.boykiss.aiusagewidgets.MainActivity
 import ing.boykiss.aiusagewidgets.R
 import ing.boykiss.aiusagewidgets.UsageWidgetsApplication
 import ing.boykiss.aiusagewidgets.domain.ProviderId
+import ing.boykiss.aiusagewidgets.domain.DataFreshness
+import ing.boykiss.aiusagewidgets.domain.AuthenticationState
+import ing.boykiss.aiusagewidgets.domain.UsageWindow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import ing.boykiss.aiusagewidgets.domain.UsageMetricKind
 import ing.boykiss.aiusagewidgets.domain.WidgetVisualStyle
 import ing.boykiss.aiusagewidgets.sync.UsageSyncWorker
@@ -110,7 +115,17 @@ private data class WidgetRenderState(
     val longPercent: Double?,
     val resetAt: Long?,
     val resetCount: Int?,
+    val metricsJson: String = "[]",
+    val balance: String = "",
+    val statusMessage: String = "",
+    val generic: Boolean = false,
 )
+
+private val RenderMetricsKey = stringPreferencesKey("render_metrics")
+private val RenderBalanceKey = stringPreferencesKey("render_balance")
+private val RenderStatusKey = stringPreferencesKey("render_status")
+private val RenderGenericKey = booleanPreferencesKey("render_generic")
+private val widgetJson = Json { ignoreUnknownKeys = true }
 
 private val HasConfigurationKey = booleanPreferencesKey("has_configuration")
 private val RenderAccountIdKey = stringPreferencesKey("render_account_id")
@@ -133,6 +148,10 @@ private fun Preferences.toWidgetRenderState(): WidgetRenderState? {
         longPercent = this[RenderLongPercentKey],
         resetAt = this[RenderResetAtKey],
         resetCount = this[RenderResetCountKey],
+        metricsJson = this[RenderMetricsKey] ?: "[]",
+        balance = this[RenderBalanceKey].orEmpty(),
+        statusMessage = this[RenderStatusKey].orEmpty(),
+        generic = this[RenderGenericKey] ?: false,
     )
 }
 
@@ -155,6 +174,16 @@ private suspend fun loadWidgetRenderState(context: Context, appWidgetId: Int): W
         longPercent = longWindow?.remainingPercent,
         resetAt = longWindow?.resetsAtEpochSeconds ?: shortWindow?.resetsAtEpochSeconds,
         resetCount = snapshot?.credits?.availableCount,
+        metricsJson = widgetJson.encodeToString(snapshot?.windows.orEmpty()),
+        balance = if (config.providerId == "deepseek") snapshot?.planLabel.orEmpty() else "",
+        statusMessage = when {
+            account.authenticationState == AuthenticationState.SIGN_IN_REQUIRED.name -> "Sign in again"
+            snapshot == null -> "Refresh to load usage"
+            snapshot.errorMessage != null -> "Refresh failed · cached usage"
+            snapshot.freshness == DataFreshness.STALE -> "Cached usage"
+            else -> ""
+        },
+        generic = config.providerId != "codex",
     )
 }
 
@@ -189,6 +218,10 @@ internal object WidgetUpdater {
                     preferences[RenderAccountNameKey] = renderState.accountName
                     preferences[RenderProviderNameKey] = renderState.providerName
                     preferences[RenderVisualStyleKey] = renderState.visualStyle
+                    preferences[RenderMetricsKey] = renderState.metricsJson
+                    preferences[RenderBalanceKey] = renderState.balance
+                    preferences[RenderStatusKey] = renderState.statusMessage
+                    preferences[RenderGenericKey] = renderState.generic
                     renderState.shortPercent?.let { preferences[RenderShortPercentKey] = it }
                     renderState.longPercent?.let { preferences[RenderLongPercentKey] = it }
                     renderState.resetAt?.let { preferences[RenderResetAtKey] = it }
@@ -330,7 +363,9 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
     ) {
         Header(state, p, layout, narrow = size.width < 200.dp)
         Spacer(GlanceModifier.defaultWeight())
-        when (layout) {
+        if (state.generic) {
+            GenericWidgetBody(state, p, barWidth, layout)
+        } else when (layout) {
             // Compact cards have no countdown line, so wide ones show the time to reset inline.
             WidgetLayout.COMPACT -> MetricRow(
                 featured, secondary, p, heroSize = 22.sp,
@@ -348,7 +383,7 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
         if (layout != WidgetLayout.COMPACT) {
             Spacer(GlanceModifier.defaultWeight())
             Text(
-                p.text(countdown(state.resetAt)),
+                p.text(state.statusMessage.ifBlank { if (state.balance.isNotBlank()) "Balance" else countdown(state.resetAt) }),
                 style = TextStyle(
                     color = p.muted,
                     fontSize = if (layout == WidgetLayout.LARGE) 13.sp else 11.sp,
@@ -356,6 +391,33 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
                 ),
                 maxLines = 1,
             )
+        }
+    }
+}
+
+@Composable
+private fun GenericWidgetBody(state: WidgetRenderState, p: WidgetPalette, barWidth: Dp, layout: WidgetLayout) {
+    val windows = runCatching { widgetJson.decodeFromString<List<UsageWindow>>(state.metricsJson) }.getOrDefault(emptyList())
+    if (state.balance.isNotBlank()) {
+        Text(p.text(state.balance), style = TextStyle(p.foreground, 22.sp, FontWeight.Bold, fontFamily = p.displayFont), maxLines = 2)
+    } else if (windows.isEmpty()) {
+        Text(p.text(state.statusMessage.ifBlank { "Usage unavailable" }), style = TextStyle(p.muted, 14.sp), maxLines = 2)
+    } else {
+        Column(GlanceModifier.fillMaxWidth()) {
+            windows.take(if (layout == WidgetLayout.COMPACT) 2 else 3).forEach { window ->
+                Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(p.text("${window.label} left"), GlanceModifier.defaultWeight(), style = TextStyle(p.muted, 11.sp, fontFamily = p.labelFont), maxLines = 1)
+                    PercentText(window.remainingPercent, p, if (layout == WidgetLayout.COMPACT) 16.sp else 20.sp)
+                }
+                if (layout != WidgetLayout.COMPACT) {
+                    Spacer(GlanceModifier.height(4.dp))
+                    UsageBar(window.remainingPercent, p.barColor(window.remainingPercent, p.accent), p, 5.dp, barWidth)
+                    if (layout == WidgetLayout.LARGE || layout == WidgetLayout.STACKED) {
+                        Text(p.text(countdown(window.resetsAtEpochSeconds)), style = TextStyle(p.muted, 10.sp), maxLines = 1)
+                    }
+                }
+                Spacer(GlanceModifier.height(6.dp))
+            }
         }
     }
 }

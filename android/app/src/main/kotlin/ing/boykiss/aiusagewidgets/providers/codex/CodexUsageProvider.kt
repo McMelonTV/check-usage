@@ -66,6 +66,8 @@ class CodexUsageProvider(
         freshCredentials(account.id.value)
     }
 
+    override suspend fun replaceCredentials(fromAccountId: String, toAccountId: String) = credentials.move(fromAccountId, toAccountId)
+
     override suspend fun removeCredentials(accountId: String) = credentials.remove(accountId)
 
     override suspend fun fetchUsage(account: ProviderAccount): ProviderUsageSnapshot {
@@ -80,12 +82,19 @@ class CodexUsageProvider(
             },
             snapshot.fetchedAtEpochMillis,
             DataFreshness.FRESH,
-            snapshot.creditsError,
+            planLabel = snapshot.planType,
+            resetsError = snapshot.creditsError,
+            resetDetails = snapshot.resetDetails?.credits,
         )
     }
 
+    suspend fun fetchResetDetails(account: ProviderAccount): ResetDetailsResponse {
+        val tokens = freshCredentials(account.id.value)
+        return api.resetDetails(tokens.accessToken, tokens.remoteAccountId)
+    }
+
     private suspend fun freshCredentials(accountId: String): ProviderCredentials {
-        val current = requireNotNull(credentials.get(accountId)) { "Sign in again" }
+        val current = credentials.get(accountId) ?: throw AuthenticationRequiredException("Sign in again")
         val refresh = api.refreshCredentials(current)
         val updated = refresh.credentials.toProviderCredentials()
         if (refresh.changed) credentials.put(accountId, updated)

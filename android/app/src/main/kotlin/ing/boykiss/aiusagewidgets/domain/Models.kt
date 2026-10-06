@@ -1,11 +1,14 @@
 package ing.boykiss.aiusagewidgets.domain
 
 import androidx.compose.runtime.Immutable
+import kotlinx.serialization.Serializable
 
+@Serializable
 @JvmInline value class ProviderId(val value: String)
+@Serializable
 @JvmInline value class ProviderAccountId(val value: String)
 
-enum class UsageMetricKind { SHORT_WINDOW, LONG_WINDOW, RESET_CREDITS }
+enum class UsageMetricKind { SHORT_WINDOW, LONG_WINDOW, MONTHLY_WINDOW, RESET_CREDITS }
 enum class AuthenticationState { CONNECTED, SIGN_IN_REQUIRED }
 enum class DataFreshness { FRESH, STALE, ERROR }
 enum class WidgetVisualStyle(val displayName: String) {
@@ -58,6 +61,7 @@ data class ProviderAccount(
     val authenticationState: AuthenticationState = AuthenticationState.CONNECTED,
 )
 
+@Serializable
 @Immutable
 data class UsageWindow(
     val kind: UsageMetricKind,
@@ -68,6 +72,7 @@ data class UsageWindow(
     val windowSeconds: Int?,
 )
 
+@Serializable
 @Immutable
 data class CreditMetric(
     val availableCount: Int?,
@@ -75,6 +80,7 @@ data class CreditMetric(
     val earliestExpiryEpochSeconds: Long?,
 )
 
+@Serializable
 @Immutable
 data class ProviderUsageSnapshot(
     val providerId: ProviderId,
@@ -84,6 +90,10 @@ data class ProviderUsageSnapshot(
     val fetchedAtEpochMillis: Long,
     val freshness: DataFreshness,
     val errorMessage: String? = null,
+    val resetDetails: List<ResetCredit>? = null,
+    val planLabel: String? = null,
+    val retryAtEpochMillis: Long = 0,
+    val resetsError: String? = null,
 )
 
 @Immutable
@@ -95,3 +105,41 @@ data class UsageWidgetConfiguration(
 )
 
 fun Double?.remainingPercent(): Double? = this?.let { (100.0 - it).coerceIn(0.0, 100.0) }
+
+@Serializable
+data class ResetCredit(
+    val status: String,
+    val title: String,
+    @kotlinx.serialization.SerialName("granted_at") val grantedAt: String = "",
+    @kotlinx.serialization.SerialName("expires_at") val expiresAt: String = "",
+    @kotlinx.serialization.SerialName("redeem_started_at") val redeemStartedAt: String = "",
+    @kotlinx.serialization.SerialName("redeemed_at") val redeemedAt: String = "",
+)
+
+@Serializable
+data class DashboardSettings(
+    val usageDisplay: String = "used",
+    val barFill: String = "left",
+    val barOrder: String = "bar_percent_reset",
+    val showPercent: Boolean = true,
+    val showReset: Boolean = true,
+    val showBar: Boolean = true,
+    val colorTheme: String = "default",
+    val autoRefreshSeconds: Int = 60,
+    val compactMode: Boolean = false,
+) {
+    companion object {
+        val barOrders = listOf("bar_percent_reset", "bar_reset_percent", "percent_bar_reset",
+            "percent_reset_bar", "reset_bar_percent", "reset_percent_bar")
+        val refreshIntervals = listOf(0, 30, 60, 300, 900)
+    }
+}
+
+/** Matches the TUI thresholds; colors always describe consumed quota. */
+enum class UsageSeverity { GOOD, WARNING, BAD }
+fun usageSeverity(usedPercent: Double?, cached: Boolean = false): UsageSeverity = when {
+    cached -> UsageSeverity.WARNING
+    (usedPercent ?: 0.0) >= 65.0 -> UsageSeverity.BAD
+    (usedPercent ?: 0.0) >= 50.0 -> UsageSeverity.WARNING
+    else -> UsageSeverity.GOOD
+}

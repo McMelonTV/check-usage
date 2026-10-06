@@ -38,6 +38,7 @@ data class SnapshotEntity(
     val earliestCreditExpiry: Long?,
     val fetchedAt: Long,
     val errorMessage: String?,
+    @androidx.room.ColumnInfo(defaultValue = "NULL") val snapshotJson: String? = null,
 )
 
 @Entity(tableName = "widget_configurations")

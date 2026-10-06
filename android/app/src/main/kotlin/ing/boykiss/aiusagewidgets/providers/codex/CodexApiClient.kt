@@ -44,6 +44,10 @@ class CodexApiClient(private val json: Json) {
         decode(Codexlogic.fetchSnapshot(accessToken, accountId.orEmpty()))
     }
 
+    suspend fun resetDetails(accessToken: String, accountId: String?): ResetDetailsResponse = goCall {
+        decode(Codexlogic.fetchResetDetails(accessToken, accountId.orEmpty()))
+    }
+
     private suspend fun <T> goCall(block: () -> T): T = withContext(Dispatchers.IO) {
         try {
             block()

@@ -93,6 +93,13 @@ func TokenExpiredOrNear(token string, now time.Time, skew time.Duration) bool {
 }
 
 func FetchSnapshot(ctx context.Context, client *http.Client, accessToken, accountID, userAgent string, now time.Time) (*UsageSnapshot, error) {
+	snapshot, _, err := FetchSnapshotWithResets(ctx, client, accessToken, accountID, userAgent, now)
+	return snapshot, err
+}
+
+// FetchSnapshotWithResets retains the detailed credits already fetched alongside
+// usage, allowing mobile clients to cache them without a duplicate request.
+func FetchSnapshotWithResets(ctx context.Context, client *http.Client, accessToken, accountID, userAgent string, now time.Time) (*UsageSnapshot, *ResetCreditsPayload, error) {
 	var usage *RateLimitStatusPayload
 	var credits *ResetCreditsPayload
 	var usageErr, creditsErr error
@@ -108,9 +115,15 @@ func FetchSnapshot(ctx context.Context, client *http.Client, accessToken, accoun
 	}()
 	wg.Wait()
 	if usageErr != nil {
-		return nil, usageErr
+		return nil, nil, usageErr
 	}
-	return BuildSnapshot(usage, credits, creditsErr, now), nil
+	if creditsErr != nil {
+		credits = nil
+	}
+	if credits != nil && credits.Credits == nil {
+		credits.Credits = []ResetCreditDetail{}
+	}
+	return BuildSnapshot(usage, credits, creditsErr, now), credits, nil
 }
 
 // BuildSnapshot maps provider payloads into the stable representation consumed

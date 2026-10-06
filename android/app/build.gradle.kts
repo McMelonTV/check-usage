@@ -8,6 +8,8 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+
 val minimumAndroidApi = 26
 
 android {
@@ -81,7 +83,7 @@ val buildGoMobile = tasks.register<Exec>("buildGoMobile") {
         "./mobile/codexlogic",
     )
     inputs.files(
-        fileTree(repositoryRoot.resolve("internal/providers/codexapi")) { include("**/*.go") },
+        fileTree(repositoryRoot.resolve("internal/providers")) { include("**/*.go") },
         fileTree(repositoryRoot.resolve("mobile/codexlogic")) { include("**/*.go") },
         repositoryRoot.resolve("go.mod"),
         repositoryRoot.resolve("go.sum"),

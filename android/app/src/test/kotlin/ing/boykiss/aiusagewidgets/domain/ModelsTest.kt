@@ -13,6 +13,13 @@ class ModelsTest {
         assertEquals(100.0, (-10.0).remainingPercent()!!, 0.0)
     }
 
+    @Test fun severityMatchesTuiThresholdsAndMarksCachedDataAsWarning() {
+        assertEquals(UsageSeverity.GOOD, usageSeverity(49.0))
+        assertEquals(UsageSeverity.WARNING, usageSeverity(50.0))
+        assertEquals(UsageSeverity.BAD, usageSeverity(65.0))
+        assertEquals(UsageSeverity.WARNING, usageSeverity(10.0, cached = true))
+    }
+
     @Test fun missingPercentageRemainsMissing() {
         assertNull((null as Double?).remainingPercent())
     }
