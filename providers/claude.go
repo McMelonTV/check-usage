@@ -31,7 +31,7 @@ func ClaudePlanDue(plan string, lastChecked, now time.Time) bool {
 // FetchClaudeUsage refreshes credentials when needed, then reads the session
 // and weekly windows. The plan comes from the profile, which is requested only
 // when fetchPlan is set because every request counts against the rate limit.
-func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials claudeapi.Credentials, userAgent string, now time.Time, fetchPlan bool) (ClaudeResult, error) {
+func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials claudeapi.Credentials, now time.Time, fetchPlan bool) (ClaudeResult, error) {
 	credentials, changed, err := claudeapi.RefreshCredentials(ctx, client, credentials, now)
 	if err != nil {
 		return ClaudeResult{}, err
@@ -42,10 +42,10 @@ func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials clau
 	go func() {
 		defer close(profileDone)
 		if fetchPlan {
-			profile, _ = claudeapi.FetchProfile(ctx, client, credentials.AccessToken, userAgent)
+			profile, _ = claudeapi.FetchProfile(ctx, client, credentials.AccessToken)
 		}
 	}()
-	payload, err := claudeapi.FetchUsage(ctx, client, credentials.AccessToken, userAgent)
+	payload, err := claudeapi.FetchUsage(ctx, client, credentials.AccessToken)
 	<-profileDone
 	var httpErr *claudeapi.HTTPError
 	if err != nil && !changed && errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized {
@@ -56,7 +56,7 @@ func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials clau
 			return result, err
 		}
 		result.Credentials, result.CredentialsChanged = credentials, changed
-		payload, err = claudeapi.FetchUsage(ctx, client, credentials.AccessToken, userAgent)
+		payload, err = claudeapi.FetchUsage(ctx, client, credentials.AccessToken)
 	}
 	if err != nil {
 		return result, err

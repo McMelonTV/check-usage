@@ -34,14 +34,14 @@ type resetCreditsPayload = codexapi.ResetCreditsPayload
 type resetCreditDetail = codexapi.ResetCreditDetail
 
 type usageRow struct {
-	ID                   string
-	Name                 string
-	ProviderID           string
-	Provider             string
-	Email                string
-	Plan                 string
-	Metrics              []providerMetric
-	ResetCredits         string
+	ID           string
+	Name         string
+	ProviderID   string
+	Provider     string
+	Email        string
+	Plan         string
+	Metrics      []providerMetric
+	ResetCredits string
 	// ResetCreditsExpireAt is when the earliest available reset credit expires (unix seconds).
 	ResetCreditsExpireAt *int64
 	SupportsResetCredits bool

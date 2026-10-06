@@ -231,7 +231,7 @@ func (service *Service) CompleteOAuthAuth(ctx context.Context, request OAuthComp
 	if err != nil {
 		return DeviceAuthResult{}, err
 	}
-	login, err := claudeapi.CompleteLogin(ctx, service.client, session, request.Code, service.userAgent, service.now())
+	login, err := claudeapi.CompleteLogin(ctx, service.client, session, request.Code, service.now())
 	if err != nil {
 		return DeviceAuthResult{}, err
 	}
@@ -563,7 +563,7 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 		credentials.ExpiresAt = *account.AuthData.ExpiresAt
 	}
 	fetchPlan := providers.ClaudePlanDue(stringValue(account.PlanType), time.Unix(entry.PlanCheckedAt, 0), now)
-	fetched, err := providers.FetchClaudeUsage(ctx, service.client, credentials, service.userAgent, now, fetchPlan)
+	fetched, err := providers.FetchClaudeUsage(ctx, service.client, credentials, now, fetchPlan)
 	changed := fetched.CredentialsChanged
 	if changed {
 		setClaudeCredentials(account, fetched.Credentials)
