@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/McMelonTV/check-usage/providers"
+	"github.com/McMelonTV/check-usage/internal/providers"
 )
 
 func TestCursorRPCFetchCacheAndKeyReplacement(t *testing.T) {
