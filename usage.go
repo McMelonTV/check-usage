@@ -42,7 +42,10 @@ func collectUsageRows(accountsPath string, client *http.Client) ([]usageRow, err
 				} else {
 					row = cachedOrUnavailableUsageRow(account, previous, time.Now())
 				}
-				results <- accountResult{Index: idx, Row: row, Updated: updated}
+				if result.AccountChanged {
+					updated, tokenRefreshed = result.Account, true
+				}
+				results <- accountResult{Index: idx, Row: row, Updated: updated, TokenRefreshed: tokenRefreshed}
 				return
 			}
 			updated, tokenRefreshed = result.Account, result.AccountChanged
@@ -143,6 +146,17 @@ func applyProviderUsage(row *usageRow, usage providerUsage) {
 	row.Metrics = append([]providerMetric(nil), usage.Metrics...)
 }
 
+// modelScopedMarker flags a per-model weekly limit shown in the monthly column.
+const modelScopedMarker = "✦"
+
+// slotLabel is the short label for a slot, naming the model for per-model limits.
+func slotLabel(row usageRow, slot metricSlot) string {
+	if metric, ok := usageMetricForSlot(row, slot); ok && metric.IsModelScoped() {
+		return strings.ToUpper(metric.Model)
+	}
+	return strings.ToUpper(string(slot))
+}
+
 func usageMetricForSlot(row usageRow, slot metricSlot) (providerMetric, bool) {
 	for _, metric := range row.Metrics {
 		if metric.Slot == slot {
@@ -154,7 +168,7 @@ func usageMetricForSlot(row usageRow, slot metricSlot) (providerMetric, bool) {
 
 func providerSupportsUsageSlot(providerID string, slot metricSlot) bool {
 	switch providerID {
-	case providerCodex:
+	case providerCodex, providerClaude:
 		return slot == sessionSlot || slot == weeklySlot
 	case providerOpenCodeGo:
 		return slot == sessionSlot || slot == weeklySlot || slot == monthlySlot
@@ -165,6 +179,9 @@ func providerSupportsUsageSlot(providerID string, slot metricSlot) bool {
 
 func usageSlotText(row usageRow, slot metricSlot, now time.Time) string {
 	if metric, ok := usageMetricForSlot(row, slot); ok {
+		if metric.IsModelScoped() {
+			return modelScopedMarker + " " + metric.Model + " weekly: " + metricText(metric, now)
+		}
 		return metricText(metric, now)
 	}
 	if row.AuthRequired && slot == sessionSlot {
@@ -229,7 +246,15 @@ func isSlotBlockedByLongerWindow(row usageRow, slot metricSlot) bool {
 	if !ok {
 		return false
 	}
+	if target, ok := usageMetricForSlot(row, slot); ok && target.IsModelScoped() {
+		// A per-model weekly limit is blocked only by the all-models weekly limit.
+		rank, _ = slotRank(sessionSlot)
+	}
 	for _, metric := range row.Metrics {
+		// Exhausting one model's limit leaves the other windows usable.
+		if metric.IsModelScoped() {
+			continue
+		}
 		otherRank, ok := slotRank(metric.Slot)
 		if !ok || otherRank <= rank {
 			continue

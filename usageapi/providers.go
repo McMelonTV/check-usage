@@ -12,6 +12,7 @@ const (
 	providerCodex      = providers.Codex
 	providerOpenCodeGo = providers.OpenCodeGo
 	providerDeepSeek   = providers.DeepSeek
+	providerClaude     = providers.Claude
 )
 
 type credentialMode = providers.CredentialMode

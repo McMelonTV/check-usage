@@ -542,10 +542,35 @@ func TestTUIMouseSettingsValueClickCyclesDirectionally(t *testing.T) {
 
 func TestTUIMouseSelectsProvider(t *testing.T) {
 	m := tuiModel{width: 80, height: 24, authActive: true, authSelectingProvider: true}
-	updated, command := m.Update(tea.MouseMsg{X: 6, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	updated, command := m.Update(tea.MouseMsg{X: 6, Y: 11, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	m = updated.(tuiModel)
 	if m.authProviderID != providerOpenCodeGo || m.authSelectingProvider || command != nil {
 		t.Fatalf("provider click = %#v, command=%v", m, command)
+	}
+}
+
+func TestTUISelectingClaudeStartsCodeLogin(t *testing.T) {
+	m := tuiModel{width: 102, height: 24, authActive: true, authSelectingProvider: true}
+	updated, _ := m.Update(tea.MouseMsg{X: 6, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if m.authProviderID != providerClaude || m.authSelectingProvider || m.authClaudeSession == nil {
+		t.Fatalf("claude click = %#v", m)
+	}
+	for _, r := range "abc#state" {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(tuiModel)
+	}
+	if m.authCodeInput != "abc#state" {
+		t.Fatalf("code input = %q", m.authCodeInput)
+	}
+	view := m.View()
+	if !strings.Contains(view, "Paste the code") || !strings.Contains(view, "claude.com/cai/oauth") {
+		t.Fatalf("view = %s", view)
+	}
+	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(tuiModel)
+	if !m.authLoading || command == nil {
+		t.Fatalf("enter did not start sign in: %#v", m)
 	}
 }
 
@@ -940,5 +965,58 @@ func TestVisibleRangeKeepsCursorOnScreen(t *testing.T) {
 	start, end := visibleRange(20, 18, 5)
 	if start != 15 || end != 20 {
 		t.Fatalf("visibleRange() = (%d, %d), want (15, 20)", start, end)
+	}
+}
+
+func TestTUIMarksModelScopedLimitInMonthlyColumn(t *testing.T) {
+	used := 40.0
+	reset := time.Now().Add(48 * time.Hour).Unix()
+	row := usageRow{Name: "Claude", ProviderID: providerClaude, Provider: "Claude", Metrics: []providerMetric{
+		{Kind: percentageMetric, Slot: monthlySlot, Label: "FABLE", Model: "Fable", Used: &used, ResetAt: &reset},
+	}}
+	m := tuiModel{width: 120, height: 24, initialized: true, rows: []usageRow{row}, settings: defaultAppSettings()}
+	view := m.View()
+	if !strings.Contains(view, "MONTHLY ✦") || !strings.Contains(view, "✦ ━") || !strings.Contains(view, "Fable · ") {
+		t.Fatalf("view = %s", view)
+	}
+}
+
+func TestTUICodeLoginCopiesLinkAndKeepsLayoutWidth(t *testing.T) {
+	m := tuiModel{width: 102, height: 24, authActive: true, authSelectingProvider: true}
+	updated, _ := m.Update(tea.MouseMsg{X: 6, Y: 10, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(tuiModel)
+	if _, command := m.Update(tea.KeyMsg{Type: tea.KeyCtrlY}); command == nil {
+		t.Fatal("ctrl+y did not copy the link")
+	}
+	linkY, linkX := -1, 0
+	for y, line := range strings.Split(m.View(), "\n") {
+		if strings.Contains(line, "\x1b]8;;") {
+			plain := ansi.Strip(line)
+			linkY, linkX = y, len(plain)-len(strings.TrimLeft(plain, " "))
+			break
+		}
+	}
+	if linkY < 0 {
+		t.Fatal("link not rendered")
+	}
+	if _, command := m.Update(tea.MouseMsg{X: linkX, Y: linkY, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}); command == nil {
+		t.Fatal("click on the link did not copy it")
+	}
+	for _, miss := range []tea.MouseMsg{{X: linkX, Y: 3}, {X: linkX, Y: linkY - 3}, {X: max(0, linkX-1), Y: linkY}, {X: m.width - 1, Y: linkY + 10}} {
+		miss.Action, miss.Button = tea.MouseActionPress, tea.MouseButtonLeft
+		if _, command := m.Update(miss); command != nil {
+			t.Fatalf("click at %d,%d copied the link", miss.X, miss.Y)
+		}
+	}
+	updated, _ = m.Update(linkCopiedMsg{native: true, version: m.authVersion})
+	m = updated.(tuiModel)
+	view := m.View()
+	if !strings.Contains(view, "Link copied to clipboard") || !strings.Contains(view, "\x1b]8;;"+m.authClaudeSession.URL) {
+		t.Fatalf("view = %q", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > m.width {
+			t.Fatalf("line wider than terminal (%d): %q", lipgloss.Width(line), line)
+		}
 	}
 }

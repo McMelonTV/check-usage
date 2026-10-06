@@ -197,3 +197,23 @@ func TestCollectUsageRowsDoesNotShowCachedQuotaWhenAuthenticationExpires(t *test
 		t.Fatalf("expired authentication row = %#v", rows)
 	}
 }
+
+func TestModelScopedLimitBlocking(t *testing.T) {
+	full, half := 100.0, 50.0
+	fable := providerMetric{Kind: percentageMetric, Slot: monthlySlot, Label: "FABLE", Model: "Fable", Used: &full}
+	row := usageRow{Metrics: []providerMetric{
+		{Kind: percentageMetric, Slot: sessionSlot, Used: &half},
+		{Kind: percentageMetric, Slot: weeklySlot, Used: &half},
+		fable,
+	}}
+	if isSlotBlockedByLongerWindow(row, sessionSlot) || isSlotBlockedByLongerWindow(row, weeklySlot) {
+		t.Fatal("exhausted model limit blocked the shared windows")
+	}
+	row.Metrics[1].Used = &full
+	if !isSlotBlockedByLongerWindow(row, monthlySlot) {
+		t.Fatal("exhausted weekly limit did not block the model limit")
+	}
+	if slotLabel(row, monthlySlot) != "FABLE" || !strings.Contains(usageSlotText(row, monthlySlot, time.Now()), "✦ Fable weekly: 100% used") {
+		t.Fatalf("label = %q, text = %q", slotLabel(row, monthlySlot), usageSlotText(row, monthlySlot, time.Now()))
+	}
+}

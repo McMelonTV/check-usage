@@ -40,12 +40,12 @@ func runAccountsCommand(args []string) int {
 }
 
 func accountProviderFlag(fs *flag.FlagSet) *string {
-	return fs.String("provider", "", "provider: codex, opencode-go, or deepseek")
+	return fs.String("provider", "", "provider: codex, claude, opencode-go, or deepseek")
 }
 
 func selectedProvider(id string) (providerDefinition, error) {
 	if strings.TrimSpace(id) == "" {
-		return providerDefinition{}, fmt.Errorf("--provider is required; choose: codex, opencode-go, deepseek")
+		return providerDefinition{}, fmt.Errorf("--provider is required; choose: codex, claude, opencode-go, deepseek")
 	}
 	return providerFor(id)
 }
@@ -72,7 +72,7 @@ func runAccountsAdd(args []string) int {
 		return 2
 	}
 	if provider.Credentials != apiKeyCredentials {
-		fmt.Fprintf(os.Stderr, "error: %s uses device login; run accounts login --provider %s\n", provider.Name, provider.ID)
+		fmt.Fprintf(os.Stderr, "error: %s uses browser login; run accounts login --provider %s\n", provider.Name, provider.ID)
 		return 2
 	}
 	resolvedKey, err := resolveAPIKey(*key, *keyEnv)
@@ -177,7 +177,17 @@ func runAccountsReauth(args []string) int {
 
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
 	var refreshed storedAccount
-	switch strings.ToLower(strings.TrimSpace(*authFlow)) {
+	flow := strings.ToLower(strings.TrimSpace(*authFlow))
+	if provider.Credentials == oauthCodeCredentials {
+		if flagsSet(fs, "auth-flow") {
+			fmt.Fprintf(os.Stderr, "error: --auth-flow does not apply to %s\n", provider.Name)
+			return 2
+		}
+		flow = "code"
+	}
+	switch flow {
+	case "code":
+		refreshed, err = runClaudeLogin(existing.Name, client, !*noBrowser)
 	case "device":
 		refreshed, err = runDeviceAuthLogin(existing.Name, client, !*noBrowser)
 	case "browser", "oauth":
@@ -290,15 +300,25 @@ func runAccountsLogin(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
 	}
-	if provider.Credentials != deviceCredentials {
+	if provider.Credentials == apiKeyCredentials {
 		fmt.Fprintf(os.Stderr, "error: %s uses an API key; run accounts add --provider %s --api-key key\n", provider.Name, provider.ID)
 		return 2
 	}
 
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
 	flow := strings.ToLower(strings.TrimSpace(*authFlow))
+	recheckPlan := planRecheckFunc(recheckAccountPlanType)
+	if provider.Credentials == oauthCodeCredentials {
+		if flagsSet(fs, "auth-flow") {
+			fmt.Fprintf(os.Stderr, "error: --auth-flow does not apply to %s\n", provider.Name)
+			return 2
+		}
+		flow, recheckPlan = "code", nil
+	}
 	var account storedAccount
 	switch flow {
+	case "code":
+		account, err = runClaudeLogin(requestedName, client, !*noBrowser)
 	case "device":
 		account, err = runDeviceAuthLogin(requestedName, client, !*noBrowser)
 	case "browser", "oauth":
@@ -321,7 +341,7 @@ func runAccountsLogin(args []string) int {
 
 	idx := findMatchingAccount(store.Accounts, account)
 	if idx >= 0 {
-		upsert, reason, existing, candidate := shouldUpsertMatchedAccount(store.Accounts[idx], account, requestedName, client, recheckAccountPlanType)
+		upsert, reason, existing, candidate := shouldUpsertMatchedAccount(store.Accounts[idx], account, requestedName, client, recheckPlan)
 		store.Accounts[idx] = existing
 		account = candidate
 		if !upsert {
@@ -563,7 +583,7 @@ func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  check-usage accounts list [--accounts-file path]")
 	fmt.Println("  check-usage accounts add [--accounts-file path] --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]")
-	fmt.Println("  check-usage accounts login [--accounts-file path] --provider codex [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
+	fmt.Println("  check-usage accounts login [--accounts-file path] --provider codex|claude [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
 	fmt.Println("  check-usage accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
 	fmt.Println("  check-usage accounts remove [--accounts-file path] <id-or-name>")
 	fmt.Println("  check-usage accounts rename [--accounts-file path] <id-or-name> <new-name>")

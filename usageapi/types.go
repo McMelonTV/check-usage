@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.
-const ProtocolVersion = "1.1"
+const ProtocolVersion = "1.2"
 
 // Account is the public, credential-free representation of a saved account.
 type Account struct {
@@ -47,6 +47,22 @@ type DeviceAuthPoll struct {
 	Provider  string `json:"provider"`
 	SessionID string `json:"session_id"`
 	UserCode  string `json:"user_code"`
+	Name      string `json:"name,omitempty"`
+}
+
+// OAuthSession contains the URL an app opens to begin browser login. The user
+// pastes the code shown after signing in into auth.oauth.complete.
+type OAuthSession struct {
+	Provider         string `json:"provider"`
+	SessionID        string `json:"session_id"`
+	AuthorizationURL string `json:"authorization_url"`
+}
+
+// OAuthComplete finishes a browser login with the code pasted by the user.
+type OAuthComplete struct {
+	Provider  string `json:"provider"`
+	SessionID string `json:"session_id"`
+	Code      string `json:"code"`
 	Name      string `json:"name,omitempty"`
 }
 
@@ -104,6 +120,7 @@ type authData struct {
 	AccessToken  *string `json:"access_token,omitempty"`
 	RefreshToken *string `json:"refresh_token,omitempty"`
 	AccountID    *string `json:"account_id,omitempty"`
+	ExpiresAt    *int64  `json:"expires_at,omitempty"`
 }
 
 type accountsStore struct {

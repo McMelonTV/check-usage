@@ -15,6 +15,7 @@ const (
 	Codex      = "codex"
 	OpenCodeGo = "opencode-go"
 	DeepSeek   = "deepseek"
+	Claude     = "claude"
 )
 
 type CredentialMode string
@@ -22,6 +23,8 @@ type CredentialMode string
 const (
 	Device CredentialMode = "device"
 	APIKey CredentialMode = "api_key"
+	// OAuthCode providers sign in through a browser and paste back an authorization code.
+	OAuthCode CredentialMode = "oauth_code"
 )
 
 type Definition struct {
@@ -34,6 +37,7 @@ type Definition struct {
 
 var definitions = []Definition{
 	{ID: Codex, Name: "Codex", Credentials: Device, SupportsResetCredits: true},
+	{ID: Claude, Name: "Claude", Credentials: OAuthCode},
 	{ID: OpenCodeGo, Name: "OpenCode", Plan: "Go", Credentials: APIKey},
 	{ID: DeepSeek, Name: "DeepSeek", Credentials: APIKey},
 }
@@ -56,6 +60,14 @@ type Metric struct {
 	Label   string     `json:"label"`
 	Used    *float64   `json:"used_percent,omitempty"`
 	ResetAt *int64     `json:"reset_at,omitempty"`
+	// Model is set for a per-model weekly limit. Such a metric borrows the
+	// monthly slot for display and is not a monthly window.
+	Model string `json:"model,omitempty"`
+}
+
+// IsModelScoped reports whether the metric is a per-model limit.
+func (metric Metric) IsModelScoped() bool {
+	return metric.Model != ""
 }
 
 type Usage struct {

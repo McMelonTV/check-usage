@@ -108,6 +108,24 @@ func (server RPCServer) Handle(ctx context.Context, request RPCRequest) RPCRespo
 		if err == nil {
 			result, err = server.Service.PollDeviceAuth(ctx, params)
 		}
+	case "auth.oauth.begin":
+		var params struct {
+			Provider string `json:"provider"`
+		}
+		if err = decodeParams(request.Params, &params); err == nil {
+			err = requireStrings(map[string]string{"provider": params.Provider})
+		}
+		if err == nil {
+			result, err = server.Service.BeginOAuthAuth(params.Provider)
+		}
+	case "auth.oauth.complete":
+		var params OAuthComplete
+		if err = decodeParams(request.Params, &params); err == nil {
+			err = requireStrings(map[string]string{"provider": params.Provider, "session_id": params.SessionID, "code": params.Code})
+		}
+		if err == nil {
+			result, err = server.Service.CompleteOAuthAuth(ctx, params)
+		}
 	case "accounts.api_key.save":
 		var params APIKeyAccount
 		if err = decodeParams(request.Params, &params); err == nil {
@@ -227,6 +245,8 @@ func discoverResult() any {
 			{"accounts.api_key.save", "Create or update an API-key account.", `{"account":"optional id|name","provider":"opencode-go|deepseek","api_key":"...","name":"optional"}`},
 			{"auth.device.begin", "Begin device authorization for a provider.", `{"provider":"codex"}`},
 			{"auth.device.poll", "Poll and persist a device authorization.", `{"provider":"codex","session_id":"...","user_code":"...","name":"optional"}`},
+			{"auth.oauth.begin", "Begin browser login for a provider that uses a pasted code.", `{"provider":"claude"}`},
+			{"auth.oauth.complete", "Exchange the pasted code and persist the account.", `{"provider":"claude","session_id":"...","code":"...","name":"optional"}`},
 			{"usage.get", "Get usage for one or all accounts; refresh defaults to true.", `{"account":"optional","refresh":true}`},
 			{"resets.get", "Get reset credits for one account; refresh defaults to true.", `{"account":"...","refresh":true,"include_unavailable":false}`},
 			{"settings.get", "Get application settings.", "{}"},

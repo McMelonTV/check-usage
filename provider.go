@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
+	"github.com/McMelonTV/check-usage/claudeapi"
 	"github.com/McMelonTV/check-usage/providers"
 )
 
@@ -12,6 +14,7 @@ const (
 	providerCodex      = providers.Codex
 	providerOpenCodeGo = providers.OpenCodeGo
 	providerDeepSeek   = providers.DeepSeek
+	providerClaude     = providers.Claude
 )
 
 type credentialMode = providers.CredentialMode
@@ -21,12 +24,13 @@ type metricKind = providers.MetricKind
 type metricSlot = providers.MetricSlot
 
 const (
-	deviceCredentials = providers.Device
-	apiKeyCredentials = providers.APIKey
-	percentageMetric  = providers.Percentage
-	sessionSlot       = providers.SessionSlot
-	weeklySlot        = providers.WeeklySlot
-	monthlySlot       = providers.MonthlySlot
+	deviceCredentials    = providers.Device
+	apiKeyCredentials    = providers.APIKey
+	oauthCodeCredentials = providers.OAuthCode
+	percentageMetric     = providers.Percentage
+	sessionSlot          = providers.SessionSlot
+	weeklySlot           = providers.WeeklySlot
+	monthlySlot          = providers.MonthlySlot
 )
 
 type providerDefinition struct {
@@ -84,7 +88,7 @@ func accountPlan(account storedAccount) string {
 
 func emptyProviderMetrics(providerID string) []providerMetric {
 	switch providerID {
-	case providerCodex:
+	case providerCodex, providerClaude:
 		return []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION"}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}}
 	case providerOpenCodeGo:
 		return []providerMetric{{Kind: percentageMetric, Slot: sessionSlot, Label: "SESSION"}, {Kind: percentageMetric, Slot: weeklySlot, Label: "WEEKLY"}, {Kind: percentageMetric, Slot: monthlySlot, Label: "MONTHLY"}}
@@ -111,7 +115,41 @@ func fetchProviderUsage(ctx context.Context, client *http.Client, account stored
 		}
 		return providerFetchResult{Usage: usage, Account: account, AccountChanged: changed}, nil
 	}
+	if definition.ID == providerClaude {
+		return fetchClaudeUsage(ctx, client, account)
+	}
 	return fetchCodexUsage(client, account)
+}
+
+func fetchClaudeUsage(ctx context.Context, client *http.Client, account storedAccount) (providerFetchResult, error) {
+	credentials := claudeapi.Credentials{AccessToken: stringValue(account.AuthData.AccessToken), RefreshToken: stringValue(account.AuthData.RefreshToken)}
+	if account.AuthData.ExpiresAt != nil {
+		credentials.ExpiresAt = *account.AuthData.ExpiresAt
+	}
+	result, err := providers.FetchClaudeUsage(ctx, client, credentials, claudeapi.DefaultUserAgent, time.Now())
+	changed := result.CredentialsChanged
+	if changed {
+		setClaudeCredentials(&account, result.Credentials)
+	}
+	if err != nil {
+		// Keep rotated tokens even when the usage request itself fails.
+		return providerFetchResult{Account: account, AccountChanged: changed}, err
+	}
+	if result.Usage.Plan != "" && stringValue(account.PlanType) != result.Usage.Plan {
+		account.PlanType = strPtr(result.Usage.Plan)
+		changed = true
+	}
+	return providerFetchResult{Usage: result.Usage, Account: account, AccountChanged: changed}, nil
+}
+
+func setClaudeCredentials(account *storedAccount, credentials claudeapi.Credentials) {
+	account.AuthData.AccessToken = strPtr(credentials.AccessToken)
+	account.AuthData.RefreshToken = strPtr(credentials.RefreshToken)
+	account.AuthData.ExpiresAt = nil
+	if credentials.ExpiresAt > 0 {
+		expiresAt := credentials.ExpiresAt
+		account.AuthData.ExpiresAt = &expiresAt
+	}
 }
 
 func fetchCodexUsage(client *http.Client, account storedAccount) (providerFetchResult, error) {

@@ -5,7 +5,7 @@
 - Go applications can import `github.com/McMelonTV/check-usage/usageapi`.
 - Applications in any language can spawn `check-usage api serve` and exchange newline-delimited JSON-RPC 2.0 messages over stdin/stdout.
 
-The protocol version is `1.0`. Call `rpc.discover` to inspect the methods supported by the installed binary. Account and authentication results never include access tokens, refresh tokens, or ID tokens. Credentials remain in the configured `accounts.json` file.
+The protocol version is `1.2`. Call `rpc.discover` to inspect the methods supported by the installed binary. Account and authentication results never include access tokens, refresh tokens, or ID tokens. Credentials remain in the configured `accounts.json` file.
 
 ## One-shot JSON commands
 
@@ -57,6 +57,8 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 | `accounts.api_key.save` | `{"account":"optional id/name","provider":"opencode-go/deepseek","api_key":"...","name":"optional"}` | Creates or updates an API-key account and returns public metadata |
 | `auth.device.begin` | `{"provider":"codex"}` | Session ID, user code, verification URL, and polling interval |
 | `auth.device.poll` | `{"provider":"codex","session_id":"...","user_code":"...","name":"optional"}` | `pending`, or `complete` with the persisted public account |
+| `auth.oauth.begin` | `{"provider":"claude"}` | Session ID and the authorization URL to open |
+| `auth.oauth.complete` | `{"provider":"claude","session_id":"...","code":"...","name":"optional"}` | `complete` with the persisted public account |
 | `usage.get` | `{"account":"optional","refresh":true}` | One result per selected account with typed provider metrics; omitting `account` selects all |
 | `resets.get` | `{"account":"...","refresh":true,"include_unavailable":false}` | Reset-credit payload for one account |
 | `settings.get` | `{}` | Current settings |
@@ -64,7 +66,7 @@ Keep a single RPC process responsible for a given accounts file when possible. S
 
 `refresh` defaults to `true`. With `false`, usage and reset methods perform no network access and return the cache used by the CLI dashboard. When refreshing every account, a provider failure is returned in that account's `error` field so successful accounts are not discarded.
 
-Provider metrics are returned in `UsageResult.metrics`. Percentage metrics include `used_percent` and optional `reset_at`. API keys are accepted as input only and are never returned.
+Provider metrics are returned in `UsageResult.metrics`. Percentage metrics include `used_percent` and optional `reset_at`. A metric with a `model` field is a per-model weekly limit (for example Claude's Fable limit); it uses the `monthly` slot for display but is not a monthly window. API keys are accepted as input only and are never returned.
 
 ### Device authentication
 
@@ -72,6 +74,16 @@ Provider metrics are returned in `UsageResult.metrics`. Percentage metrics inclu
 2. Show or open `verification_url` and display `user_code`.
 3. Poll `auth.device.poll` with the same provider no faster than `poll_interval_seconds`.
 4. Stop when the returned status is `complete`. The service exchanges the authorization code and saves the credentials itself.
+
+### Browser code authentication
+
+Claude accounts sign in with a pasted authorization code instead of a device code.
+
+1. Call `auth.oauth.begin` with `provider: "claude"`.
+2. Open `authorization_url`. After the user approves, claude.com shows a code in the form `code#state`.
+3. Call `auth.oauth.complete` with the same `session_id` and the pasted `code`. The service exchanges it, saves the credentials, and returns the public account.
+
+The `session_id` contains the PKCE verifier for this login, so keep it private to the calling process and discard it afterward.
 
 ## Go package
 

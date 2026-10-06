@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/McMelonTV/check-usage/claudeapi"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -44,6 +45,8 @@ var (
 	magentaColor  = lipgloss.AdaptiveColor{Light: "#A53A87", Dark: "#F18ACB"}
 	dimTrackColor = lipgloss.AdaptiveColor{Light: "#DDE2E8", Dark: "#303743"}
 	blockedColor  = lipgloss.AdaptiveColor{Light: "#7A2323", Dark: "#6B1F1F"}
+	// modelScopedColor marks per-model limits; violet stays clear of the usage palettes.
+	modelScopedColor = lipgloss.AdaptiveColor{Light: "#6F42C1", Dark: "#B392F0"}
 
 	tuiTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(textColor)
 	tuiAccentStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
@@ -89,6 +92,11 @@ type authCompletedMsg struct {
 }
 
 type authSavedMsg struct {
+	err     error
+	version int
+}
+type linkCopiedMsg struct {
+	native  bool
 	err     error
 	version int
 }
@@ -145,6 +153,9 @@ type tuiModel struct {
 	authProviderID        string
 	authSelectingProvider bool
 	authAPIKeyInput       string
+	authClaudeSession     *claudeapi.AuthSession
+	authCodeInput         string
+	authLinkNotice        string
 	lastMouseTarget       string
 	lastMouseAt           time.Time
 }
@@ -446,6 +457,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.authSaving = true
 		return m, m.saveAuthenticatedAccount(msg.account)
 
+	case linkCopiedMsg:
+		if msg.version != m.authVersion {
+			return m, nil
+		}
+		switch {
+		case msg.err != nil:
+			m.authLinkNotice = "Couldn’t copy link: " + msg.err.Error()
+		case msg.native:
+			m.authLinkNotice = "Link copied to clipboard"
+		default:
+			m.authLinkNotice = "Link sent to the terminal clipboard (OSC 52)"
+		}
+		return m, nil
+
 	case authSavedMsg:
 		if msg.version != m.authVersion {
 			return m, nil
@@ -488,6 +513,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.authProviderUsesAPIKey() {
 				return m.updateAPIKeyAuthentication(msg)
+			}
+			if m.authProviderUsesCode() {
+				return m.updateCodeAuthentication(msg)
 			}
 			if key == "esc" {
 				m.authVersion++
@@ -698,6 +726,12 @@ func (m tuiModel) startAccountReauthentication(account storedAccount) (tea.Model
 		m.authProviderID, m.authAPIKeyInput, m.authCode, m.authErr, m.authReauthID = provider.ID, "", nil, nil, account.ID
 		return m, nil
 	}
+	if provider.Credentials == oauthCodeCredentials {
+		m.authVersion++
+		m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = true, false, false, false
+		m.authProviderID, m.authCode, m.authErr, m.authReauthID = provider.ID, nil, nil, account.ID
+		return m.startCodeAuthorization()
+	}
 	m.authVersion++
 	m.authActive, m.authLoading, m.authSaving = true, true, false
 	m.authSelectingProvider, m.authProviderID, m.authAPIKeyInput = false, provider.ID, ""
@@ -742,6 +776,9 @@ func (m tuiModel) updateProviderSelection(key string) (tea.Model, tea.Cmd) {
 	if provider.Credentials == apiKeyCredentials {
 		return m, nil
 	}
+	if provider.Credentials == oauthCodeCredentials {
+		return m.startCodeAuthorization()
+	}
 	m.authLoading = true
 	return m, m.requestDeviceAuthorization()
 }
@@ -780,11 +817,97 @@ func (m tuiModel) updateAPIKeyAuthentication(key tea.KeyMsg) (tea.Model, tea.Cmd
 func (m *tuiModel) clearAuthentication() {
 	m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = false, false, false, false
 	m.authCode, m.authErr, m.authReauthID, m.authProviderID, m.authAPIKeyInput = nil, nil, "", "", ""
+	m.authClaudeSession, m.authCodeInput, m.authLinkNotice = nil, "", ""
 }
 
 func (m tuiModel) authProviderUsesAPIKey() bool {
 	provider, err := providerFor(m.authProviderID)
 	return err == nil && provider.Credentials == apiKeyCredentials
+}
+
+func (m tuiModel) authProviderUsesCode() bool {
+	provider, err := providerFor(m.authProviderID)
+	return err == nil && provider.Credentials == oauthCodeCredentials
+}
+
+func (m tuiModel) startCodeAuthorization() (tea.Model, tea.Cmd) {
+	session, err := claudeapi.NewAuthSession()
+	if err != nil {
+		m.authErr = err
+		return m, nil
+	}
+	m.authClaudeSession, m.authCodeInput = &session, ""
+	return m, tea.Batch(spinnerTick(), func() tea.Msg {
+		_ = openBrowserURL(session.URL)
+		return nil
+	})
+}
+
+func (m tuiModel) updateCodeAuthentication(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.String() == "esc" {
+		m.authVersion++
+		m.clearAuthentication()
+		return m, nil
+	}
+	if key.String() == "ctrl+y" && m.authClaudeSession != nil {
+		return m, m.copyAuthLink()
+	}
+	if m.authLoading || m.authSaving || m.authClaudeSession == nil {
+		return m, nil
+	}
+	switch key.String() {
+	case "enter":
+		if strings.TrimSpace(m.authCodeInput) == "" {
+			m.authErr = fmt.Errorf("authorization code cannot be empty")
+			return m, nil
+		}
+		m.authLoading, m.authErr = true, nil
+		return m, m.completeCodeAuthorization()
+	case "backspace":
+		runes := []rune(m.authCodeInput)
+		if len(runes) > 0 {
+			m.authCodeInput = string(runes[:len(runes)-1])
+		}
+	default:
+		if key.Type == tea.KeyRunes {
+			m.authCodeInput += strings.TrimSpace(string(key.Runes))
+		}
+	}
+	return m, nil
+}
+
+// authLinkAt reports whether the screen cell x, y is part of the printed sign-in link.
+func (m tuiModel) authLinkAt(x, y int) bool {
+	lines := strings.Split(m.View(), "\n")
+	if y < 0 || y >= len(lines) || !strings.Contains(lines[y], "\x1b]8;;"+m.authClaudeSession.URL) {
+		return false
+	}
+	plain := ansi.Strip(lines[y])
+	start := len(plain) - len(strings.TrimLeft(plain, " "))
+	end := start + len(strings.TrimSpace(plain))
+	return x >= start && x < end
+}
+
+func (m tuiModel) copyAuthLink() tea.Cmd {
+	link, version := m.authClaudeSession.URL, m.authVersion
+	return func() tea.Msg {
+		native, err := copyToClipboard(link)
+		return linkCopiedMsg{native: native, err: err, version: version}
+	}
+}
+
+func (m tuiModel) completeCodeAuthorization() tea.Cmd {
+	client, session, code, version := m.client, *m.authClaudeSession, m.authCodeInput, m.authVersion
+	name := ""
+	if m.authReauthID != "" {
+		if index, err := findAccountByIDNameOrEmail(m.accounts, m.authReauthID); err == nil {
+			name = m.accounts[index].Name
+		}
+	}
+	return func() tea.Msg {
+		account, err := completeClaudeLogin(client, session, name, code)
+		return authCompletedMsg{account: account, err: err, version: version}
+	}
 }
 
 func (m tuiModel) requestDeviceAuthorization() tea.Cmd {
@@ -1020,6 +1143,9 @@ func (m tuiModel) updateAuthMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return m, nil
+	}
+	if m.authProviderUsesCode() && m.authClaudeSession != nil && m.authLinkAt(msg.X, msg.Y) {
+		return m, m.copyAuthLink()
 	}
 	if m.authSelectingProvider {
 		index := msg.Y - 9
@@ -1422,8 +1548,11 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 				marker, style = "› ", tuiAccentStyle
 			}
 			credential := "API key"
-			if provider.Credentials == deviceCredentials {
+			switch provider.Credentials {
+			case deviceCredentials:
 				credential = "Device login"
+			case oauthCodeCredentials:
+				credential = "Browser login"
 			}
 			lines = append(lines, marker+style.Render(provider.Name)+tuiMutedStyle.Render(" · "+credential))
 		}
@@ -1462,6 +1591,9 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 		}
 		return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
 	}
+	if m.authProviderUsesCode() {
+		return m.renderCodeAuthentication(title, width)
+	}
 	if m.authErr != nil {
 		body := tuiErrorStyle.Render("Authentication failed") + "\n" +
 			tuiMutedStyle.Render(ansi.Truncate(m.authErr.Error(), max(16, width-8), "…")) + "\n\n" +
@@ -1487,6 +1619,64 @@ func (m tuiModel) renderAuthentication(width, height int) string {
 		tuiMutedStyle.Render("Esc cancels"),
 	}, "\n")
 	return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+body)
+}
+
+func (m tuiModel) renderCodeAuthentication(title string, width int) string {
+	provider, _ := providerFor(m.authProviderID)
+	input := tuiAccentStyle.Render("> ")
+	if m.authCodeInput == "" {
+		placeholder := "Authorization code"
+		if apiKeyCursorVisible(m.spinnerStep) {
+			cursorStyle := lipgloss.NewStyle().Foreground(textColor).Background(accentColor)
+			input += cursorStyle.Render(placeholder[:1]) + tuiMutedStyle.Render(placeholder[1:])
+		} else {
+			input += tuiMutedStyle.Render(placeholder)
+		}
+	} else {
+		input += tuiAccentStyle.Render(ansi.Truncate(m.authCodeInput, max(8, dialogWidth(width)-8), "…"))
+		if apiKeyCursorVisible(m.spinnerStep) {
+			input += lipgloss.NewStyle().Background(accentColor).Render(" ")
+		}
+	}
+	lines := []string{
+		tuiMutedStyle.Render("Sign in to " + provider.Name + " in the browser window that opened."),
+		tuiMutedStyle.Render("If it did not open, press Ctrl+Y or click the address below to copy it."),
+		"",
+		tuiMutedStyle.Render("Paste the code shown after signing in:"),
+		input,
+	}
+	switch {
+	case m.authSaving:
+		lines = append(lines, "", tuiAccentStyle.Render(spinnerFrame(m.spinnerStep)+"  Saving account…"))
+	case m.authLoading:
+		lines = append(lines, "", tuiAccentStyle.Render(spinnerFrame(m.spinnerStep)+"  Signing in…"))
+	case m.authErr != nil:
+		lines = append(lines, "", tuiErrorStyle.Render(ansi.Truncate(m.authErr.Error(), max(16, dialogWidth(width)-4), "…")))
+	case m.authLinkNotice != "":
+		lines = append(lines, "", tuiAccentStyle.Render(ansi.Truncate(m.authLinkNotice, max(16, dialogWidth(width)-4), "…")))
+	}
+	box := "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(tuiTitleStyle.Render(title)+"\n\n"+strings.Join(lines, "\n"))
+	if m.authClaudeSession == nil {
+		return box
+	}
+	// Each wrapped line is an OSC 8 hyperlink to the full address, so terminals
+	// that support it open the whole link on Ctrl+click.
+	link := m.authClaudeSession.URL
+	chunks := strings.Split(wrapHard(link, max(16, width)), "\n")
+	for index, chunk := range chunks {
+		chunks[index] = terminalHyperlink(link, tuiAccentStyle.Render(chunk))
+	}
+	return box + "\n" + strings.Join(chunks, "\n")
+}
+
+func wrapHard(text string, width int) string {
+	runes := []rune(text)
+	lines := make([]string, 0, len(runes)/width+1)
+	for len(runes) > width {
+		lines = append(lines, string(runes[:width]))
+		runes = runes[width:]
+	}
+	return strings.Join(append(lines, string(runes)), "\n")
 }
 
 func apiKeyCursorVisible(spinnerStep int) bool {
@@ -1555,7 +1745,7 @@ func (m tuiModel) renderWideList(width, height int) string {
 	header := "  " + cell(headerStyle.Render("ACCOUNT"), nameWidth) + " " +
 		cell(headerStyle.Render("PROVIDER"), providerWidth) + " " + cell(headerStyle.Render("PLAN"), planWidth) + " " +
 		cell(headerStyle.Render("SESSION"), usageWidth) + " " + cell(headerStyle.Render("WEEKLY"), usageWidth) + " " +
-		cell(headerStyle.Render("MONTHLY"), usageWidth) + " " + cell(headerStyle.Render("RESETS"), creditWidth)
+		cell(headerStyle.Render("MONTHLY")+m.modelScopedHeaderSuffix(), usageWidth) + " " + cell(headerStyle.Render("RESETS"), creditWidth)
 
 	rowStride := 1
 	if !m.settings.CompactMode {
@@ -1629,7 +1819,7 @@ func (m tuiModel) renderCompactList(width, height int) string {
 			parts := make([]string, 0, 3)
 			for _, slot := range []metricSlot{sessionSlot, weeklySlot, monthlySlot} {
 				if text := resetSubtitleText(row, slot, now); text != "" {
-					parts = append(parts, strings.ToUpper(string(slot))+" "+text)
+					parts = append(parts, slotLabel(row, slot)+" "+text)
 				}
 			}
 			if len(parts) > 0 {
@@ -1645,6 +1835,11 @@ func (m tuiModel) renderCompactList(width, height int) string {
 func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int, includeReset bool) string {
 	if metric, ok := usageMetricForSlot(row, slot); ok && metric.Kind == percentageMetric {
 		blocked := isSlotBlockedByLongerWindow(row, slot)
+		if metric.IsModelScoped() {
+			marker := m.modelScopedMarker()
+			barWidth := max(1, width-lipgloss.Width(marker)-1)
+			return marker + " " + renderUsageBar(metric.Used, barWidth, m.showRemaining(), row.Loading, false, row.Stale, m.settings, metric.ResetAt, time.Now(), includeReset, blocked)
+		}
 		return renderUsageBar(metric.Used, width, m.showRemaining(), row.Loading, false, row.Stale, m.settings, metric.ResetAt, time.Now(), includeReset, blocked)
 	}
 	text := usageSlotText(row, slot, time.Now())
@@ -1652,6 +1847,26 @@ func (m tuiModel) renderUsageSlot(row usageRow, slot metricSlot, width int, incl
 		return tuiErrorStyle.Render(ansi.Truncate(text, width, "…"))
 	}
 	return tuiMutedStyle.Render(ansi.Truncate(text, width, "…"))
+}
+
+// modelScopedMarker renders the per-model limit glyph in the active theme.
+func (m tuiModel) modelScopedMarker() string {
+	style := lipgloss.NewStyle().Foreground(modelScopedColor).Bold(true)
+	if m.settings.ColorTheme == "monochrome" {
+		style = lipgloss.NewStyle().Foreground(textColor).Bold(true)
+	}
+	return style.Render(modelScopedMarker)
+}
+
+// modelScopedHeaderSuffix flags the MONTHLY header when any row shows a
+// per-model weekly limit in that column instead.
+func (m tuiModel) modelScopedHeaderSuffix() string {
+	for _, row := range m.rows {
+		if metric, ok := usageMetricForSlot(row, monthlySlot); ok && metric.IsModelScoped() {
+			return " " + m.modelScopedMarker()
+		}
+	}
+	return ""
 }
 
 func resetDateText(resetAt *int64, now time.Time) string {
@@ -1663,24 +1878,26 @@ func resetDateText(resetAt *int64, now time.Time) string {
 
 func resetSubtitleText(row usageRow, slot metricSlot, now time.Time) string {
 	metric, ok := usageMetricForSlot(row, slot)
-	if !ok || metric.ResetAt == nil {
+	if !ok || (metric.ResetAt == nil && !metric.IsModelScoped()) {
 		return ""
 	}
-	countdown := resetCountdownText(metric.ResetAt, now)
-	date := resetDateText(metric.ResetAt, now)
-	switch {
-	case countdown == "":
-		return date
-	case date == "":
-		return countdown
-	default:
-		return countdown + " · " + date
+	parts := make([]string, 0, 3)
+	texts := []string{resetCountdownText(metric.ResetAt, now), resetDateText(metric.ResetAt, now)}
+	if metric.IsModelScoped() {
+		// The model name takes the room the date would use in a column.
+		parts, texts = append(parts, metric.Model), texts[:1]
 	}
+	for _, text := range texts {
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (m tuiModel) renderCompactSlot(row usageRow, slot metricSlot, width int) string {
 	labelWidth := min(8, max(3, width-13))
-	label := tuiMutedStyle.Render(cell(strings.ToUpper(string(slot)), labelWidth))
+	label := tuiMutedStyle.Render(cell(slotLabel(row, slot), labelWidth))
 	valueWidth := min(30, max(3, width-2-labelWidth-2))
 	return "  " + label + "  " + m.renderUsageSlot(row, slot, valueWidth, true)
 }
@@ -1693,7 +1910,7 @@ func (m tuiModel) renderResetSlot(row usageRow) string {
 }
 
 func credentialRequiredText(row usageRow) string {
-	if row.ProviderID == providerCodex {
+	if row.ProviderID == providerCodex || row.ProviderID == providerClaude {
 		return "Sign in required"
 	}
 	return "API key required or invalid"
@@ -1896,6 +2113,8 @@ func (m tuiModel) renderHelp(width int) string {
 		key.Render("r") + "Refresh usage data",
 		key.Render("? / esc") + "Close this help",
 		key.Render("q") + "Quit",
+		"",
+		lipgloss.NewStyle().Width(18).Render(m.modelScopedMarker()) + "Per-model weekly limit (e.g. Fable) shown in the MONTHLY column",
 	}
 	title := tuiTitleStyle.Render("Keyboard shortcuts")
 	return "\n" + tuiBorderStyle.Width(dialogWidth(width)).Render(title+"\n\n"+strings.Join(rows, "\n"))
@@ -1908,6 +2127,8 @@ func (m tuiModel) renderFooter(width int) string {
 			message = "↑/↓ choose provider   enter select   esc cancel"
 		} else if m.authProviderUsesAPIKey() {
 			message = "type or paste API key   enter save   esc cancel"
+		} else if m.authProviderUsesCode() {
+			message = "paste authorization code   enter sign in   ctrl+y copy link   esc cancel"
 		}
 		return "\n" + tuiMutedStyle.Render(ansi.Truncate(message, width, "…"))
 	}

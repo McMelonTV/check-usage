@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/McMelonTV/check-usage/claudeapi"
 	"github.com/McMelonTV/check-usage/codexapi"
 )
 
@@ -39,7 +40,7 @@ func ensureFreshTokens(acc storedAccount, client *http.Client) (storedAccount, b
 }
 
 func authenticationRequired(err error) bool {
-	return errors.Is(err, errMissingCredentials) || codexapi.IsAuthenticationError(err)
+	return errors.Is(err, errMissingCredentials) || codexapi.IsAuthenticationError(err) || claudeapi.IsAuthenticationError(err)
 }
 
 func fetchUsage(acc storedAccount, client *http.Client) (*rateLimitStatusPayload, error) {

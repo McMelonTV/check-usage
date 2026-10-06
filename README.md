@@ -1,6 +1,6 @@
 # check-usage
 
-A simple Go CLI app for checking Codex usage limits and available "reset credits" across multiple accounts.
+A simple Go CLI app for checking Codex and Claude usage limits and available Codex "reset credits" across multiple accounts.
 
 This repository also includes an Android app with home-screen widgets for the same usage information.
 
@@ -26,6 +26,12 @@ Sign in to your first account:
 
 ```bash
 ./check-usage accounts login --provider codex --name "My Account"
+```
+
+Sign in to a Claude Pro or Max subscription. A browser opens claude.com; after approving, paste the code it shows back into the terminal:
+
+```bash
+./check-usage accounts login --provider claude --name "My Claude"
 ```
 
 The account provider is always explicit. Add OpenCode or DeepSeek with an API key:
@@ -78,7 +84,7 @@ An account can be identified by its name, email, or ID. Add `--show-used` to inc
 ```text
 check-usage accounts list
 check-usage accounts add --provider opencode-go|deepseek (--api-key key|--api-key-env name) [--name name]
-check-usage accounts login --provider codex [--name name] [--no-browser] [--auth-flow device|browser]
+check-usage accounts login --provider codex|claude [--name name] [--no-browser] [--auth-flow device|browser]
 check-usage accounts reauth [--api-key key|--api-key-env name] <account-name-email-or-id>
 check-usage accounts remove <id-or-name>
 check-usage accounts rename <id-or-name> <new-name>

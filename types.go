@@ -23,6 +23,7 @@ type authData struct {
 	AccessToken  *string `json:"access_token,omitempty"`
 	RefreshToken *string `json:"refresh_token,omitempty"`
 	AccountID    *string `json:"account_id,omitempty"`
+	ExpiresAt    *int64  `json:"expires_at,omitempty"`
 }
 
 type rateLimitStatusPayload = codexapi.RateLimitStatusPayload

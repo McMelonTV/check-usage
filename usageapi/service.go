@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/McMelonTV/check-usage/claudeapi"
 	"github.com/McMelonTV/check-usage/codexapi"
+	"github.com/McMelonTV/check-usage/providers"
 )
 
 // Config controls persistence, networking, and time for an embedded Service.
@@ -202,7 +204,48 @@ func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPo
 			RefreshToken: &tokens.RefreshToken, AccountID: stringPointer(identity.AccountID),
 		},
 	}
+	return service.saveLogin(candidate, strings.TrimSpace(request.Name) != "")
+}
 
+// BeginOAuthAuth starts a browser login for providers that use a pasted authorization code.
+func (service *Service) BeginOAuthAuth(provider string) (OAuthSession, error) {
+	if provider != providerClaude {
+		return OAuthSession{}, fmt.Errorf("provider %q does not support browser code authentication", provider)
+	}
+	session, err := claudeapi.NewAuthSession()
+	if err != nil {
+		return OAuthSession{}, err
+	}
+	return OAuthSession{Provider: providerClaude, SessionID: session.SessionID(), AuthorizationURL: session.URL}, nil
+}
+
+// CompleteOAuthAuth exchanges the pasted code and persists the account.
+func (service *Service) CompleteOAuthAuth(ctx context.Context, request OAuthComplete) (DeviceAuthResult, error) {
+	if request.Provider != providerClaude {
+		return DeviceAuthResult{}, fmt.Errorf("provider %q does not support browser code authentication", request.Provider)
+	}
+	session, err := claudeapi.ParseSessionID(request.SessionID)
+	if err != nil {
+		return DeviceAuthResult{}, err
+	}
+	login, err := claudeapi.CompleteLogin(ctx, service.client, session, request.Code, service.userAgent, service.now())
+	if err != nil {
+		return DeviceAuthResult{}, err
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		name = defaultAccountName(login.Email, service.now())
+	}
+	candidate := storedAccount{
+		ID: newAccountID(service.now()), Name: name, Provider: providerClaude,
+		Email: stringPointer(login.Email), PlanType: stringPointer(login.Plan),
+		AuthData: authData{Type: "claude_oauth", AccountID: stringPointer(login.AccountUUID)},
+	}
+	setClaudeCredentials(&candidate, login.Credentials)
+	return service.saveLogin(candidate, strings.TrimSpace(request.Name) != "")
+}
+
+func (service *Service) saveLogin(candidate storedAccount, explicitName bool) (DeviceAuthResult, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	store, err := service.loadAccounts()
@@ -210,9 +253,9 @@ func (service *Service) PollDeviceAuth(ctx context.Context, request DeviceAuthPo
 		return DeviceAuthResult{}, err
 	}
 	action := "added"
-	if index := matchingLogin(store.Accounts, candidate, strings.TrimSpace(request.Name) != ""); index >= 0 {
+	if index := matchingLogin(store.Accounts, candidate, explicitName); index >= 0 {
 		candidate.ID = store.Accounts[index].ID
-		if strings.TrimSpace(request.Name) == "" {
+		if !explicitName {
 			candidate.Name = store.Accounts[index].Name
 		}
 		store.Accounts[index] = candidate
@@ -407,6 +450,9 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 		}
 		return UsageResult{Account: account.public(), Metrics: usage.Metrics}, changed, nil
 	}
+	if provider.ID == providerClaude {
+		return service.claudeUsage(ctx, account, refresh)
+	}
 	entry, cached, err := service.loadCache(account.ID)
 	if err != nil {
 		return UsageResult{}, false, err
@@ -472,6 +518,61 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 		changed = true
 	}
 	return UsageResult{Account: account.public(), Snapshot: snapshot, Metrics: providerUsage.Metrics}, changed, nil
+}
+
+func (service *Service) claudeUsage(ctx context.Context, account *storedAccount, refresh bool) (UsageResult, bool, error) {
+	entry, cached, err := service.loadCache(account.ID)
+	if err != nil {
+		return UsageResult{}, false, err
+	}
+	cachedResult := func() (UsageResult, bool) {
+		if !cached || entry.ProviderUsage == nil {
+			return UsageResult{}, false
+		}
+		return UsageResult{Account: account.public(), Metrics: entry.ProviderUsage.Metrics, Cached: true}, true
+	}
+	if !refresh {
+		if result, ok := cachedResult(); ok {
+			return result, false, nil
+		}
+		return UsageResult{}, false, fmt.Errorf("no cached usage for account %q", account.Name)
+	}
+	credentials := claudeapi.Credentials{AccessToken: stringValue(account.AuthData.AccessToken), RefreshToken: stringValue(account.AuthData.RefreshToken)}
+	if account.AuthData.ExpiresAt != nil {
+		credentials.ExpiresAt = *account.AuthData.ExpiresAt
+	}
+	fetched, err := providers.FetchClaudeUsage(ctx, service.client, credentials, service.userAgent, service.now())
+	changed := fetched.CredentialsChanged
+	if changed {
+		setClaudeCredentials(account, fetched.Credentials)
+	}
+	if err != nil {
+		if result, ok := cachedResult(); ok {
+			result.Error = err.Error()
+			return result, changed, nil
+		}
+		return UsageResult{}, changed, err
+	}
+	usage := fetched.Usage
+	entry.PlanType, entry.ProviderUsage, entry.FetchedAt = usage.Plan, &usage, service.now().Unix()
+	if err := service.saveCache(account.ID, entry); err != nil {
+		return UsageResult{}, changed, err
+	}
+	if usage.Plan != "" && stringValue(account.PlanType) != usage.Plan {
+		account.PlanType = &usage.Plan
+		changed = true
+	}
+	return UsageResult{Account: account.public(), Metrics: usage.Metrics}, changed, nil
+}
+
+func setClaudeCredentials(account *storedAccount, credentials claudeapi.Credentials) {
+	account.AuthData.AccessToken = stringPointer(credentials.AccessToken)
+	account.AuthData.RefreshToken = stringPointer(credentials.RefreshToken)
+	account.AuthData.ExpiresAt = nil
+	if credentials.ExpiresAt > 0 {
+		expiresAt := credentials.ExpiresAt
+		account.AuthData.ExpiresAt = &expiresAt
+	}
 }
 
 func cachedUsageResult(account *storedAccount, entry cacheEntry, exists bool) (UsageResult, bool) {

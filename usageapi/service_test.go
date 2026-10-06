@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/McMelonTV/check-usage/claudeapi"
 	"github.com/McMelonTV/check-usage/codexapi"
 	"github.com/McMelonTV/check-usage/providers"
 )
@@ -336,5 +337,41 @@ func jsonResponse(status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status, Status: http.StatusText(status),
 		Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestClaudeOAuthLoginAndUsagePersistTokens(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.String() {
+		case claudeapi.TokenURL:
+			return jsonResponse(http.StatusOK, `{"access_token":"claude-access","refresh_token":"claude-refresh","expires_in":3600,"account":{"uuid":"u1","email_address":"me@example.com"}}`), nil
+		case claudeapi.ProfileURL:
+			return jsonResponse(http.StatusOK, `{"organization":{"organization_type":"claude_pro"}}`), nil
+		case claudeapi.UsageURL:
+			return jsonResponse(http.StatusOK, `{"five_hour":{"utilization":10,"resets_at":"2026-10-06T12:00:00Z"},"seven_day":{"utilization":20,"resets_at":"2026-10-10T12:00:00Z"}}`), nil
+		}
+		t.Fatalf("unexpected request %s", request.URL)
+		return nil, nil
+	})}
+	service := testService(t, client)
+	if _, err := service.BeginOAuthAuth(providerCodex); err == nil {
+		t.Fatal("codex accepted browser code authentication")
+	}
+	session, err := service.BeginOAuthAuth(providerClaude)
+	if err != nil || !strings.HasPrefix(session.AuthorizationURL, claudeapi.AuthorizeURL) {
+		t.Fatalf("session = %#v, %v", session, err)
+	}
+	state, _, _ := strings.Cut(session.SessionID, ".")
+	result, err := service.CompleteOAuthAuth(context.Background(), OAuthComplete{Provider: providerClaude, SessionID: session.SessionID, Code: "code#" + state})
+	if err != nil || result.Status != "complete" || result.Account.Email != "me@example.com" || result.Account.PlanType != "Pro" {
+		t.Fatalf("complete = %#v, %v", result, err)
+	}
+	encoded, _ := json.Marshal(result)
+	if strings.Contains(string(encoded), "claude-access") || strings.Contains(string(encoded), "claude-refresh") {
+		t.Fatalf("result leaked tokens: %s", encoded)
+	}
+	usage, err := service.Usage(context.Background(), result.Account.ID, true)
+	if err != nil || len(usage) != 1 || usage[0].Error != "" || len(usage[0].Metrics) != 2 || *usage[0].Metrics[1].Used != 20 {
+		t.Fatalf("usage = %#v, %v", usage, err)
 	}
 }

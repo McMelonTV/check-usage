@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/McMelonTV/check-usage/claudeapi"
 )
 
 func TestFetchOpenCodeGoUsage(t *testing.T) {
@@ -40,5 +42,25 @@ func TestFetchDeepSeekUsage(t *testing.T) {
 	result, err := fetchProviderUsage(t.Context(), client, storedAccount{Provider: providerDeepSeek, AuthData: authData{APIKey: strPtr("key")}})
 	if err != nil || result.Usage.Plan != "CNY 100.00" || len(result.Usage.Metrics) != 0 || !result.AccountChanged || stringValue(result.Account.PlanType) != "CNY 100.00" {
 		t.Fatalf("result = %#v, %v", result, err)
+	}
+}
+
+func TestFetchClaudeUsageKeepsRotatedTokensWhenUsageFails(t *testing.T) {
+	client := &http.Client{Transport: usageRoundTripper(func(request *http.Request) (*http.Response, error) {
+		body := `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`
+		status := http.StatusOK
+		if request.URL.String() != claudeapi.TokenURL {
+			body, status = `{"error":"unavailable"}`, http.StatusServiceUnavailable
+		}
+		return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	expired := time.Now().Add(-time.Hour).Unix()
+	account := storedAccount{Provider: providerClaude, AuthData: authData{AccessToken: strPtr("old-access"), RefreshToken: strPtr("old-refresh"), ExpiresAt: &expired}}
+	result, err := fetchProviderUsage(t.Context(), client, account)
+	if err == nil || authenticationRequired(err) {
+		t.Fatalf("error = %v, want non-auth usage failure", err)
+	}
+	if !result.AccountChanged || stringValue(result.Account.AuthData.RefreshToken) != "new-refresh" || stringValue(result.Account.AuthData.AccessToken) != "new-access" || result.Account.AuthData.ExpiresAt == nil {
+		t.Fatalf("result = %#v", result)
 	}
 }
