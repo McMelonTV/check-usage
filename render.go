@@ -23,7 +23,7 @@ func printTable(rows []usageRow) {
 func renderTable(rows []usageRow, now time.Time) string {
 	var b bytes.Buffer
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ACCOUNT\tPROVIDER\tEMAIL\tPLAN\tSESSION\tWEEKLY\tMONTHLY\tRESETS")
+	fmt.Fprintln(w, "ACCOUNT\tPROVIDER\tEMAIL\tPLAN\tSESSION (~5h)\tWEEKLY\tMONTHLY\tRESETS")
 	for _, row := range rows {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.Name, row.Provider, row.Email, row.Plan,
