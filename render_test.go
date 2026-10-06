@@ -35,21 +35,16 @@ func TestResetCreditsSummaryHandlesMissingCredits(t *testing.T) {
 	}
 }
 
-func TestFilteredResetCreditsExcludesUsedByDefault(t *testing.T) {
+func TestFilteredResetCreditsExcludesUnavailable(t *testing.T) {
 	credits := []resetCreditDetail{
 		{Status: "available"},
 		{Status: "redeemed"},
 		{Status: "expired"},
 	}
 
-	available := filteredResetCredits(credits, false)
+	available := filteredResetCredits(credits)
 	if len(available) != 1 || !strings.EqualFold(available[0].Status, "available") {
-		t.Fatalf("filteredResetCredits(showUsed=false) = %#v", available)
-	}
-
-	all := filteredResetCredits(credits, true)
-	if len(all) != 3 {
-		t.Fatalf("filteredResetCredits(showUsed=true) = %#v", all)
+		t.Fatalf("filteredResetCredits() = %#v", available)
 	}
 }
 

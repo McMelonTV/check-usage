@@ -17,12 +17,11 @@ func runResetsCommand(args []string) int {
 	setDoubleDashFlagUsage(fs)
 	accountsPath := fs.String("accounts-file", defaultAccountsPath(), "path to accounts.json")
 	timeout := fs.Int("timeout", 20, "HTTP timeout in seconds")
-	showUsed := fs.Bool("show-used", false, "include redeemed, expired, and other unavailable reset credits")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: check-usage resets [--accounts-file path] [--timeout seconds] [--show-used] <account name/email/id>")
+		fmt.Fprintln(os.Stderr, "usage: check-usage resets [--accounts-file path] [--timeout seconds] <account name/email/id>")
 		return 2
 	}
 	target := strings.TrimSpace(fs.Arg(0))
@@ -73,7 +72,7 @@ func runResetsCommand(args []string) int {
 		return 1
 	}
 
-	printResetCreditsDetails(updated, credits, *showUsed, time.Now())
+	printResetCreditsDetails(updated, credits, time.Now())
 	return 0
 }
 
@@ -104,20 +103,16 @@ func accountEmailMatches(account storedAccount, target string) bool {
 	return account.Email != nil && strings.EqualFold(strings.TrimSpace(*account.Email), target)
 }
 
-func printResetCreditsDetails(account storedAccount, payload *resetCreditsPayload, showUsed bool, now time.Time) {
+func printResetCreditsDetails(account storedAccount, payload *resetCreditsPayload, now time.Time) {
 	fmt.Printf("%s %s\n", headerText("Account:"), account.Name)
 	fmt.Printf("%s %s\n", headerText("Email:"), valueOrDash(account.Email))
 	fmt.Printf("%s %s\n", headerText("Available reset credits:"), colorizeAvailableResetCreditCount(payload.AvailableCount))
 	fmt.Printf("%s %d\n", headerText("Total earned reset credits:"), payload.TotalEarnedCount)
 
-	credits := filteredResetCredits(payload.Credits, showUsed)
+	credits := filteredResetCredits(payload.Credits)
 	if len(credits) == 0 {
 		fmt.Println()
-		if showUsed {
-			fmt.Println("No reset credits found.")
-		} else {
-			fmt.Println("No available reset credits found. Use --show-used to include redeemed or expired credits.")
-		}
+		fmt.Println("No available reset credits found.")
 		return
 	}
 
@@ -125,19 +120,17 @@ func printResetCreditsDetails(account storedAccount, payload *resetCreditsPayloa
 	fmt.Println()
 	var b bytes.Buffer
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "#\tSTATUS\tTITLE\tGAINED\tEXPIRES\tREMAINING\tREDEEM STARTED\tREDEEMED")
+	fmt.Fprintln(w, "#\tSTATUS\tTITLE\tGAINED\tEXPIRES\tREMAINING")
 	for i, credit := range credits {
 		fmt.Fprintf(
 			w,
-			"%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%d\t%s\t%s\t%s\t%s\t%s\n",
 			i+1,
 			valueOrUnknown(credit.Status),
 			valueOrDashString(credit.Title),
 			resetCreditTimeText(credit.GrantedAt, now, false),
 			resetCreditTimeText(credit.ExpiresAt, now, false),
 			resetCreditRemainingText(credit.ExpiresAt, now),
-			resetCreditTimeText(credit.RedeemStartedAt, now, false),
-			resetCreditTimeText(credit.RedeemedAt, now, false),
 		)
 	}
 	_ = w.Flush()
@@ -163,10 +156,10 @@ func applyResetCreditStatusColors(tableText string, credits []resetCreditDetail)
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func filteredResetCredits(credits []resetCreditDetail, showUsed bool) []resetCreditDetail {
+func filteredResetCredits(credits []resetCreditDetail) []resetCreditDetail {
 	filtered := make([]resetCreditDetail, 0, len(credits))
 	for _, credit := range credits {
-		if showUsed || resetCreditAvailable(credit) {
+		if resetCreditAvailable(credit) {
 			filtered = append(filtered, credit)
 		}
 	}
