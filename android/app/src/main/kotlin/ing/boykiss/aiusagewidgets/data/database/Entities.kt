@@ -45,5 +45,5 @@ data class WidgetConfigurationEntity(
     @PrimaryKey val appWidgetId: Int,
     val providerId: String,
     val accountId: String,
-    val visualStyle: String = WidgetVisualStyle.MATERIAL_YOU.name,
+    val visualStyle: String = WidgetVisualStyle.Default.name,
 )
