@@ -25,9 +25,12 @@ const (
 	TokenURL          = "https://platform.claude.com/v1/oauth/token"
 	ManualRedirectURI = "https://platform.claude.com/oauth/code/callback"
 	Scopes            = "user:profile user:inference"
-	UsageURL          = "https://api.anthropic.com/api/oauth/usage"
-	ProfileURL        = "https://api.anthropic.com/api/oauth/profile"
-	OAuthBeta         = "oauth-2025-04-20"
+	// UsageURL asks for the limit-reset status block ("cedar_ember") next to
+	// the usage windows, exactly as Claude Code's reset read does, so reset
+	// credits cost no extra request against the tight usage rate limit.
+	UsageURL   = "https://api.anthropic.com/api/oauth/usage?" + ResetProgram + "=1&skip_spend=1"
+	ProfileURL = "https://api.anthropic.com/api/oauth/profile"
+	OAuthBeta  = "oauth-2025-04-20"
 	// UserAgent is the one Claude Code sends to api.anthropic.com. The usage
 	// endpoint rate-limits unrecognized clients far more aggressively (a
 	// "check-usage/…" agent got persistent 429s where this one succeeds).
@@ -166,6 +169,9 @@ type UsagePayload struct {
 	FiveHour *UsageWindow `json:"five_hour"`
 	SevenDay *UsageWindow `json:"seven_day"`
 	Limits   []UsageLimit `json:"limits"`
+	// Resets is the raw limit-reset status block; see ResetStatus. It is kept
+	// raw so a malformed block never breaks the usage windows.
+	Resets json.RawMessage `json:"cedar_ember,omitempty"`
 }
 
 // Session returns the 5-hour window, preferring the structured limits array.

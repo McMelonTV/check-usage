@@ -43,7 +43,9 @@ func (metric Metric) IsScoped() bool {
 	return metric.Scope != ""
 }
 
-// UsageSnapshot is the detailed Codex usage summary.
+// UsageSnapshot is the detailed usage summary of a Codex or Claude account:
+// its session ("short_window") and weekly ("long_window") windows plus its
+// reset-credit summary. Claude's per-model weekly limit is only in Metrics.
 type UsageSnapshot struct {
 	PlanType        string        `json:"plan_type,omitempty"`
 	Windows         []UsageWindow `json:"windows"`
@@ -52,7 +54,7 @@ type UsageSnapshot struct {
 	CreditsError    string        `json:"credits_error,omitempty"`
 }
 
-// UsageWindow is one Codex rate-limit window.
+// UsageWindow is one rate-limit window of a UsageSnapshot.
 type UsageWindow struct {
 	Kind          string   `json:"kind"`
 	Label         string   `json:"label"`
@@ -62,21 +64,25 @@ type UsageWindow struct {
 	WindowSeconds *int     `json:"window_seconds,omitempty"`
 }
 
-// CreditMetric summarizes Codex reset credits within a UsageSnapshot.
+// CreditMetric summarizes an account's reset credits (grants that refill a
+// usage limit early, such as Codex reset credits or Claude limit resets)
+// within a UsageSnapshot. AvailableCount is what can be used now.
 type CreditMetric struct {
 	AvailableCount      int    `json:"available_count"`
 	TotalEarnedCount    int    `json:"total_earned_count"`
 	EarliestExpiryEpoch *int64 `json:"earliest_expiry_epoch_seconds,omitempty"`
 }
 
-// ResetCredits lists the available Codex reset credits of an account.
+// ResetCredits lists the available reset credits of a Codex or Claude account.
 type ResetCredits struct {
 	AvailableCount   int           `json:"available_count"`
 	TotalEarnedCount int           `json:"total_earned_count"`
 	Credits          []ResetCredit `json:"credits"`
 }
 
-// ResetCredit is one Codex reset credit. Times are RFC 3339 strings as
+// ResetCredit is one reset credit. For Claude, each reset of a grant is one
+// credit: Title is the grant label, GrantedAt and ExpiresAt its start and end,
+// and the redeem times are empty. Times are RFC 3339 strings as
 // returned by the provider and may be empty.
 type ResetCredit struct {
 	Status          string `json:"status"`

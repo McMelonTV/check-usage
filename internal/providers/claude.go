@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 )
 
 // ClaudeResult is the usage for a Claude account plus its possibly refreshed credentials.
@@ -17,6 +18,10 @@ type ClaudeResult struct {
 	CredentialsChanged bool
 	// PlanChecked reports that the profile was read, so Usage.Plan is current.
 	PlanChecked bool
+	// ResetCredits are the limit resets read with the usage. It is nil when
+	// ResetError is set; an account outside the program has an empty list.
+	ResetCredits *codexapi.ResetCreditsPayload
+	ResetError   error
 }
 
 // ClaudePlanCheckInterval is how often the plan is re-read from the profile
@@ -62,6 +67,7 @@ func FetchClaudeUsage(ctx context.Context, client *http.Client, credentials clau
 		return result, err
 	}
 	result.Usage = ClaudeUsage(payload)
+	result.ResetCredits, result.ResetError = ClaudeResetCredits(payload, now)
 	if profile != nil {
 		result.Usage.Plan, result.PlanChecked = profile.PlanName(), true
 	}
@@ -95,4 +101,74 @@ func claudeMetric(slot MetricSlot, label string, window *claudeapi.UsageWindow) 
 		metric.ResetAt = &resetAt
 	}
 	return metric
+}
+
+// claudeResetTitle names grants the API sent without a label.
+const claudeResetTitle = "Limit reset"
+
+// ClaudeResetCredits maps the limit-reset block to the reset-credit payload
+// shared with Codex: one entry per reset, "available" for resets that can be
+// used, "redeemed" for used ones, and "expired" or "paused" for the rest of
+// a grant that cannot be used. An account outside the program, or one the API
+// reports ineligible, holds no credits. Only a malformed block is an error.
+func ClaudeResetCredits(payload *claudeapi.UsagePayload, now time.Time) (*codexapi.ResetCreditsPayload, error) {
+	status, err := payload.ResetStatus()
+	if err != nil {
+		return nil, err
+	}
+	credits := &codexapi.ResetCreditsPayload{Credits: []codexapi.ResetCreditDetail{}}
+	if status == nil || !status.Eligible {
+		return credits, nil
+	}
+	credits.AvailableCount = status.AvailableResets(now)
+	for _, grant := range status.Grants {
+		credits.TotalEarnedCount += grant.ResetsTotal
+		detail := codexapi.ResetCreditDetail{Title: grant.Label, GrantedAt: grant.StartsAt, ExpiresAt: grant.EndsAt}
+		if detail.Title == "" {
+			detail.Title = claudeResetTitle
+		}
+		unused := "available"
+		if !grant.Holding(now) {
+			unused = "paused"
+			if endsAt, ok := grant.EndTime(); ok && !endsAt.After(now) {
+				unused = "expired"
+			}
+		}
+		for range grant.ResetsLeft {
+			detail.Status = unused
+			credits.Credits = append(credits.Credits, detail)
+		}
+		for range grant.ResetsTotal - grant.ResetsLeft {
+			detail.Status = "redeemed"
+			credits.Credits = append(credits.Credits, detail)
+		}
+	}
+	return credits, nil
+}
+
+// ClaudeSnapshot builds the provider-neutral snapshot for a Claude account:
+// its session and weekly windows plus the reset-credit summary.
+func ClaudeSnapshot(usage Usage, credits *codexapi.ResetCreditsPayload, creditsErr error, fetchedAt time.Time) *codexapi.UsageSnapshot {
+	snapshot := &codexapi.UsageSnapshot{PlanType: usage.Plan, Windows: []codexapi.UsageWindow{}, FetchedAtMillis: fetchedAt.UnixMilli()}
+	for _, metric := range usage.Metrics {
+		if metric.IsScoped() || metric.Used == nil {
+			continue
+		}
+		var kind, label string
+		var length time.Duration
+		switch metric.Slot {
+		case SessionSlot:
+			kind, label, length = "short_window", "5H", 5*time.Hour
+		case WeeklySlot:
+			kind, label, length = "long_window", "7D", 7*24*time.Hour
+		default:
+			continue
+		}
+		used, remaining, seconds := *metric.Used, 100-*metric.Used, int(length.Seconds())
+		snapshot.Windows = append(snapshot.Windows, codexapi.UsageWindow{
+			Kind: kind, Label: label, UsedPercent: &used, Remaining: &remaining, ResetAt: metric.ResetAt, WindowSeconds: &seconds,
+		})
+	}
+	snapshot.Credits, snapshot.CreditsError = codexapi.SummarizeResetCredits(credits, creditsErr)
+	return snapshot
 }

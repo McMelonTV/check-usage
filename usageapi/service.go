@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -389,6 +390,9 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 		}
 		return ResetCreditsResult{Account: account.public(), Credits: publicResetCredits(entry.ResetCredits), Cached: true}, nil
 	}
+	if provider.ID == providerClaude {
+		return service.claudeResetCredits(ctx, store, account)
+	}
 	changed, err := service.refreshCredentials(ctx, account)
 	if err != nil {
 		return ResetCreditsResult{}, err
@@ -408,6 +412,35 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 		return ResetCreditsResult{}, err
 	}
 	return ResetCreditsResult{Account: account.public(), Credits: publicResetCredits(credits)}, nil
+}
+
+// claudeResetCredits refreshes a Claude account's usage, which carries its
+// resets, honoring the usage throttle: within it the cached credits are
+// returned and marked as cached.
+func (service *Service) claudeResetCredits(ctx context.Context, store *accountsStore, account *storedAccount) (ResetCreditsResult, error) {
+	usage, changed, err := service.claudeUsage(ctx, account, true)
+	if changed {
+		if saveErr := service.saveAccounts(store); saveErr != nil {
+			return ResetCreditsResult{}, saveErr
+		}
+	}
+	if err != nil {
+		return ResetCreditsResult{}, err
+	}
+	entry, _, err := service.loadCache(account.ID)
+	if err != nil {
+		return ResetCreditsResult{}, err
+	}
+	if entry.ResetCredits == nil {
+		if usage.Error != "" {
+			return ResetCreditsResult{}, errors.New(usage.Error)
+		}
+		return ResetCreditsResult{}, fmt.Errorf("reset credits are unavailable for account %q", account.Name)
+	}
+	// Credits not read by this request (throttled, failed, or a malformed
+	// reset block) are the cached ones.
+	stale := usage.Cached || usage.Snapshot == nil || usage.Snapshot.CreditsError != ""
+	return ResetCreditsResult{Account: account.public(), Credits: publicResetCredits(entry.ResetCredits), Cached: stale}, nil
 }
 
 func (service *Service) usageForAccount(ctx context.Context, account *storedAccount, refresh bool) (UsageResult, bool, error) {
@@ -544,7 +577,7 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 		if !cached || entry.ProviderUsage == nil {
 			return UsageResult{}, false
 		}
-		return UsageResult{Account: account.public(), Metrics: publicMetrics(entry.ProviderUsage.Metrics), Cached: true}, true
+		return UsageResult{Account: account.public(), Snapshot: claudeSnapshot(entry), Metrics: publicMetrics(entry.ProviderUsage.Metrics), Cached: true}, true
 	}
 	now := service.now()
 	// The usage endpoint is rate limited: within the throttle window (shared
@@ -587,6 +620,9 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 	if fetched.PlanChecked {
 		entry.PlanCheckedAt = now.Unix()
 	}
+	if fetched.ResetCredits != nil {
+		entry.ResetCredits, entry.ResetFetchedAt = fetched.ResetCredits, now.Unix()
+	}
 	if err := service.saveCache(account.ID, entry); err != nil {
 		return UsageResult{}, changed, err
 	}
@@ -594,8 +630,26 @@ func (service *Service) claudeUsage(ctx context.Context, account *storedAccount,
 		account.PlanType = &usage.Plan
 		changed = true
 	}
-	return UsageResult{Account: account.public(), Metrics: publicMetrics(usage.Metrics)}, changed, nil
+	// Like Codex, a failed reset read falls back to cached credits but still
+	// reports the failure.
+	snapshot := claudeSnapshot(entry)
+	if fetched.ResetError != nil {
+		snapshot.CreditsError = codexapi.CreditsUnavailable
+	}
+	return UsageResult{Account: account.public(), Snapshot: snapshot, Metrics: publicMetrics(usage.Metrics)}, changed, nil
 }
+
+// claudeSnapshot builds a Claude account's snapshot from its cache entry,
+// whose ProviderUsage must be set.
+func claudeSnapshot(entry cacheEntry) *UsageSnapshot {
+	var creditsErr error
+	if entry.ResetCredits == nil {
+		creditsErr = errResetCreditsNotCached
+	}
+	return publicSnapshot(providers.ClaudeSnapshot(*entry.ProviderUsage, entry.ResetCredits, creditsErr, time.Unix(entry.FetchedAt, 0)))
+}
+
+var errResetCreditsNotCached = errors.New("reset credits not cached")
 
 func setClaudeCredentials(account *storedAccount, credentials claudeapi.Credentials) {
 	account.AuthData.AccessToken = stringPointer(credentials.AccessToken)
@@ -613,7 +667,7 @@ func cachedUsageResult(account *storedAccount, entry cacheEntry, exists bool) (U
 	}
 	creditsErr := error(nil)
 	if entry.ResetCredits == nil {
-		creditsErr = fmt.Errorf("reset credits not cached")
+		creditsErr = errResetCreditsNotCached
 	}
 	snapshot := codexapi.BuildSnapshot(
 		&codexapi.RateLimitStatusPayload{PlanType: entry.PlanType, RateLimit: entry.RateLimit},
