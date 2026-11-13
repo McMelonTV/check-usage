@@ -351,6 +351,27 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
         WidgetLayout.LARGE -> 20.dp
     }
     val barWidth = size.width - horizontalPadding * 2
+    val verticalPadding = if (layout == WidgetLayout.LARGE) 18.dp else if (layout == WidgetLayout.COMPACT) 10.dp else 12.dp
+    val compact = layout == WidgetLayout.COMPACT
+    val large = layout == WidgetLayout.LARGE
+    // Generic widgets size their window rows to the space left between the header and footer.
+    val genericPlan = if (state.generic) {
+        val headerHeight = if (large) 38.dp else 32.dp
+        val footerHeight = if (compact) 0.dp else if (large) 18.dp else 16.dp
+        val available = size.height - verticalPadding * 2 - headerHeight - footerHeight - 6.dp
+        planWindowRows(decodeWindows(state.metricsJson).size, available, compact)
+    } else {
+        null
+    }
+    // Rows that show their own countdown make a shared one redundant.
+    val windowsShowReset = genericPlan?.first == WindowRowDetail.RESET && state.balance.isBlank()
+    val footer = when {
+        compact -> null
+        state.statusMessage.isNotBlank() -> state.statusMessage
+        state.balance.isNotBlank() -> "Balance"
+        windowsShowReset -> null
+        else -> countdown(state.resetAt)
+    }
     val background = p.backgroundImage?.let { GlanceModifier.background(ImageProvider(it)) }
         ?: GlanceModifier.background(p.background)
     Column(
@@ -358,13 +379,13 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
             .clickable(actionStartActivity<MainActivity>())
             .padding(
                 horizontal = horizontalPadding,
-                vertical = if (layout == WidgetLayout.LARGE) 18.dp else if (layout == WidgetLayout.COMPACT) 10.dp else 12.dp,
+                vertical = verticalPadding,
             ),
     ) {
         Header(state, p, layout, narrow = size.width < 200.dp)
         Spacer(GlanceModifier.defaultWeight())
-        if (state.generic) {
-            GenericWidgetBody(state, p, barWidth, layout)
+        if (genericPlan != null) {
+            GenericWidgetBody(state, p, barWidth, genericPlan)
         } else when (layout) {
             // Compact cards have no countdown line, so wide ones show the time to reset inline.
             WidgetLayout.COMPACT -> MetricRow(
@@ -380,10 +401,11 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
             WidgetLayout.STACKED -> StackedBody(featured, secondary, p, barWidth, large = false, narrow = size.width < 240.dp)
             WidgetLayout.LARGE -> StackedBody(featured, secondary, p, barWidth, large = true, resetCount = state.resetCount)
         }
-        if (layout != WidgetLayout.COMPACT) {
-            Spacer(GlanceModifier.defaultWeight())
+        // Keep the body centred even when the footer is dropped.
+        if (!compact) Spacer(GlanceModifier.defaultWeight())
+        if (footer != null) {
             Text(
-                p.text(state.statusMessage.ifBlank { if (state.balance.isNotBlank()) "Balance" else countdown(state.resetAt) }),
+                p.text(footer),
                 style = TextStyle(
                     color = p.muted,
                     fontSize = if (layout == WidgetLayout.LARGE) 13.sp else 11.sp,
@@ -395,29 +417,78 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
     }
 }
 
+/** How much detail each window row carries; every row of a widget uses the same one. */
+private enum class WindowRowDetail { FIGURE, BAR, RESET }
+
+// Approximate row heights, padded for the taller dot-matrix fonts.
+private val WindowFigureHeight = 28.dp
+private val WindowBarHeight = 10.dp
+private val WindowResetHeight = 15.dp
+private val WindowRowGap = 8.dp
+
+private fun windowRowHeight(detail: WindowRowDetail): Dp = WindowFigureHeight + when (detail) {
+    WindowRowDetail.FIGURE -> 0.dp
+    WindowRowDetail.BAR -> WindowBarHeight
+    WindowRowDetail.RESET -> WindowBarHeight + WindowResetHeight
+}
+
+/**
+ * The richest row detail that fits every window in [available], and how many windows to show.
+ * Rows never mix detail levels, so a widget too short for a bar per window shows none.
+ */
+private fun planWindowRows(count: Int, available: Dp, compact: Boolean): Pair<WindowRowDetail, Int> {
+    val candidates = if (compact) listOf(WindowRowDetail.FIGURE) else WindowRowDetail.entries.reversed()
+    fun fits(detail: WindowRowDetail, rows: Int) = windowRowHeight(detail) * rows + WindowRowGap * (rows - 1) <= available
+    candidates.firstOrNull { fits(it, count) }?.let { return it to count }
+    val rows = (count downTo 1).firstOrNull { fits(WindowRowDetail.FIGURE, it) } ?: 1
+    return WindowRowDetail.FIGURE to rows
+}
+
+private fun decodeWindows(json: String): List<UsageWindow> =
+    runCatching { widgetJson.decodeFromString<List<UsageWindow>>(json) }.getOrDefault(emptyList())
+
 @Composable
-private fun GenericWidgetBody(state: WidgetRenderState, p: WidgetPalette, barWidth: Dp, layout: WidgetLayout) {
-    val windows = runCatching { widgetJson.decodeFromString<List<UsageWindow>>(state.metricsJson) }.getOrDefault(emptyList())
+private fun GenericWidgetBody(state: WidgetRenderState, p: WidgetPalette, barWidth: Dp, plan: Pair<WindowRowDetail, Int>) {
+    val windows = decodeWindows(state.metricsJson)
     if (state.balance.isNotBlank()) {
         Text(p.text(state.balance), style = TextStyle(p.foreground, 22.sp, FontWeight.Bold, fontFamily = p.displayFont), maxLines = 2)
     } else if (windows.isEmpty()) {
-        Text(p.text(state.statusMessage.ifBlank { "Usage unavailable" }), style = TextStyle(p.muted, 14.sp), maxLines = 2)
+        Text(p.text(state.statusMessage.ifBlank { "Usage unavailable" }), style = TextStyle(p.muted, 14.sp, fontFamily = p.labelFont), maxLines = 2)
     } else {
+        val (detail, rows) = plan
+        // One child per window: Glance drops any container children past the tenth.
         Column(GlanceModifier.fillMaxWidth()) {
-            windows.take(if (layout == WidgetLayout.COMPACT) 2 else 3).forEach { window ->
-                Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(p.text("${window.label} left"), GlanceModifier.defaultWeight(), style = TextStyle(p.muted, 11.sp, fontFamily = p.labelFont), maxLines = 1)
-                    PercentText(window.remainingPercent, p, if (layout == WidgetLayout.COMPACT) 16.sp else 20.sp)
-                }
-                if (layout != WidgetLayout.COMPACT) {
-                    Spacer(GlanceModifier.height(4.dp))
-                    UsageBar(window.remainingPercent, p.barColor(window.remainingPercent, p.accent), p, 5.dp, barWidth)
-                    if (layout == WidgetLayout.LARGE || layout == WidgetLayout.STACKED) {
-                        Text(p.text(countdown(window.resetsAtEpochSeconds)), style = TextStyle(p.muted, 10.sp), maxLines = 1)
-                    }
-                }
-                Spacer(GlanceModifier.height(6.dp))
+            windows.take(rows).forEachIndexed { index, window ->
+                if (index > 0) Spacer(GlanceModifier.height(WindowRowGap))
+                WindowRow(window, p, barWidth, detail)
             }
+        }
+    }
+}
+
+@Composable
+private fun WindowRow(window: UsageWindow, p: WidgetPalette, barWidth: Dp, detail: WindowRowDetail) {
+    Column(GlanceModifier.fillMaxWidth()) {
+        Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                p.text("${window.label} left"),
+                GlanceModifier.defaultWeight(),
+                style = TextStyle(p.muted, 11.sp, FontWeight.Medium, fontFamily = p.labelFont),
+                maxLines = 1,
+            )
+            PercentText(window.remainingPercent, p, 20.sp)
+        }
+        if (detail != WindowRowDetail.FIGURE) {
+            Spacer(GlanceModifier.height(4.dp))
+            UsageBar(window.remainingPercent, p.barColor(window.remainingPercent, p.accent), p, 5.dp, barWidth)
+        }
+        if (detail == WindowRowDetail.RESET) {
+            Spacer(GlanceModifier.height(3.dp))
+            Text(
+                p.text(countdown(window.resetsAtEpochSeconds)),
+                style = TextStyle(p.muted, 10.sp, FontWeight.Medium, fontFamily = p.labelFont),
+                maxLines = 1,
+            )
         }
     }
 }
