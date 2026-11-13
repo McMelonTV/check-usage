@@ -914,26 +914,27 @@ func TestNonCompactListShowsBarResetTimes(t *testing.T) {
 		},
 	}
 	for _, wide := range []bool{true, false} {
-		now := time.Now()
-		sessionDate := now.Add(90 * time.Minute).Format("Jan 2 15:04")
-		weeklyDate := now.Add(3 * 24 * time.Hour).Format("Jan 2 15:04")
-		nonCompact := Model{rows: []usage.Row{row}, settings: storage.Settings{CompactMode: false}, width: 110, height: 24}
+		sessionDate := time.Unix(*row.Metrics[0].ResetAt, 0).Format("Jan 2 15:04")
+		weeklyDate := time.Unix(*row.Metrics[1].ResetAt, 0).Format("Jan 2 15:04")
+		// Leave room for both countdowns and dates with two-digit days.
+		const width = 140
+		nonCompact := Model{rows: []usage.Row{row}, settings: storage.Settings{CompactMode: false}, width: width, height: 24}
 		var view string
 		if wide {
-			view = ansi.Strip(nonCompact.renderWideList(110, 22))
+			view = ansi.Strip(nonCompact.renderWideList(width, 22))
 		} else {
-			view = ansi.Strip(nonCompact.renderCompactList(110, 22))
+			view = ansi.Strip(nonCompact.renderCompactList(width, 22))
 		}
 		for _, want := range []string{"·", "1h29m", "2d23h", "30d23h", sessionDate, weeklyDate} {
 			if !strings.Contains(view, want) {
 				t.Fatalf("wide=%v non-compact list missing %q:\n%s", wide, want, view)
 			}
 		}
-		compact := Model{rows: []usage.Row{row}, settings: storage.Settings{CompactMode: true}, width: 110, height: 24}
+		compact := Model{rows: []usage.Row{row}, settings: storage.Settings{CompactMode: true}, width: width, height: 24}
 		if wide {
-			view = ansi.Strip(compact.renderWideList(110, 22))
+			view = ansi.Strip(compact.renderWideList(width, 22))
 		} else {
-			view = ansi.Strip(compact.renderCompactList(110, 22))
+			view = ansi.Strip(compact.renderCompactList(width, 22))
 		}
 		if strings.Contains(view, sessionDate) {
 			t.Fatalf("wide=%v compact list still shows reset dates:\n%s", wide, view)
