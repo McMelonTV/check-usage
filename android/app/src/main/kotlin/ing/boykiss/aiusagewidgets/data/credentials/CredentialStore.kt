@@ -12,6 +12,9 @@ data class ProviderCredentials(
     val refreshToken: String,
     val idToken: String,
     val remoteAccountId: String? = null,
+    val apiKey: String = "",
+    val expiresAt: Long = 0,
+    val planCheckedAt: Long = 0,
 )
 
 class CredentialStore(context: Context) {
@@ -32,7 +35,12 @@ class CredentialStore(context: Context) {
         check(preferences.edit().putString(accountId, json.encodeToString(credentials)).commit())
     }
 
+    fun move(fromAccountId: String, toAccountId: String) {
+        val stored = checkNotNull(preferences.getString(fromAccountId, null)) { "Sign-in credentials missing" }
+        check(preferences.edit().putString(toAccountId, stored).remove(fromAccountId).commit())
+    }
+
     fun remove(accountId: String) {
-        preferences.edit().remove(accountId).apply()
+        check(preferences.edit().remove(accountId).commit())
     }
 }

@@ -41,37 +41,16 @@ func runResetsCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	account := store.Accounts[idx]
-	provider, err := usage.ProviderFor(account.Provider)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	if !provider.ResetCredits {
-		fmt.Fprintf(os.Stderr, "error: reset credits are unavailable for %s accounts\n", provider.Name)
-		return 1
-	}
-
 	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
-	updated, changed, err := usage.EnsureFreshTokens(account, client)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
+	updated, changed, credits, err := usage.RefreshResetCredits(store.Accounts[idx], client)
 	if changed {
 		store.Accounts[idx] = updated
-		if err := storage.SaveAccounts(*accountsPath, store); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+		if saveErr := storage.SaveAccounts(*accountsPath, store); saveErr != nil {
+			fmt.Fprintln(os.Stderr, "error:", saveErr)
 			return 1
 		}
 	}
-
-	credits, err := usage.FetchResetCredits(updated, client)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	if err := storage.UpdateResetCache(updated.ID, credits, time.Now().Unix()); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}

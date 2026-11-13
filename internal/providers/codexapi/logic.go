@@ -93,6 +93,13 @@ func TokenExpiredOrNear(token string, now time.Time, skew time.Duration) bool {
 }
 
 func FetchSnapshot(ctx context.Context, client *http.Client, accessToken, accountID, userAgent string, now time.Time) (*UsageSnapshot, error) {
+	snapshot, _, err := FetchSnapshotWithResets(ctx, client, accessToken, accountID, userAgent, now)
+	return snapshot, err
+}
+
+// FetchSnapshotWithResets retains the detailed credits already fetched alongside
+// usage, allowing mobile clients to cache them without a duplicate request.
+func FetchSnapshotWithResets(ctx context.Context, client *http.Client, accessToken, accountID, userAgent string, now time.Time) (*UsageSnapshot, *ResetCreditsPayload, error) {
 	var usage *RateLimitStatusPayload
 	var credits *ResetCreditsPayload
 	var usageErr, creditsErr error
@@ -108,9 +115,15 @@ func FetchSnapshot(ctx context.Context, client *http.Client, accessToken, accoun
 	}()
 	wg.Wait()
 	if usageErr != nil {
-		return nil, usageErr
+		return nil, nil, usageErr
 	}
-	return BuildSnapshot(usage, credits, creditsErr, now), nil
+	if creditsErr != nil {
+		credits = nil
+	}
+	if credits != nil && credits.Credits == nil {
+		credits.Credits = []ResetCreditDetail{}
+	}
+	return BuildSnapshot(usage, credits, creditsErr, now), credits, nil
 }
 
 // BuildSnapshot maps provider payloads into the stable representation consumed
@@ -132,11 +145,20 @@ func BuildSnapshot(usage *RateLimitStatusPayload, credits *ResetCreditsPayload, 
 			}
 		}
 	}
-	if creditsErr != nil || credits == nil {
-		snapshot.CreditsError = "Reset credits unavailable"
-		return snapshot
-	}
+	snapshot.Credits, snapshot.CreditsError = SummarizeResetCredits(credits, creditsErr)
+	return snapshot
+}
 
+// CreditsUnavailable is the snapshot's CreditsError when reset credits could
+// not be read.
+const CreditsUnavailable = "Reset credits unavailable"
+
+// SummarizeResetCredits condenses any provider's reset credits into the
+// snapshot metric, or returns CreditsUnavailable when they could not be read.
+func SummarizeResetCredits(credits *ResetCreditsPayload, creditsErr error) (*CreditMetric, string) {
+	if creditsErr != nil || credits == nil {
+		return nil, CreditsUnavailable
+	}
 	metric := &CreditMetric{AvailableCount: credits.AvailableCount, TotalEarnedCount: credits.TotalEarnedCount}
 	for _, credit := range credits.Credits {
 		if !strings.EqualFold(credit.Status, "available") {
@@ -151,8 +173,7 @@ func BuildSnapshot(usage *RateLimitStatusPayload, credits *ResetCreditsPayload, 
 			metric.EarliestExpiryEpoch = &epoch
 		}
 	}
-	snapshot.Credits = metric
-	return snapshot
+	return metric, ""
 }
 
 func WindowKind(seconds *int, fallback string) string {

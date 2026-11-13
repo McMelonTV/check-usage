@@ -44,6 +44,7 @@ import kotlinx.serialization.Serializable
     val credits: GoCreditMetric? = null,
     @SerialName("fetched_at_epoch_millis") val fetchedAtEpochMillis: Long,
     @SerialName("credits_error") val creditsError: String? = null,
+    @SerialName("reset_details") val resetDetails: ResetDetailsResponse? = null,
 )
 
 @Serializable data class GoUsageWindow(
@@ -59,4 +60,10 @@ import kotlinx.serialization.Serializable
     @SerialName("available_count") val availableCount: Int,
     @SerialName("total_earned_count") val totalEarnedCount: Int,
     @SerialName("earliest_expiry_epoch_seconds") val earliestExpiryEpochSeconds: Long? = null,
+)
+
+@Serializable data class ResetDetailsResponse(
+    @SerialName("available_count") val availableCount: Int,
+    @SerialName("total_earned_count") val totalEarnedCount: Int,
+    val credits: List<ing.boykiss.aiusagewidgets.domain.ResetCredit> = emptyList(),
 )

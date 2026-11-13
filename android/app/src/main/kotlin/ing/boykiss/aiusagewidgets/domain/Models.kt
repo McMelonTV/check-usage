@@ -1,11 +1,17 @@
 package ing.boykiss.aiusagewidgets.domain
 
 import androidx.compose.runtime.Immutable
+import kotlinx.serialization.Serializable
 
+@Serializable
 @JvmInline value class ProviderId(val value: String)
+
+/** Providers that report reset credits: Codex through its own request, Claude with its usage. */
+val ProviderId.hasResetCredits: Boolean get() = value == "codex" || value == "claude"
+@Serializable
 @JvmInline value class ProviderAccountId(val value: String)
 
-enum class UsageMetricKind { SHORT_WINDOW, LONG_WINDOW, RESET_CREDITS }
+enum class UsageMetricKind { SHORT_WINDOW, LONG_WINDOW, MONTHLY_WINDOW, RESET_CREDITS }
 enum class AuthenticationState { CONNECTED, SIGN_IN_REQUIRED }
 enum class DataFreshness { FRESH, STALE, ERROR }
 enum class WidgetVisualStyle(val displayName: String) {
@@ -58,6 +64,7 @@ data class ProviderAccount(
     val authenticationState: AuthenticationState = AuthenticationState.CONNECTED,
 )
 
+@Serializable
 @Immutable
 data class UsageWindow(
     val kind: UsageMetricKind,
@@ -68,6 +75,7 @@ data class UsageWindow(
     val windowSeconds: Int?,
 )
 
+@Serializable
 @Immutable
 data class CreditMetric(
     val availableCount: Int?,
@@ -75,6 +83,7 @@ data class CreditMetric(
     val earliestExpiryEpochSeconds: Long?,
 )
 
+@Serializable
 @Immutable
 data class ProviderUsageSnapshot(
     val providerId: ProviderId,
@@ -84,6 +93,10 @@ data class ProviderUsageSnapshot(
     val fetchedAtEpochMillis: Long,
     val freshness: DataFreshness,
     val errorMessage: String? = null,
+    val resetDetails: List<ResetCredit>? = null,
+    val planLabel: String? = null,
+    val retryAtEpochMillis: Long = 0,
+    val resetsError: String? = null,
 )
 
 @Immutable
@@ -95,3 +108,13 @@ data class UsageWidgetConfiguration(
 )
 
 fun Double?.remainingPercent(): Double? = this?.let { (100.0 - it).coerceIn(0.0, 100.0) }
+
+@Serializable
+data class ResetCredit(
+    val status: String,
+    val title: String,
+    @kotlinx.serialization.SerialName("granted_at") val grantedAt: String = "",
+    @kotlinx.serialization.SerialName("expires_at") val expiresAt: String = "",
+    @kotlinx.serialization.SerialName("redeem_started_at") val redeemStartedAt: String = "",
+    @kotlinx.serialization.SerialName("redeemed_at") val redeemedAt: String = "",
+)

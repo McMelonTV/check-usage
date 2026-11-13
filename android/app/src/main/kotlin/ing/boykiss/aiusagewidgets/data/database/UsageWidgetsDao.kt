@@ -30,6 +30,22 @@ interface UsageWidgetsDao {
     @Query("SELECT * FROM usage_snapshots WHERE accountId = :accountId")
     fun observeSnapshot(accountId: String): Flow<SnapshotEntity?>
 
+    @Query("SELECT * FROM usage_snapshots")
+    fun observeSnapshots(): Flow<List<SnapshotEntity>>
+
+    @Query("DELETE FROM usage_snapshots WHERE accountId = :id")
+    suspend fun deleteSnapshot(id: String)
+
+    @Query("DELETE FROM widget_configurations WHERE accountId = :id")
+    suspend fun deleteWidgetsForAccount(id: String)
+
+    @androidx.room.Transaction
+    suspend fun removeAccountData(id: String) {
+        deleteSnapshot(id)
+        deleteWidgetsForAccount(id)
+        deleteAccount(id)
+    }
+
     @Query("SELECT * FROM usage_snapshots WHERE accountId = :accountId")
     suspend fun snapshot(accountId: String): SnapshotEntity?
 

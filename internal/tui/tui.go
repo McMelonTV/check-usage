@@ -275,29 +275,14 @@ func loadResetCredits(accountsPath, accountID string, client *http.Client) (*cod
 	if err != nil {
 		return nil, err
 	}
-	account := store.Accounts[idx]
-	provider, err := usage.ProviderFor(account.Provider)
-	if err != nil {
-		return nil, err
-	}
-	if !provider.ResetCredits {
-		return nil, fmt.Errorf("reset credits are unavailable for %s accounts", provider.Name)
-	}
-	updated, changed, err := usage.EnsureFreshTokens(account, client)
-	if err != nil {
-		return nil, err
-	}
+	updated, changed, payload, err := usage.RefreshResetCredits(store.Accounts[idx], client)
 	if changed {
 		store.Accounts[idx] = updated
-		if err := storage.SaveAccounts(accountsPath, store); err != nil {
-			return nil, err
+		if saveErr := storage.SaveAccounts(accountsPath, store); saveErr != nil {
+			return nil, saveErr
 		}
 	}
-	payload, err := usage.FetchResetCredits(updated, client)
 	if err != nil {
-		return nil, err
-	}
-	if err := storage.UpdateResetCache(account.ID, payload, time.Now().Unix()); err != nil {
 		return nil, err
 	}
 	return payload, nil

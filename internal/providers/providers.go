@@ -40,7 +40,7 @@ type Definition struct {
 
 var definitions = []Definition{
 	{ID: Codex, Name: "Codex", Credentials: Device, SupportsResetCredits: true},
-	{ID: Claude, Name: "Claude", Credentials: OAuthCode},
+	{ID: Claude, Name: "Claude", Credentials: OAuthCode, SupportsResetCredits: true},
 	{ID: OpenCodeGo, Name: "OpenCode", Plan: "Go", Credentials: APIKey},
 	{ID: DeepSeek, Name: "DeepSeek", Credentials: APIKey},
 	{ID: Cursor, Name: "Cursor", Credentials: APIKey},

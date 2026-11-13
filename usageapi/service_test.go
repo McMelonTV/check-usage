@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -462,5 +463,93 @@ func TestClaudePlanIsRecheckedPeriodically(t *testing.T) {
 	now = now.Add(time.Hour)
 	if results, _ := service.Usage(context.Background(), id, true); results[0].Account.PlanType != "Max" || profileCalls != 3 {
 		t.Fatalf("plan change not picked up: %#v, calls = %d", results[0].Account, profileCalls)
+	}
+}
+
+func TestClaudeResetCreditsFromUsage(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "internal", "providers", "claudeapi", "testdata", "usage_resets_present.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageBody, usageCalls := string(fixture), 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.String() {
+		case claudeapi.TokenURL:
+			return jsonResponse(http.StatusOK, `{"access_token":"a","refresh_token":"r","expires_in":360000,"account":{"uuid":"u","email_address":"me@example.com"}}`), nil
+		case claudeapi.ProfileURL:
+			return jsonResponse(http.StatusOK, `{"organization":{"organization_type":"claude_max"}}`), nil
+		case claudeapi.UsageURL:
+			usageCalls++
+			return jsonResponse(http.StatusOK, usageBody), nil
+		}
+		t.Fatalf("unexpected request %s", request.URL)
+		return nil, nil
+	})}
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	service := testService(t, client)
+	service.now = func() time.Time { return now }
+	session, _ := service.BeginOAuthAuth(providerClaude)
+	state, _, _ := strings.Cut(session.SessionID, ".")
+	login, err := service.CompleteOAuthAuth(context.Background(), OAuthComplete{Provider: providerClaude, SessionID: session.SessionID, Code: "c#" + state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := login.Account.ID
+	if _, err := service.ResetCredits(context.Background(), id, false); err == nil {
+		t.Fatal("cache-only reset credits succeeded before any fetch")
+	}
+
+	// The usage refresh carries the reset count in its snapshot.
+	results, err := service.Usage(context.Background(), id, true)
+	if err != nil || results[0].Snapshot == nil || results[0].Snapshot.Credits == nil || results[0].Snapshot.Credits.AvailableCount != 4 ||
+		results[0].Snapshot.CreditsError != "" || len(results[0].Snapshot.Windows) != 2 {
+		t.Fatalf("usage = %#v, %v", results, err)
+	}
+	encoded, _ := json.Marshal(results[0].Snapshot.Credits)
+	if !strings.Contains(string(encoded), `"available_count":4`) || !strings.Contains(string(encoded), `"total_earned_count":5`) {
+		t.Fatalf("credit JSON = %s", encoded)
+	}
+
+	// Within the throttle, resets come from the cache without a request.
+	credits, err := service.ResetCredits(context.Background(), id, true)
+	if err != nil || !credits.Cached || usageCalls != 1 || credits.Credits.AvailableCount != 4 || len(credits.Credits.Credits) != 4 {
+		t.Fatalf("throttled resets = %#v, calls = %d, %v", credits, usageCalls, err)
+	}
+	for _, credit := range credits.Credits.Credits {
+		if credit.Status != "available" {
+			t.Fatalf("non-available credit returned: %#v", credit)
+		}
+	}
+
+	// After the throttle, a reset refresh is a usage refresh.
+	fixture, err = os.ReadFile(filepath.Join("..", "internal", "providers", "claudeapi", "testdata", "usage_resets_filtered.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageBody, now = string(fixture), now.Add(claudeapi.MinRefreshInterval)
+	credits, err = service.ResetCredits(context.Background(), id, true)
+	if err != nil || credits.Cached || usageCalls != 2 || credits.Credits.AvailableCount != 1 || len(credits.Credits.Credits) != 1 || credits.Credits.Credits[0].Title != "Live" {
+		t.Fatalf("refreshed resets = %#v, calls = %d, %v", credits, usageCalls, err)
+	}
+
+	// A malformed reset block keeps the usage and the last good credits.
+	usageBody, now = `{"five_hour":{"utilization":3,"resets_at":null},"cedar_ember":"broken"}`, now.Add(claudeapi.MinRefreshInterval)
+	results, err = service.Usage(context.Background(), id, true)
+	if err != nil || results[0].Error != "" || *results[0].Metrics[0].Used != 3 || results[0].Snapshot.CreditsError == "" ||
+		results[0].Snapshot.Credits == nil || results[0].Snapshot.Credits.AvailableCount != 1 {
+		t.Fatalf("malformed reset usage = %#v, %v", results, err)
+	}
+	if cached, err := service.ResetCredits(context.Background(), id, false); err != nil || !cached.Cached || cached.Credits.AvailableCount != 1 {
+		t.Fatalf("cached resets = %#v, %v", cached, err)
+	}
+
+	// resets.get serves Claude accounts through the RPC interface too.
+	response := RPCServer{Service: service}.Handle(context.Background(), RPCRequest{
+		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "resets.get",
+		Params: json.RawMessage(`{"account":"` + id + `","refresh":false}`),
+	})
+	encoded, _ = json.Marshal(response.Result)
+	if response.Error != nil || !strings.Contains(string(encoded), `"available_count":1`) || !strings.Contains(string(encoded), `"title":"Live"`) {
+		t.Fatalf("resets.get = %s, %#v", encoded, response.Error)
 	}
 }

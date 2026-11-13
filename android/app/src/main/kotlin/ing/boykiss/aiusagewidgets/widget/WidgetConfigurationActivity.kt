@@ -84,7 +84,7 @@ class WidgetConfigurationActivity : ComponentActivity() {
                     ) {
                         Text("Configure widget", style = MaterialTheme.typography.headlineMedium)
                         Text("Account", style = MaterialTheme.typography.titleMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             accounts.forEach { account ->
                                 FilterChip(
                                     selected = selected?.id == account.id,

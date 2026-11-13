@@ -1,0 +1,19 @@
+{
+  "five_hour": {"utilization": 100.0, "resets_at": "2026-11-13T15:00:00Z"},
+  "cedar_ember": {
+    "eligible": true,
+    "grants": [
+      {"id": "expired_grant", "label": "October promo", "resets_total": 2, "resets_left": 1,
+       "starts_at": "2026-10-01T00:00:00Z", "ends_at": "2026-11-01T00:00:00Z", "clears": ["five_hour"]},
+      {"id": "used_up", "label": "Used up", "resets_total": 2, "resets_left": 0,
+       "starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-12-01T00:00:00Z", "clears": ["five_hour"]},
+      {"id": "paused_grant", "label": "Paused", "resets_total": 1, "resets_left": 1, "paused": true,
+       "ends_at": "2026-12-01T00:00:00Z", "clears": ["five_hour"]},
+      {"label": "Malformed: no id", "resets_total": 5, "resets_left": 5},
+      {"id": "malformed_left", "label": "Malformed: no resets_left", "resets_total": 5},
+      {"id": "live", "label": "Live", "resets_total": 1, "resets_left": 1,
+       "ends_at": "2026-12-01T00:00:00Z", "clears": ["five_hour"]}
+    ],
+    "next_grant_id": "not_in_list"
+  }
+}

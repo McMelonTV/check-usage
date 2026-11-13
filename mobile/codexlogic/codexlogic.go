@@ -56,8 +56,11 @@ func Identity(idToken string) (string, error) {
 }
 
 func FetchSnapshot(accessToken, accountID string) (string, error) {
-	snapshot, err := codexapi.FetchSnapshot(context.Background(), client, accessToken, accountID, "usage-widgets/0.1.0", time.Now())
-	return encode(snapshot, mobileError(err))
+	snapshot, resets, err := codexapi.FetchSnapshotWithResets(context.Background(), client, accessToken, accountID, "usage-widgets/0.1.0", time.Now())
+	return encode(struct {
+		*codexapi.UsageSnapshot
+		ResetDetails *codexapi.ResetCreditsPayload `json:"reset_details,omitempty"`
+	}{snapshot, resets}, mobileError(err))
 }
 
 // WindowKind is exported so the Android adapter can be contract-tested without
@@ -92,4 +95,13 @@ func mobileError(err error) error {
 		return fmt.Errorf("compatibility error: %w", err)
 	}
 	return err
+}
+
+// FetchResetDetails exposes the same individual reset credits as the terminal UI.
+func FetchResetDetails(accessToken, accountID string) (string, error) {
+	payload, err := codexapi.FetchResetCredits(context.Background(), client, accessToken, accountID, "usage-widgets/0.1.0")
+	if payload != nil && payload.Credits == nil {
+		payload.Credits = []codexapi.ResetCreditDetail{}
+	}
+	return encode(payload, mobileError(err))
 }

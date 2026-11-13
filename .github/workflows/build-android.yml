@@ -1,12 +1,14 @@
 name: Build Android app
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
+      - "t3/**"
     paths:
       - "android/**"
-      - "internal/providers/codexapi/**"
+      - "internal/providers/**"
       - "mobile/codexlogic/**"
       - go.mod
       - go.sum

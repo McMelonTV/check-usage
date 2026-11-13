@@ -28,6 +28,10 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
     companion object {
         const val KEY_ACCOUNT_ID = "account_id"
 
+        fun cancel(context: Context, providerId: String, accountId: String) {
+            WorkManager.getInstance(context).cancelUniqueWork("provider-account-sync-$providerId-$accountId")
+        }
+
         fun schedule(context: Context, providerId: String, accountId: String) {
             val request = PeriodicWorkRequestBuilder<UsageSyncWorker>(15, TimeUnit.MINUTES)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())

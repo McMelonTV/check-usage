@@ -60,6 +60,11 @@ import ing.boykiss.aiusagewidgets.MainActivity
 import ing.boykiss.aiusagewidgets.R
 import ing.boykiss.aiusagewidgets.UsageWidgetsApplication
 import ing.boykiss.aiusagewidgets.domain.ProviderId
+import ing.boykiss.aiusagewidgets.domain.DataFreshness
+import ing.boykiss.aiusagewidgets.domain.AuthenticationState
+import ing.boykiss.aiusagewidgets.domain.UsageWindow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import ing.boykiss.aiusagewidgets.domain.UsageMetricKind
 import ing.boykiss.aiusagewidgets.domain.WidgetVisualStyle
 import ing.boykiss.aiusagewidgets.sync.UsageSyncWorker
@@ -110,7 +115,17 @@ private data class WidgetRenderState(
     val longPercent: Double?,
     val resetAt: Long?,
     val resetCount: Int?,
+    val metricsJson: String = "[]",
+    val balance: String = "",
+    val statusMessage: String = "",
+    val generic: Boolean = false,
 )
+
+private val RenderMetricsKey = stringPreferencesKey("render_metrics")
+private val RenderBalanceKey = stringPreferencesKey("render_balance")
+private val RenderStatusKey = stringPreferencesKey("render_status")
+private val RenderGenericKey = booleanPreferencesKey("render_generic")
+private val widgetJson = Json { ignoreUnknownKeys = true }
 
 private val HasConfigurationKey = booleanPreferencesKey("has_configuration")
 private val RenderAccountIdKey = stringPreferencesKey("render_account_id")
@@ -133,6 +148,10 @@ private fun Preferences.toWidgetRenderState(): WidgetRenderState? {
         longPercent = this[RenderLongPercentKey],
         resetAt = this[RenderResetAtKey],
         resetCount = this[RenderResetCountKey],
+        metricsJson = this[RenderMetricsKey] ?: "[]",
+        balance = this[RenderBalanceKey].orEmpty(),
+        statusMessage = this[RenderStatusKey].orEmpty(),
+        generic = this[RenderGenericKey] ?: false,
     )
 }
 
@@ -155,6 +174,16 @@ private suspend fun loadWidgetRenderState(context: Context, appWidgetId: Int): W
         longPercent = longWindow?.remainingPercent,
         resetAt = longWindow?.resetsAtEpochSeconds ?: shortWindow?.resetsAtEpochSeconds,
         resetCount = snapshot?.credits?.availableCount,
+        metricsJson = widgetJson.encodeToString(snapshot?.windows.orEmpty()),
+        balance = if (config.providerId == "deepseek") snapshot?.planLabel.orEmpty() else "",
+        statusMessage = when {
+            account.authenticationState == AuthenticationState.SIGN_IN_REQUIRED.name -> "Sign in again"
+            snapshot == null -> "Refresh to load usage"
+            snapshot.errorMessage != null -> "Refresh failed · cached usage"
+            snapshot.freshness == DataFreshness.STALE -> "Cached usage"
+            else -> ""
+        },
+        generic = config.providerId != "codex",
     )
 }
 
@@ -189,6 +218,10 @@ internal object WidgetUpdater {
                     preferences[RenderAccountNameKey] = renderState.accountName
                     preferences[RenderProviderNameKey] = renderState.providerName
                     preferences[RenderVisualStyleKey] = renderState.visualStyle
+                    preferences[RenderMetricsKey] = renderState.metricsJson
+                    preferences[RenderBalanceKey] = renderState.balance
+                    preferences[RenderStatusKey] = renderState.statusMessage
+                    preferences[RenderGenericKey] = renderState.generic
                     renderState.shortPercent?.let { preferences[RenderShortPercentKey] = it }
                     renderState.longPercent?.let { preferences[RenderLongPercentKey] = it }
                     renderState.resetAt?.let { preferences[RenderResetAtKey] = it }
@@ -318,6 +351,27 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
         WidgetLayout.LARGE -> 20.dp
     }
     val barWidth = size.width - horizontalPadding * 2
+    val verticalPadding = if (layout == WidgetLayout.LARGE) 18.dp else if (layout == WidgetLayout.COMPACT) 10.dp else 12.dp
+    val compact = layout == WidgetLayout.COMPACT
+    val large = layout == WidgetLayout.LARGE
+    // Generic widgets size their window rows to the space left between the header and footer.
+    val genericPlan = if (state.generic) {
+        val headerHeight = if (large) 38.dp else 32.dp
+        val footerHeight = if (compact) 0.dp else if (large) 18.dp else 16.dp
+        val available = size.height - verticalPadding * 2 - headerHeight - footerHeight - 6.dp
+        planWindowRows(decodeWindows(state.metricsJson).size, available, compact)
+    } else {
+        null
+    }
+    // Rows that show their own countdown make a shared one redundant.
+    val windowsShowReset = genericPlan?.first == WindowRowDetail.RESET && state.balance.isBlank()
+    val footer = when {
+        compact -> null
+        state.statusMessage.isNotBlank() -> state.statusMessage
+        state.balance.isNotBlank() -> "Balance"
+        windowsShowReset -> null
+        else -> countdown(state.resetAt)
+    }
     val background = p.backgroundImage?.let { GlanceModifier.background(ImageProvider(it)) }
         ?: GlanceModifier.background(p.background)
     Column(
@@ -325,12 +379,14 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
             .clickable(actionStartActivity<MainActivity>())
             .padding(
                 horizontal = horizontalPadding,
-                vertical = if (layout == WidgetLayout.LARGE) 18.dp else if (layout == WidgetLayout.COMPACT) 10.dp else 12.dp,
+                vertical = verticalPadding,
             ),
     ) {
         Header(state, p, layout, narrow = size.width < 200.dp)
         Spacer(GlanceModifier.defaultWeight())
-        when (layout) {
+        if (genericPlan != null) {
+            GenericWidgetBody(state, p, barWidth, genericPlan)
+        } else when (layout) {
             // Compact cards have no countdown line, so wide ones show the time to reset inline.
             WidgetLayout.COMPACT -> MetricRow(
                 featured, secondary, p, heroSize = 22.sp,
@@ -345,15 +401,92 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
             WidgetLayout.STACKED -> StackedBody(featured, secondary, p, barWidth, large = false, narrow = size.width < 240.dp)
             WidgetLayout.LARGE -> StackedBody(featured, secondary, p, barWidth, large = true, resetCount = state.resetCount)
         }
-        if (layout != WidgetLayout.COMPACT) {
-            Spacer(GlanceModifier.defaultWeight())
+        // Keep the body centred even when the footer is dropped.
+        if (!compact) Spacer(GlanceModifier.defaultWeight())
+        if (footer != null) {
             Text(
-                p.text(countdown(state.resetAt)),
+                p.text(footer),
                 style = TextStyle(
                     color = p.muted,
                     fontSize = if (layout == WidgetLayout.LARGE) 13.sp else 11.sp,
                     fontFamily = p.labelFont,
                 ),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** How much detail each window row carries; every row of a widget uses the same one. */
+private enum class WindowRowDetail { FIGURE, BAR, RESET }
+
+// Approximate row heights, padded for the taller dot-matrix fonts.
+private val WindowFigureHeight = 28.dp
+private val WindowBarHeight = 10.dp
+private val WindowResetHeight = 15.dp
+private val WindowRowGap = 8.dp
+
+private fun windowRowHeight(detail: WindowRowDetail): Dp = WindowFigureHeight + when (detail) {
+    WindowRowDetail.FIGURE -> 0.dp
+    WindowRowDetail.BAR -> WindowBarHeight
+    WindowRowDetail.RESET -> WindowBarHeight + WindowResetHeight
+}
+
+/**
+ * The richest row detail that fits every window in [available], and how many windows to show.
+ * Rows never mix detail levels, so a widget too short for a bar per window shows none.
+ */
+private fun planWindowRows(count: Int, available: Dp, compact: Boolean): Pair<WindowRowDetail, Int> {
+    val candidates = if (compact) listOf(WindowRowDetail.FIGURE) else WindowRowDetail.entries.reversed()
+    fun fits(detail: WindowRowDetail, rows: Int) = windowRowHeight(detail) * rows + WindowRowGap * (rows - 1) <= available
+    candidates.firstOrNull { fits(it, count) }?.let { return it to count }
+    val rows = (count downTo 1).firstOrNull { fits(WindowRowDetail.FIGURE, it) } ?: 1
+    return WindowRowDetail.FIGURE to rows
+}
+
+private fun decodeWindows(json: String): List<UsageWindow> =
+    runCatching { widgetJson.decodeFromString<List<UsageWindow>>(json) }.getOrDefault(emptyList())
+
+@Composable
+private fun GenericWidgetBody(state: WidgetRenderState, p: WidgetPalette, barWidth: Dp, plan: Pair<WindowRowDetail, Int>) {
+    val windows = decodeWindows(state.metricsJson)
+    if (state.balance.isNotBlank()) {
+        Text(p.text(state.balance), style = TextStyle(p.foreground, 22.sp, FontWeight.Bold, fontFamily = p.displayFont), maxLines = 2)
+    } else if (windows.isEmpty()) {
+        Text(p.text(state.statusMessage.ifBlank { "Usage unavailable" }), style = TextStyle(p.muted, 14.sp, fontFamily = p.labelFont), maxLines = 2)
+    } else {
+        val (detail, rows) = plan
+        // One child per window: Glance drops any container children past the tenth.
+        Column(GlanceModifier.fillMaxWidth()) {
+            windows.take(rows).forEachIndexed { index, window ->
+                if (index > 0) Spacer(GlanceModifier.height(WindowRowGap))
+                WindowRow(window, p, barWidth, detail)
+            }
+        }
+    }
+}
+
+@Composable
+private fun WindowRow(window: UsageWindow, p: WidgetPalette, barWidth: Dp, detail: WindowRowDetail) {
+    Column(GlanceModifier.fillMaxWidth()) {
+        Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                p.text("${window.label} left"),
+                GlanceModifier.defaultWeight(),
+                style = TextStyle(p.muted, 11.sp, FontWeight.Medium, fontFamily = p.labelFont),
+                maxLines = 1,
+            )
+            PercentText(window.remainingPercent, p, 20.sp)
+        }
+        if (detail != WindowRowDetail.FIGURE) {
+            Spacer(GlanceModifier.height(4.dp))
+            UsageBar(window.remainingPercent, p.barColor(window.remainingPercent, p.accent), p, 5.dp, barWidth)
+        }
+        if (detail == WindowRowDetail.RESET) {
+            Spacer(GlanceModifier.height(3.dp))
+            Text(
+                p.text(countdown(window.resetsAtEpochSeconds)),
+                style = TextStyle(p.muted, 10.sp, FontWeight.Medium, fontFamily = p.labelFont),
                 maxLines = 1,
             )
         }

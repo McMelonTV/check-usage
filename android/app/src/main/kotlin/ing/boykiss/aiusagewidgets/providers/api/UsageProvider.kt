@@ -10,6 +10,9 @@ data class AuthenticationSession(
     val userCode: String,
     val verificationUrl: String,
     val pollIntervalSeconds: Int,
+    val providerId: ProviderId = ProviderId("codex"),
+    val requiresCode: Boolean = false,
+    val bridgeSession: String = "",
 )
 
 sealed interface AuthenticationProgress {
@@ -20,7 +23,10 @@ sealed interface AuthenticationProgress {
 interface ProviderAuthenticator {
     suspend fun beginAuthentication(): AuthenticationSession
     suspend fun pollAuthentication(session: AuthenticationSession): AuthenticationProgress
+    suspend fun completeCode(session: AuthenticationSession, code: String): ProviderAccount = error("Code login unavailable")
+    suspend fun addAPIKey(key: String): ProviderAccount = error("API-key login unavailable")
     suspend fun refreshCredentials(account: ProviderAccount)
+    suspend fun replaceCredentials(fromAccountId: String, toAccountId: String): Unit = error("Credential replacement unavailable")
     suspend fun removeCredentials(accountId: String)
 }
 

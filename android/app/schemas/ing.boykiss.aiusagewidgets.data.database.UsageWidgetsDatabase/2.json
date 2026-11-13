@@ -1,0 +1,181 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "7c7bcf26ba25cf4acba52899a7dd6c21",
+    "entities": [
+      {
+        "tableName": "provider_accounts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `providerId` TEXT NOT NULL, `displayName` TEXT NOT NULL, `identityLabel` TEXT, `planLabel` TEXT, `authenticationState` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerId",
+            "columnName": "providerId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "identityLabel",
+            "columnName": "identityLabel",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "planLabel",
+            "columnName": "planLabel",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "authenticationState",
+            "columnName": "authenticationState",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "usage_snapshots",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` TEXT NOT NULL, `providerId` TEXT NOT NULL, `shortUsed` REAL, `shortResetAt` INTEGER, `shortWindowSeconds` INTEGER, `longUsed` REAL, `longResetAt` INTEGER, `longWindowSeconds` INTEGER, `availableCredits` INTEGER, `totalCredits` INTEGER, `earliestCreditExpiry` INTEGER, `fetchedAt` INTEGER NOT NULL, `errorMessage` TEXT, `snapshotJson` TEXT DEFAULT NULL, PRIMARY KEY(`accountId`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerId",
+            "columnName": "providerId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "shortUsed",
+            "columnName": "shortUsed",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "shortResetAt",
+            "columnName": "shortResetAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "shortWindowSeconds",
+            "columnName": "shortWindowSeconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "longUsed",
+            "columnName": "longUsed",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "longResetAt",
+            "columnName": "longResetAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "longWindowSeconds",
+            "columnName": "longWindowSeconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "availableCredits",
+            "columnName": "availableCredits",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "totalCredits",
+            "columnName": "totalCredits",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "earliestCreditExpiry",
+            "columnName": "earliestCreditExpiry",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetchedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorMessage",
+            "columnName": "errorMessage",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "snapshotJson",
+            "columnName": "snapshotJson",
+            "affinity": "TEXT",
+            "defaultValue": "NULL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId"
+          ]
+        }
+      },
+      {
+        "tableName": "widget_configurations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`appWidgetId` INTEGER NOT NULL, `providerId` TEXT NOT NULL, `accountId` TEXT NOT NULL, `visualStyle` TEXT NOT NULL, PRIMARY KEY(`appWidgetId`))",
+        "fields": [
+          {
+            "fieldPath": "appWidgetId",
+            "columnName": "appWidgetId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerId",
+            "columnName": "providerId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "visualStyle",
+            "columnName": "visualStyle",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "appWidgetId"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7c7bcf26ba25cf4acba52899a7dd6c21')"
+    ]
+  }
+}

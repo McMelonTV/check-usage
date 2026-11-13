@@ -1,6 +1,6 @@
 # check-usage
 
-A Go CLI app for checking usage across Codex, Claude, OpenCode, DeepSeek, and Cursor accounts, including Codex "reset credits".
+A Go CLI app for checking usage across Codex, Claude, OpenCode, DeepSeek, and Cursor accounts, including Codex "reset credits" and Claude limit resets.
 
 This repository also includes an Android app with home-screen widgets for the same usage information.
 
@@ -124,11 +124,21 @@ An existing Cursor user API key also works:
 ./check-usage accounts add --provider cursor --api-key-env CURSOR_API_KEY
 ```
 
-The SDK's documented `Agent.getUsage()` reports costs for an individual agent. Account quota fetching instead uses the bearer-authenticated `GetCurrentPeriodUsage` and `GetPlanInfo` RPCs used by Cursor CLI's `/usage` command. These internal APIs can change. Individual plans exposing `autoPercentUsed` and `apiPercentUsed` are supported; missing pools display `-`. Percentages are not inferred from subscription prices or spending totals. Cursor reset credits and Android widgets are not supported by this integration.
+The SDK's documented `Agent.getUsage()` reports costs for an individual agent. Account quota fetching instead uses the bearer-authenticated `GetCurrentPeriodUsage` and `GetPlanInfo` RPCs used by Cursor CLI's `/usage` command. These internal APIs can change. Individual plans exposing `autoPercentUsed` and `apiPercentUsed` are supported; missing pools display `-`. Percentages are not inferred from subscription prices or spending totals. Cursor reset credits are not supported. The Android app and widgets show both model pools with their provider-specific labels.
 
 ## Android app ("AI Usage Widgets")
 
-The app signs in separately from the CLI and displays remaining usage windows and "reset credits". It offers Tonal (wallpaper-based colors), Frosted, Midnight and Sunset widget styles, plus a Dot Matrix style available on devices with the NDot system fonts. Each widget can use a different account and style.
+The app signs in separately from the CLI and supports the same five providers: Codex device login, Claude browser login with a pasted authorization code, Cursor browser login or an API key, and OpenCode Go / DeepSeek API keys.
+
+The app uses a mobile account overview with remaining-usage cards, model-specific limits, and DeepSeek balances. Pull down to refresh, or use the refresh button. Cards arrange into multiple columns on wider screens. Add an account with the floating button; each account's overflow menu lets you rename it, sign in again, or remove it. Signing in again preserves its name and widget assignments. Removing an account clears its credentials, cached usage and widget assignments.
+
+Tap **Reset credits** on a Codex card to view its credit statuses and grant, expiry, and redemption dates in a bottom sheet. Cached details appear while refreshing, including when there are zero credits. Reset claiming is not implemented.
+
+The app follows Android's system theme and wallpaper colors. Foreground usage refreshes automatically every minute; Claude respects its five-minute minimum and rate-limit backoff. Widget styles are chosen separately for each widget, and background refresh follows Android's approximately 15-minute schedule.
+
+Cached usage is displayed immediately and all accounts refresh in parallel. Failed requests retain the last values and show an error or sign-in prompt. The database upgrade preserves existing Codex accounts, snapshots and widget configurations.
+
+It offers Tonal (wallpaper-based colors), Frosted, Midnight and Sunset widget styles, plus a Dot Matrix style available on devices with the NDot system fonts. Each widget can use a different account and style.
 
 ### Screenshots
 
@@ -142,7 +152,7 @@ The app signs in separately from the CLI and displays remaining usage windows an
   <img src=".github/assets/tablet-landscape.png" alt="AI Usage Widgets on a tablet in landscape orientation" width="800">
 </p>
 
-After installing the app, connect a Codex account and add **AI Usage Widgets** from your launcher's widget picker. Account credentials are encrypted using Android Keystore, and the app has no analytics or backend.
+After installing the app, connect an account and add **AI Usage Widgets** from your launcher's widget picker. Account credentials are encrypted using Android Keystore, and the app has no analytics or backend.
 
 To build the Android app from source, you need Go 1.26, JDK 25, Android SDK 36, and an Android 8.0 (API 26) or newer device or emulator. The Gradle build automatically compiles the shared Go provider logic into an AAR using the pinned Go Mobile tool:
 
@@ -153,6 +163,6 @@ cd android
 
 The build creates a universal APK plus `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86` APKs under `android/app/build/outputs/apk/debug/`. CI publishes all five variants with stable filenames and a SHA-256 checksum manifest.
 
-The CLI and Android app share `internal/providers/codexapi` for device authorization, token refresh, Codex API requests, JWT identity parsing, and usage-window mapping. Android-specific UI, encrypted credential storage, background work, and widgets remain Kotlin code.
+The CLI and Android app share `internal/providers` through the `mobile/codexlogic` Go Mobile bridge for device/browser authorization, token refresh, provider requests, identity parsing, balances, and usage-window mapping. Android-specific UI, encrypted credential storage, background work, and widgets remain Kotlin code.
 
 The widgets should automatically refresh approximately every 15 minutes, although the exact refresh timing is controlled by Android and appears to be a bit inconsistent. You should always be able to trigger a refresh using the button in the widget.
