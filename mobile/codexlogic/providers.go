@@ -9,6 +9,7 @@ import (
 
 	"github.com/McMelonTV/check-usage/internal/providers"
 	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 	"github.com/McMelonTV/check-usage/internal/providers/cursorapi"
 )
 
@@ -87,6 +88,12 @@ type providerSnapshot struct {
 	FetchedAt   int64               `json:"fetchedAt"`
 	Error       string              `json:"error,omitempty"`
 	RetryAt     int64               `json:"retryAt,omitempty"`
+	// Claude reset credits use the Codex snapshot's key names so the app can
+	// decode them with the same types. Credits is nil, with CreditsError set,
+	// when the usage read succeeded but its reset block could not be read.
+	Credits      *codexapi.CreditMetric        `json:"credits,omitempty"`
+	CreditsError string                        `json:"credits_error,omitempty"`
+	ResetDetails *codexapi.ResetCreditsPayload `json:"reset_details,omitempty"`
 }
 
 // FetchProviderUsage shares all metric mapping and token renewal with the TUI.
@@ -106,6 +113,10 @@ func FetchProviderUsage(provider, credentialsJSON string) (string, error) {
 			result.Credentials.AccessToken, result.Credentials.RefreshToken, result.Credentials.ExpiresAt = fetched.Credentials.AccessToken, fetched.Credentials.RefreshToken, fetched.Credentials.ExpiresAt
 		}
 		result.Usage = fetched.Usage
+		if err == nil {
+			result.Credits, result.CreditsError = codexapi.SummarizeResetCredits(fetched.ResetCredits, fetched.ResetError)
+			result.ResetDetails = fetched.ResetCredits
+		}
 		if fetched.PlanChecked {
 			result.Credentials.PlanCheckedAt = now.Unix()
 		}

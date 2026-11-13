@@ -147,7 +147,10 @@ func fetchClaudeUsage(ctx context.Context, client *http.Client, account storage.
 	}
 	// Keep the account's plan when the profile was not requested this time.
 	result.Usage.Plan = FirstNonEmpty(result.Usage.Plan, storage.StringValue(account.PlanType))
-	fetch := providerFetchResult{Usage: result.Usage, Account: account, AccountChanged: changed, NextFetchAt: now.Add(claudeapi.MinRefreshInterval)}
+	fetch := providerFetchResult{
+		Usage: result.Usage, Account: account, AccountChanged: changed, NextFetchAt: now.Add(claudeapi.MinRefreshInterval),
+		ResetCredits: result.ResetCredits, ResetError: result.ResetError,
+	}
 	if result.PlanChecked {
 		fetch.PlanCheckedAt = now
 	}

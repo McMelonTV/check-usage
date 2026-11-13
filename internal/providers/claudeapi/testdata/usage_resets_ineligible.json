@@ -1,0 +1,6 @@
+{
+  "five_hour": {"utilization": 20.0, "resets_at": "2026-11-13T15:00:00Z"},
+  "cedar_ember": {"eligible": false, "ineligible_reason": "tier", "grants": [
+    {"id": "ignored", "label": "Ignored", "resets_total": 1, "resets_left": 1}
+  ]}
+}

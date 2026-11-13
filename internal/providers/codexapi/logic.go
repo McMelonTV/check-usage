@@ -145,11 +145,20 @@ func BuildSnapshot(usage *RateLimitStatusPayload, credits *ResetCreditsPayload, 
 			}
 		}
 	}
-	if creditsErr != nil || credits == nil {
-		snapshot.CreditsError = "Reset credits unavailable"
-		return snapshot
-	}
+	snapshot.Credits, snapshot.CreditsError = SummarizeResetCredits(credits, creditsErr)
+	return snapshot
+}
 
+// CreditsUnavailable is the snapshot's CreditsError when reset credits could
+// not be read.
+const CreditsUnavailable = "Reset credits unavailable"
+
+// SummarizeResetCredits condenses any provider's reset credits into the
+// snapshot metric, or returns CreditsUnavailable when they could not be read.
+func SummarizeResetCredits(credits *ResetCreditsPayload, creditsErr error) (*CreditMetric, string) {
+	if creditsErr != nil || credits == nil {
+		return nil, CreditsUnavailable
+	}
 	metric := &CreditMetric{AvailableCount: credits.AvailableCount, TotalEarnedCount: credits.TotalEarnedCount}
 	for _, credit := range credits.Credits {
 		if !strings.EqualFold(credit.Status, "available") {
@@ -164,8 +173,7 @@ func BuildSnapshot(usage *RateLimitStatusPayload, credits *ResetCreditsPayload, 
 			metric.EarliestExpiryEpoch = &epoch
 		}
 	}
-	snapshot.Credits = metric
-	return snapshot
+	return metric, ""
 }
 
 func WindowKind(seconds *int, fallback string) string {

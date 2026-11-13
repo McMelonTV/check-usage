@@ -267,7 +267,7 @@ func discoverResult() any {
 			{"auth.browser.begin", "Begin Cursor browser authorization.", `{"provider":"cursor"}`},
 			{"auth.browser.poll", "Poll and persist browser authorization.", `{"provider":"cursor","session_id":"...","name":"optional","account":"optional id|name"}`},
 			{"usage.get", "Get usage for one or all accounts; refresh defaults to true.", `{"account":"optional","refresh":true}`},
-			{"resets.get", "Get reset credits for one account; refresh defaults to true.", `{"account":"...","refresh":true}`},
+			{"resets.get", "Get reset credits for one Codex or Claude account; refresh defaults to true. Claude credits come with its rate-limited usage, so a refresh within its throttle returns cached credits.", `{"account":"...","refresh":true}`},
 			{"settings.get", "Get application settings.", "{}"},
 			{"settings.set", "Replace application settings; invalid values are normalized.", `Settings object`},
 		},

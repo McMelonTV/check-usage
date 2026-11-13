@@ -1,6 +1,6 @@
 # check-usage
 
-A Go CLI app for checking usage across Codex, Claude, OpenCode, DeepSeek, and Cursor accounts, including Codex "reset credits".
+A Go CLI app for checking usage across Codex, Claude, OpenCode, DeepSeek, and Cursor accounts, including Codex "reset credits" and Claude limit resets.
 
 This repository also includes an Android app with home-screen widgets for the same usage information.
 

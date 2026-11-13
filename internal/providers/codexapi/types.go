@@ -49,6 +49,9 @@ type CreditStatus struct {
 	Balance    *string `json:"balance"`
 }
 
+// ResetCreditsPayload lists reset credits: grants that refill a usage limit
+// early. It is Codex's wire format and also the shared representation for
+// other providers' resets (see providers.ClaudeResetCredits).
 type ResetCreditsPayload struct {
 	AvailableCount   int                 `json:"available_count"`
 	TotalEarnedCount int                 `json:"total_earned_count"`
@@ -79,6 +82,7 @@ type UsageWindow struct {
 	WindowSeconds *int     `json:"window_seconds,omitempty"`
 }
 
+// CreditMetric summarizes an account's reset credits within a UsageSnapshot.
 type CreditMetric struct {
 	AvailableCount      int    `json:"available_count"`
 	TotalEarnedCount    int    `json:"total_earned_count"`

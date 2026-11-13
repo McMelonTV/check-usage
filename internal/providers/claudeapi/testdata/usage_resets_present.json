@@ -1,0 +1,36 @@
+{
+  "five_hour": {"utilization": 100.0, "resets_at": "2026-11-13T15:00:00.000000+00:00"},
+  "seven_day": {"utilization": 41.0, "resets_at": "2026-11-18T09:00:00.000000+00:00"},
+  "limits": [
+    {"kind": "session", "percent": 100, "resets_at": "2026-11-13T15:00:00Z"},
+    {"kind": "weekly_all", "percent": 41, "resets_at": "2026-11-18T09:00:00Z"}
+  ],
+  "cedar_ember": {
+    "eligible": true,
+    "ineligible_reason": null,
+    "at_limit": true,
+    "exhausted": ["five_hour"],
+    "grants": [
+      {
+        "id": "launch_bonus", "label": "Launch bonus", "resets_total": 3, "resets_left": 2,
+        "starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-12-01T00:00:00Z",
+        "clears": ["five_hour", "seven_day"], "paused": false, "usable_now": true,
+        "use_requires_limit": true, "percent_used": {"five_hour": 100, "seven_day": 41},
+        "blocking": ["five_hour"], "type": "full", "gives_back_weekly": false, "unavailable_reason": null
+      },
+      {
+        "id": "monthly_session", "label": "", "resets_total": 1, "resets_left": 1,
+        "starts_at": "2026-11-10T00:00:00Z", "ends_at": "2026-11-20T00:00:00Z",
+        "clears": ["five_hour"], "paused": false, "usable_now": true, "type": "session"
+      },
+      {
+        "id": "no_end", "label": "Open ended", "resets_total": 1, "resets_left": 1,
+        "starts_at": null, "ends_at": null, "clears": ["five_hour"]
+      }
+    ],
+    "next_grant_id": "monthly_session",
+    "weekly_resets_at": "2026-11-18T09:00:00Z",
+    "cooldown_until": null,
+    "event_props": {"surface": "claude_code_cli", "tier": "claude_max_5x"}
+  }
+}
