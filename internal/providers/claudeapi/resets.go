@@ -67,7 +67,7 @@ type rawResetGrant struct {
 }
 
 // ResetStatus parses the limit-reset block. It returns nil without an error
-// when the API sent none, which means the account is not in the program.
+// when the API sent none. Absence does not establish the account's balance.
 func (payload *UsagePayload) ResetStatus() (*ResetStatus, error) {
 	if payload == nil {
 		return nil, nil

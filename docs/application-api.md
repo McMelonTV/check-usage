@@ -102,7 +102,7 @@ The `session_id` contains the PKCE verifier for this login, so keep it private t
 
 ### Reset credits
 
-Codex and Claude accounts support `resets.get`, and their `usage.get` results include a `snapshot` whose `credits.available_count` is the number of resets usable now. For Claude these are limit resets (grants that refill the 5-hour or weekly limit early). They arrive in the same rate-limited usage response as the metrics, so Claude needs no extra request, and a `resets.get` refresh within the usage throttle returns the cached credits with `cached: true`. Each Claude reset is one credit: `title` is the grant label, and `granted_at` and `expires_at` are the grant's start and end. Accounts outside Claude's reset program report zero credits. Claiming resets is not supported.
+Codex and Claude accounts support `resets.get`, and their `usage.get` results include a `snapshot` whose `credits.available_count` is the number of resets usable now. For Claude these are limit resets (grants that refill the 5-hour or weekly limit early). They arrive in the same rate-limited usage response as the metrics, so Claude needs no extra request, and a `resets.get` refresh within the usage throttle returns the cached credits with `cached: true`. Each Claude reset is one credit: `title` is the grant label, and `granted_at` and `expires_at` are the grant's start and end. Confirmed ineligible accounts report zero credits. A missing reset-status block or a refused client surface reports reset credits as unavailable and preserves any previously cached balance. Claiming resets is not supported.
 
 ## Go package
 

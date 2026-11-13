@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ type ClaudeResult struct {
 	// PlanChecked reports that the profile was read, so Usage.Plan is current.
 	PlanChecked bool
 	// ResetCredits are the limit resets read with the usage. It is nil when
-	// ResetError is set; an account outside the program has an empty list.
+	// ResetError is set; a confirmed ineligible account has an empty list.
 	ResetCredits *codexapi.ResetCreditsPayload
 	ResetError   error
 }
@@ -109,16 +110,28 @@ const claudeResetTitle = "Limit reset"
 // ClaudeResetCredits maps the limit-reset block to the reset-credit payload
 // shared with Codex: one entry per reset, "available" for resets that can be
 // used, "redeemed" for used ones, and "expired" or "paused" for the rest of
-// a grant that cannot be used. An account outside the program, or one the API
-// reports ineligible, holds no credits. Only a malformed block is an error.
+// a grant that cannot be used. Missing status or a client-dependent eligibility
+// refusal is unavailable, rather than evidence that the account holds no credits.
 func ClaudeResetCredits(payload *claudeapi.UsagePayload, now time.Time) (*codexapi.ResetCreditsPayload, error) {
 	status, err := payload.ResetStatus()
 	if err != nil {
 		return nil, err
 	}
 	credits := &codexapi.ResetCreditsPayload{Credits: []codexapi.ResetCreditDetail{}}
-	if status == nil || !status.Eligible {
-		return credits, nil
+	if status == nil {
+		return nil, fmt.Errorf("Claude reset credits unavailable: usage response omitted reset status")
+	}
+	if !status.Eligible {
+		switch status.IneligibleReason {
+		case "tier", "seat", "tenure", "no_grant", "extra_usage", "other_experiment":
+			return credits, nil
+		default:
+			reason := status.IneligibleReason
+			if reason == "" {
+				reason = "eligibility was not confirmed"
+			}
+			return nil, fmt.Errorf("Claude reset credits unavailable: %s", reason)
+		}
 	}
 	credits.AvailableCount = status.AvailableResets(now)
 	for _, grant := range status.Grants {

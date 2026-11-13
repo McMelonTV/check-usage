@@ -31,10 +31,10 @@ const (
 	UsageURL   = "https://api.anthropic.com/api/oauth/usage?" + ResetProgram + "=1&skip_spend=1"
 	ProfileURL = "https://api.anthropic.com/api/oauth/profile"
 	OAuthBeta  = "oauth-2025-04-20"
-	// UserAgent is the one Claude Code sends to api.anthropic.com. The usage
-	// endpoint rate-limits unrecognized clients far more aggressively (a
-	// "check-usage/…" agent got persistent 429s where this one succeeds).
-	UserAgent = "claude-code/2.1.291"
+	// UserAgent matches Claude Code's first-party HTTP transport. Its usage
+	// and profile requests use claude-cli, while claude-code identifies the
+	// inference SDK. The reset endpoint uses this to identify the CLI surface.
+	UserAgent = "claude-cli/2.1.319 (external, cli)"
 	// TokenUserAgent is what Claude Code's HTTP client (axios) sends to the
 	// token endpoint, which sets no agent of its own. That endpoint answers a
 	// claude-code/… agent with persistent 429s, so it must not get UserAgent.

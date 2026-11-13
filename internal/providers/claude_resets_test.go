@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,13 +70,57 @@ func TestClaudeResetCreditsPresent(t *testing.T) {
 	}
 }
 
-func TestClaudeResetCreditsAbsentOrIneligibleAreZero(t *testing.T) {
-	for _, name := range []string{"usage_resets_absent.json", "usage_resets_ineligible.json"} {
-		payload, _ := claudeFixture(t, name)
-		credits, err := ClaudeResetCredits(payload, claudeResetNow)
-		if err != nil || credits == nil || credits.AvailableCount != 0 || credits.TotalEarnedCount != 0 || credits.Credits == nil || len(credits.Credits) != 0 {
-			t.Fatalf("%s: credits = %#v, err = %v", name, credits, err)
-		}
+func TestClaudeResetCreditsConfirmedIneligibleAreZero(t *testing.T) {
+	payload, _ := claudeFixture(t, "usage_resets_ineligible.json")
+	credits, err := ClaudeResetCredits(payload, claudeResetNow)
+	if err != nil || credits == nil || credits.AvailableCount != 0 || credits.TotalEarnedCount != 0 || credits.Credits == nil || len(credits.Credits) != 0 {
+		t.Fatalf("credits = %#v, err = %v", credits, err)
+	}
+}
+
+func TestClaudeProResetCreditsFromCLISurface(t *testing.T) {
+	payload, _ := claudeFixture(t, "usage_resets_pro.json")
+	credits, err := ClaudeResetCredits(payload, claudeResetNow)
+	if err != nil || credits == nil || credits.AvailableCount != 1 || credits.TotalEarnedCount != 2 || len(credits.Credits) != 2 {
+		t.Fatalf("credits = %#v, err = %v", credits, err)
+	}
+	if credits.Credits[0].Status != "redeemed" || credits.Credits[1].Status != "available" || credits.Credits[1].Title != "One full limit reset (November 2026)" {
+		t.Fatalf("credits = %#v", credits.Credits)
+	}
+	snapshot := ClaudeSnapshot(ClaudeUsage(payload), credits, nil, claudeResetNow)
+	expiresAt := time.Date(2026, 12, 10, 22, 0, 0, 0, time.UTC).Unix()
+	if snapshot.Credits == nil || snapshot.Credits.AvailableCount != 1 || snapshot.Credits.EarliestExpiryEpoch == nil || *snapshot.Credits.EarliestExpiryEpoch != expiresAt {
+		t.Fatalf("snapshot credits = %#v", snapshot.Credits)
+	}
+}
+
+func TestClaudeResetCreditsUnknownBalanceIsUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, reason string
+	}{
+		{"absent", `{"five_hour":{"utilization":100}}`, "omitted reset status"},
+		{"null", `{"cedar_ember":null}`, "omitted reset status"},
+		{"old client", `{"cedar_ember":{"eligible":false,"ineligible_reason":"cli_version"}}`, "cli_version"},
+		{"surface", `{"cedar_ember":{"eligible":false,"ineligible_reason":"surface"}}`, "surface"},
+		{"mobile surface", `{"cedar_ember":{"eligible":false,"ineligible_reason":"mobile"}}`, "mobile"},
+		{"not at limit", `{"cedar_ember":{"eligible":false,"ineligible_reason":"not_at_wall"}}`, "not_at_wall"},
+		{"server unavailable", `{"cedar_ember":{"eligible":false,"ineligible_reason":"unavailable"}}`, "unavailable"},
+		{"unspecified", `{"cedar_ember":{"eligible":false}}`, "eligibility was not confirmed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var payload claudeapi.UsagePayload
+			if err := json.Unmarshal([]byte(tc.body), &payload); err != nil {
+				t.Fatal(err)
+			}
+			credits, err := ClaudeResetCredits(&payload, claudeResetNow)
+			if credits != nil || err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("unknown balance reported as credits: %#v, err = %v", credits, err)
+			}
+			snapshot := ClaudeSnapshot(ClaudeUsage(&payload), credits, err, claudeResetNow)
+			if snapshot.Credits != nil || snapshot.CreditsError == "" {
+				t.Fatalf("snapshot reported unknown balance as credits: %#v", snapshot)
+			}
+		})
 	}
 }
 
@@ -92,12 +137,15 @@ func TestClaudeResetCreditsFiltersExpiredUsedAndPaused(t *testing.T) {
 func TestFetchClaudeUsageCarriesResetCredits(t *testing.T) {
 	_, body := claudeFixture(t, "usage_resets_present.json")
 	for _, tc := range []struct {
-		name, body string
-		want       int
-		malformed  bool
+		name, body  string
+		want        int
+		unavailable bool
 	}{
 		{name: "present", body: body, want: 4},
-		{name: "malformed", body: `{"five_hour":{"utilization":5,"resets_at":null},"cedar_ember":[1,2]}`, malformed: true},
+		{name: "malformed", body: `{"five_hour":{"utilization":5,"resets_at":null},"cedar_ember":[1,2]}`, unavailable: true},
+		{name: "absent", body: `{"five_hour":{"utilization":100,"resets_at":null}}`, unavailable: true},
+		{name: "client refused", body: `{"five_hour":{"utilization":100},"cedar_ember":{"eligible":false,"ineligible_reason":"cli_version"}}`, unavailable: true},
+		{name: "surface refused", body: `{"five_hour":{"utilization":100},"cedar_ember":{"eligible":false,"ineligible_reason":"surface","at_limit":false,"exhausted":[],"grants":[],"next_grant_id":null,"weekly_resets_at":null,"cooldown_until":null}}`, unavailable: true},
 	} {
 		client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			if request.URL.String() != claudeapi.UsageURL {
@@ -109,7 +157,7 @@ func TestFetchClaudeUsageCarriesResetCredits(t *testing.T) {
 		if err != nil || len(result.Usage.Metrics) < 2 || result.Usage.Metrics[0].Used == nil {
 			t.Fatalf("%s: usage = %#v, err = %v", tc.name, result.Usage, err)
 		}
-		if tc.malformed {
+		if tc.unavailable {
 			if result.ResetError == nil || result.ResetCredits != nil {
 				t.Fatalf("%s: reset = %#v, %v", tc.name, result.ResetCredits, result.ResetError)
 			}

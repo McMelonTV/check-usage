@@ -1,14 +1,17 @@
 package usage
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/McMelonTV/check-usage/internal/providers"
 	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
+	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 	"github.com/McMelonTV/check-usage/internal/storage"
 )
 
@@ -68,5 +71,49 @@ func TestFetchClaudeUsageReturnsResetCredits(t *testing.T) {
 	result, err := FetchProviderUsage(t.Context(), client, account)
 	if err != nil || result.ResetError != nil || result.ResetCredits == nil || result.ResetCredits.AvailableCount != 2 {
 		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+}
+
+func TestClaudeSurfaceRefusalDoesNotOverwriteResetBalance(t *testing.T) {
+	for _, cached := range []bool{false, true} {
+		t.Run(fmt.Sprint("cached=", cached), func(t *testing.T) {
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			account := storage.Account{ID: "claude", Name: "Claude", Provider: providers.Claude, PlanType: new("Pro"),
+				AuthData: storage.AuthData{AccessToken: new("a"), RefreshToken: new("r"), ExpiresAt: new(time.Now().Add(time.Hour).Unix())}}
+			accountsPath := filepath.Join(t.TempDir(), "accounts.json")
+			if err := storage.SaveAccounts(accountsPath, &storage.AccountStore{Accounts: []storage.Account{account}}); err != nil {
+				t.Fatal(err)
+			}
+			if cached {
+				if err := storage.SaveAccountCache(account.ID, storage.CacheEntry{
+					ResetCredits: &codexapi.ResetCreditsPayload{AvailableCount: 1}, ResetFetchedAt: 1,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			client := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+				body := `{"five_hour":{"utilization":100},"cedar_ember":{"eligible":false,"ineligible_reason":"surface","grants":[]}}`
+				if request.URL.String() == claudeapi.ProfileURL {
+					body = `{}`
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			rows, err := CollectRows(accountsPath, client)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("rows = %#v, err = %v", rows, err)
+			}
+			row := rows[0]
+			want := "unavailable"
+			if cached {
+				want = "1"
+			}
+			if row.ResetCredits != want || row.ResetsStale != cached || *row.Metrics[0].Used != 100 {
+				t.Fatalf("surface refusal lost balance or usage: %#v", row)
+			}
+			entry, _, err := storage.LoadAccountCache(account.ID)
+			if err != nil || (!cached && entry.ResetCredits != nil) || (cached && (entry.ResetCredits == nil || entry.ResetCredits.AvailableCount != 1 || entry.ResetFetchedAt != 1)) {
+				t.Fatalf("surface refusal cached a false balance: %#v, err = %v", entry, err)
+			}
+		})
 	}
 }
