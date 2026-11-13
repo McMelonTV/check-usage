@@ -5,6 +5,8 @@ import ing.boykiss.aiusagewidgets.data.credentials.ProviderCredentials
 import ing.boykiss.aiusagewidgets.domain.*
 import ing.boykiss.aiusagewidgets.providers.api.*
 import ing.boykiss.aiusagewidgets.providers.codex.AuthenticationRequiredException
+import ing.boykiss.aiusagewidgets.providers.codex.GoCreditMetric
+import ing.boykiss.aiusagewidgets.providers.codex.ResetDetailsResponse
 import ing.boykiss.aiusagewidgets.gobridge.codexlogic.Codexlogic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,6 +41,10 @@ import java.util.UUID
     val fetchedAt: Long,
     val error: String? = null,
     val retryAt: Long = 0,
+    // Claude reset credits, in the Codex snapshot's shape.
+    val credits: GoCreditMetric? = null,
+    @SerialName("credits_error") val creditsError: String? = null,
+    @SerialName("reset_details") val resetDetails: ResetDetailsResponse? = null,
 )
 
 class SharedUsageProvider(
@@ -98,9 +104,12 @@ class SharedUsageProvider(
             Codexlogic.fetchProviderUsage(descriptor.id.value, json.encodeToString(current)))
         if (response.credentials != current) credentials.put(account.id.value, response.credentials)
         if (response.error?.startsWith("authentication required:") == true) throw AuthenticationRequiredException("Sign in again")
-        ProviderUsageSnapshot(descriptor.id, account.id, response.usage.metrics.map(SharedMetric::toDomain), null,
+        ProviderUsageSnapshot(descriptor.id, account.id, response.usage.metrics.map(SharedMetric::toDomain),
+            response.credits?.let { CreditMetric(it.availableCount, it.totalEarnedCount, it.earliestExpiryEpochSeconds) },
             response.fetchedAt, if (response.error == null) DataFreshness.FRESH else DataFreshness.ERROR,
-            response.error, planLabel = response.usage.plan?.takeIf(String::isNotBlank), retryAtEpochMillis = response.retryAt)
+            response.error, resetDetails = response.resetDetails?.credits,
+            planLabel = response.usage.plan?.takeIf(String::isNotBlank), retryAtEpochMillis = response.retryAt,
+            resetsError = response.creditsError)
     }
 
     private suspend fun <T> bridge(block: () -> T): T = withContext(Dispatchers.IO) {

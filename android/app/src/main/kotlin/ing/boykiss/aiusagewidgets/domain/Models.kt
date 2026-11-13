@@ -5,6 +5,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 @JvmInline value class ProviderId(val value: String)
+
+/** Providers that report reset credits: Codex through its own request, Claude with its usage. */
+val ProviderId.hasResetCredits: Boolean get() = value == "codex" || value == "claude"
 @Serializable
 @JvmInline value class ProviderAccountId(val value: String)
 

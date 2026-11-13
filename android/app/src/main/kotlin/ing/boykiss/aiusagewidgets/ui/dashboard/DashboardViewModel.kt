@@ -106,7 +106,7 @@ class DashboardViewModel(private val container: AppContainer, private val contex
                 connect(event.account.providerId)
             }
             is DashboardEvent.OpenResets -> {
-                if (event.account.providerId.value != "codex") return
+                if (!event.account.providerId.hasResetCredits) return
                 resetsJob?.cancel()
                 mutable.update { it.copy(resetAccount = event.account, refreshingResets = false) }
                 refreshResets()
@@ -242,12 +242,14 @@ class DashboardViewModel(private val container: AppContainer, private val contex
 
     private fun refreshResets() {
         val account = mutable.value.resetAccount ?: return
-        if (account.providerId.value != "codex") return
+        if (!account.providerId.hasResetCredits) return
         if (resetsJob?.isActive == true) return
         resetsJob = viewModelScope.launch(Dispatchers.IO) {
             mutable.update { it.copy(refreshingResets = true) }
             try {
-                container.repository.refreshResets(account.id.value)
+                // Claude reports its credits with usage, so a usage refresh reloads them.
+                if (account.providerId.value == "claude") container.repository.refresh(account.id.value)
+                else container.repository.refreshResets(account.id.value)
                 updateWidgets()
             } finally {
                 mutable.update { if (it.resetAccount?.id == account.id) it.copy(refreshingResets = false) else it }

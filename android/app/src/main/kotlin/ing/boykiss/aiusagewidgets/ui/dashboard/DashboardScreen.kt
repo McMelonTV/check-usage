@@ -139,7 +139,7 @@ private fun AccountCard(account: ProviderAccount, providerName: String, snapshot
                     "Updated ${ago(snapshot.fetchedAtEpochMillis, now)}${if (cached) " · saved usage" else ""}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (account.providerId.value == "codex") {
+            if (account.providerId.hasResetCredits) {
                 Surface(onClick = { onEvent(DashboardEvent.OpenResets(account)) }, shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.secondaryContainer) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
