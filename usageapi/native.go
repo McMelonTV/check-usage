@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/McMelonTV/check-usage/internal/nativecli"
 	"github.com/McMelonTV/check-usage/internal/providers"
@@ -88,6 +89,9 @@ func (service *Service) nativeUsage(ctx context.Context, account *storedAccount,
 		}
 		return UsageResult{}, false, fmt.Errorf("native usage unavailable; wait for the next refresh or check the CLI on the server")
 	}
+	if account.Provider == providers.Antigravity {
+		config.FetchPlan = nativecli.AgyPlanDue(stringValue(account.PlanType), time.Unix(entry.PlanCheckedAt, 0), service.now())
+	}
 	fetched, err := service.nativeFetch(ctx, account.Provider, config)
 	now := service.now()
 	entry.NextFetchAt = now.Add(config.Interval()).Unix()
@@ -148,6 +152,11 @@ func (service *Service) nativeUsage(ctx context.Context, account *storedAccount,
 	if fetched.Usage.Plan != "" && fetched.Usage.Plan != stringValue(account.PlanType) {
 		account.PlanType = stringPointer(fetched.Usage.Plan)
 		changed = true
+	}
+	// Plans are read less often than usage; keep the last one in between.
+	fetched.Usage.Plan = firstNonEmpty(fetched.Usage.Plan, stringValue(account.PlanType))
+	if fetched.PlanChecked {
+		entry.PlanCheckedAt = now.Unix()
 	}
 	entry.Source = "native_cli"
 	entry.NativeError = ""

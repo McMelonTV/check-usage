@@ -213,3 +213,32 @@ func TestServerResetCreditsShareThrottleWithoutBlockingCatalog(t *testing.T) {
 		t.Fatalf("reset reads bypassed shared throttle: %#v, %v", credits, err)
 	}
 }
+
+func TestNativeAgyPlanIsProbedSparinglyAndKeptBetweenProbes(t *testing.T) {
+	service := testService(t, nil)
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	var requested []bool
+	service.nativeFetch = func(_ context.Context, _ string, config nativecli.Config) (nativecli.Result, error) {
+		requested = append(requested, config.FetchPlan)
+		result := nativecli.Result{Usage: providers.Usage{Metrics: []providers.Metric{{Kind: providers.Percentage, Slot: providers.WeeklySlot, Used: new(float64(10))}}}, PlanChecked: config.FetchPlan}
+		if config.FetchPlan {
+			result.Usage.Plan = "Google AI Pro"
+		}
+		return result, nil
+	}
+	account, err := service.SaveNativeAccount(NativeAccount{Provider: providers.Antigravity, Config: nativecli.Config{Driver: "agy"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []time.Duration{0, 5 * time.Minute, 24 * time.Hour} {
+		now = now.Add(step)
+		results, err := service.Usage(t.Context(), account.Account.ID, true)
+		if err != nil || results[0].Error != "" || results[0].Account.PlanType != "Google AI Pro" || results[0].Snapshot == nil || results[0].Snapshot.PlanType != "Google AI Pro" {
+			t.Fatalf("plan missing after step %v: %#v, %v", step, results, err)
+		}
+	}
+	if len(requested) != 3 || !requested[0] || requested[1] || !requested[2] {
+		t.Fatalf("plan probe schedule = %v; want first read, skip within a day, then refresh", requested)
+	}
+}
