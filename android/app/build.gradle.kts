@@ -11,6 +11,15 @@ plugins {
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 val minimumAndroidApi = 26
+val releaseKeystorePath = System.getenv("CHECK_USAGE_KEYSTORE_PATH")?.takeIf(String::isNotBlank)
+val releaseKeystorePassword = System.getenv("CHECK_USAGE_KEYSTORE_PASSWORD")?.takeIf(String::isNotBlank)
+val releaseKeyAlias = System.getenv("CHECK_USAGE_KEY_ALIAS")?.takeIf(String::isNotBlank)
+val releaseKeyPassword = System.getenv("CHECK_USAGE_KEY_PASSWORD")?.takeIf(String::isNotBlank)
+val hasReleaseSigning = releaseKeystorePath != null &&
+    file(releaseKeystorePath).isFile &&
+    releaseKeystorePassword != null &&
+    releaseKeyAlias != null &&
+    releaseKeyPassword != null
 
 android {
     namespace = "ing.boykiss.aiusagewidgets"
@@ -20,10 +29,30 @@ android {
         applicationId = "ing.boykiss.aiusagewidgets"
         minSdk = minimumAndroidApi
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = System.getenv("CHECK_USAGE_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("CHECK_USAGE_VERSION_NAME")?.takeIf(String::isNotBlank) ?: "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+    }
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     buildFeatures.compose = true

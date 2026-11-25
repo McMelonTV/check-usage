@@ -103,7 +103,7 @@ jobs:
       - name: Download Android APKs
         uses: actions/download-artifact@v4
         with:
-          name: ai-usage-widgets-debug
+          name: ai-usage-widgets-release
           path: release-assets
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}

@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build Android APK
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -54,22 +54,65 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Test and build
+      - name: Decode release keystore
+        id: signing
+        shell: bash
+        env:
+          CHECK_USAGE_KEYSTORE_BASE64: ${{ secrets.CHECK_USAGE_KEYSTORE_BASE64 }}
+          CHECK_USAGE_KEYSTORE_PASSWORD: ${{ secrets.CHECK_USAGE_KEYSTORE_PASSWORD }}
+          CHECK_USAGE_KEY_ALIAS: ${{ secrets.CHECK_USAGE_KEY_ALIAS }}
+          CHECK_USAGE_KEY_PASSWORD: ${{ secrets.CHECK_USAGE_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$CHECK_USAGE_KEYSTORE_BASE64" && -n "$CHECK_USAGE_KEYSTORE_PASSWORD" && -n "$CHECK_USAGE_KEY_ALIAS" && -n "$CHECK_USAGE_KEY_PASSWORD" ]]; then
+            keystore_path="${RUNNER_TEMP}/check-usage-release.jks"
+            printf '%s' "$CHECK_USAGE_KEYSTORE_BASE64" | base64 -d > "$keystore_path"
+            chmod 600 "$keystore_path"
+            echo "keystore_path=$keystore_path" >> "$GITHUB_OUTPUT"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test and build signed release APKs
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          CHECK_USAGE_KEYSTORE_PATH: ${{ steps.signing.outputs.keystore_path }}
+          CHECK_USAGE_KEYSTORE_PASSWORD: ${{ secrets.CHECK_USAGE_KEYSTORE_PASSWORD }}
+          CHECK_USAGE_KEY_ALIAS: ${{ secrets.CHECK_USAGE_KEY_ALIAS }}
+          CHECK_USAGE_KEY_PASSWORD: ${{ secrets.CHECK_USAGE_KEY_PASSWORD }}
+        run: ./gradlew :app:testDebugUnitTest :app:assembleRelease
+
+      - name: Test and build debug APKs (unsigned fallback)
+        if: steps.signing.outputs.signed != 'true'
         run: ./gradlew :app:testDebugUnitTest :app:assembleDebug
+
+      - name: Clean up release keystore
+        if: always() && steps.signing.outputs.keystore_path != ''
+        shell: bash
+        run: rm -f "${{ steps.signing.outputs.keystore_path }}"
 
       - name: Stage universal and per-architecture APKs
         shell: bash
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
         run: |
-          source_dir="app/build/outputs/apk/debug"
+          if [[ "$SIGNED" == "true" ]]; then
+            variant="release"
+          else
+            variant="debug"
+          fi
+
+          source_dir="app/build/outputs/apk/${variant}"
           output_dir="app/build/release-apks"
+          rm -rf "$output_dir"
           mkdir -p "$output_dir"
 
           declare -A apks=(
-            ["app-universal-debug.apk"]="ai-usage-widgets-universal.apk"
-            ["app-arm64-v8a-debug.apk"]="ai-usage-widgets-arm64-v8a.apk"
-            ["app-armeabi-v7a-debug.apk"]="ai-usage-widgets-armeabi-v7a.apk"
-            ["app-x86_64-debug.apk"]="ai-usage-widgets-x86_64.apk"
-            ["app-x86-debug.apk"]="ai-usage-widgets-x86.apk"
+            ["app-universal-${variant}.apk"]="ai-usage-widgets-universal.apk"
+            ["app-arm64-v8a-${variant}.apk"]="ai-usage-widgets-arm64-v8a.apk"
+            ["app-armeabi-v7a-${variant}.apk"]="ai-usage-widgets-armeabi-v7a.apk"
+            ["app-x86_64-${variant}.apk"]="ai-usage-widgets-x86_64.apk"
+            ["app-x86-${variant}.apk"]="ai-usage-widgets-x86.apk"
           )
 
           for source_name in "${!apks[@]}"; do
@@ -84,7 +127,16 @@ jobs:
 
           ls -lh "$output_dir"
 
-      - name: Upload APKs
+      - name: Upload signed release APKs
+        if: steps.signing.outputs.signed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-usage-widgets-release
+          path: android/app/build/release-apks/*
+          if-no-files-found: error
+
+      - name: Upload debug APKs
+        if: steps.signing.outputs.signed != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ai-usage-widgets-debug
