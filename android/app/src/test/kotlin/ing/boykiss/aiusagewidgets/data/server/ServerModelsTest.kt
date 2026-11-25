@@ -42,7 +42,12 @@ class ServerModelsTest {
         val invite = parsePairingInvite("check-usage://pair?url=https%3A%2F%2Fhomelab.tail123.ts.net%2F&code=abc123XYZ")
         assertEquals(PairingInvite("https://homelab.tail123.ts.net", "abc123XYZ"), invite)
 
+        val webInvite = parsePairingInvite("https://kube.tail23234d.ts.net:8787/pair#code=xyz789ABC")
+        assertEquals(PairingInvite("https://kube.tail23234d.ts.net:8787", "xyz789ABC"), webInvite)
+
         assertNull(parsePairingInvite("https://homelab.tail123.ts.net"))
+        assertNull(parsePairingInvite("https://homelab.tail123.ts.net/pair"))
+        assertNull(parsePairingInvite("http://public.example.com/pair#code=abc123XYZ"))
         assertNull(parsePairingInvite("check-usage://pair?url=http%3A%2F%2Fpublic.example.com&code=abc123XYZ"))
         assertNull(parsePairingInvite("check-usage://pair?url=https%3A%2F%2Fhomelab.tail123.ts.net"))
         assertNull(parsePairingInvite("check-usage://other?url=https%3A%2F%2Fhomelab.tail123.ts.net&code=abc"))

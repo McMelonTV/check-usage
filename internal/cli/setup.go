@@ -377,7 +377,14 @@ configureNetwork:
 		}
 	}
 
-	// Step 5: Pair a device right now.
+	// Step 5: Auto-connect local CLI client so `cu` works on this host immediately.
+	if localClientPath := remote.DefaultConfigPath(); func() bool { _, err := os.Stat(localClientPath); return os.IsNotExist(err) }() {
+		if localCfg, err := ensureLocalServerClient(config, localClientPath); err == nil {
+			fmt.Println("Connected local CLI client to:", localCfg.URL)
+		}
+	}
+
+	// Step 6: Pair a device right now.
 	fmt.Println()
 	pairNow, err := promptYesNo("Generate a pairing QR code / link for a device now?", true)
 	if err == nil && pairNow {
@@ -409,7 +416,7 @@ configureNetwork:
 func printPairingOutput(serverURL, code string, showQR bool) {
 	fmt.Println()
 	if serverURL != "" {
-		if invite, err := remote.FormatInvite(serverURL, code); err == nil {
+		if invite, err := remote.FormatWebInvite(serverURL, code); err == nil {
 			if showQR {
 				if encoded, err := qr.Encode(invite); err == nil {
 					ansi := os.Getenv("NO_COLOR") == ""
@@ -417,7 +424,7 @@ func printPairingOutput(serverURL, code string, showQR bool) {
 					fmt.Println()
 				}
 			}
-			fmt.Println("Pairing link (scan QR on Android, or paste into `check-usage connect` / Android Server dialog):")
+			fmt.Println("Pairing link (scan QR on Android, or paste into `cu connect` / Android Server dialog):")
 			fmt.Println(" ", invite)
 			fmt.Println()
 			fmt.Println("Or enter manually:")
@@ -429,5 +436,5 @@ func printPairingOutput(serverURL, code string, showQR bool) {
 	}
 	fmt.Println(code)
 	fmt.Fprintln(os.Stderr, "Pairing expires in ten minutes and can be used once.")
-	fmt.Fprintln(os.Stderr, "Tip: run `tailscale serve --bg http://127.0.0.1:8787` or pass `--url https://...` to include a QR code and one-paste pairing link.")
+	fmt.Fprintln(os.Stderr, "Tip: run `tailscale serve --bg http://127.0.0.1:8787` (or `--https=8787` if port 443 is already in use) or pass `--url https://...` to include a QR code and pairing link.")
 }

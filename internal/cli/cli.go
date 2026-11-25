@@ -62,7 +62,7 @@ func Run(args []string) int {
 	}
 
 	interactiveTTY := !*plain && term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
-	config, err := remote.LoadConfig(*connectionPath)
+	config, err := loadClientConfig(*connectionPath)
 	if err != nil {
 		if interactiveTTY {
 			if _, statErr := os.Stat(*connectionPath); os.IsNotExist(statErr) {

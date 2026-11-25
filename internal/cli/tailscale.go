@@ -139,10 +139,10 @@ func parseTailscaleStatusDNS(data []byte) string {
 
 // detectServerPublicURL resolves the best known HTTPS origin for pairing links.
 func detectServerPublicURL(config remoteserver.Config) string {
-	if origin, err := remote.ValidateURL(strings.TrimSpace(config.PublicURL)); err == nil {
+	if origin := detectTailscaleServeURL(config.Listen); origin != "" {
 		return origin
 	}
-	if origin := detectTailscaleServeURL(config.Listen); origin != "" {
+	if origin, err := remote.ValidateURL(strings.TrimSpace(config.PublicURL)); err == nil {
 		return origin
 	}
 	return detectTailscaleDNSURL()

@@ -114,6 +114,15 @@ func New(config Config, httpClient *http.Client) (*Client, error) {
 		httpClient = &http.Client{Timeout: 2 * time.Minute}
 	}
 	copy := *httpClient
+	if copy.Transport == nil {
+		if base, ok := http.DefaultTransport.(*http.Transport); ok {
+			tr := base.Clone()
+			if tr.TLSHandshakeTimeout < 30*time.Second {
+				tr.TLSHandshakeTimeout = 30 * time.Second
+			}
+			copy.Transport = tr
+		}
+	}
 	copy.Jar = nil
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Client{Config: config, HTTP: &copy}, nil
