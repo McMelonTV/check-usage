@@ -54,9 +54,11 @@ jobs:
             "darwin arm64 check-usage-macos-arm64.tar.gz"
           )
 
-          for target in "${targets[@]}"; do
-            read -r goos goarch archive <<< "$target"
+          build_target() {
+            local goos="$1" goarch="$2" archive="$3"
+            local stage
             stage=$(mktemp -d)
+            trap 'rm -rf "$stage"' RETURN
             if [[ "$goos" == "windows" ]]; then
               GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
                 go build -trimpath -ldflags="$ldflags" -o "$stage/check-usage.exe" .
@@ -68,7 +70,16 @@ jobs:
               ln -s check-usage "$stage/cu"
               tar -C "$stage" -czf "$assets_dir/$archive" check-usage cu
             fi
-            rm -rf "$stage"
+          }
+
+          pids=()
+          for target in "${targets[@]}"; do
+            read -r goos goarch archive <<< "$target"
+            build_target "$goos" "$goarch" "$archive" &
+            pids+=("$!")
+          done
+          for pid in "${pids[@]}"; do
+            wait "$pid"
           done
 
           (

@@ -74,6 +74,8 @@ android {
 }
 
 val goMobileAar = layout.buildDirectory.file("generated/go/codexlogic.aar")
+val usePrebuiltGoMobileAar = System.getenv("CHECK_USAGE_PREBUILT_GOMOBILE_AAR") == "true" &&
+    goMobileAar.get().asFile.isFile
 val repositoryRoot = rootProject.projectDir.parentFile
 
 fun androidSdkPath(): String? {
@@ -89,6 +91,7 @@ fun androidSdkPath(): String? {
 val initializeGoMobile = tasks.register<Exec>("initializeGoMobile") {
     group = "go mobile"
     description = "Initializes the pinned Go Mobile toolchain."
+    onlyIf { !usePrebuiltGoMobileAar }
     workingDir(repositoryRoot)
     commandLine("go", "tool", "gomobile", "init")
     doFirst {
@@ -102,6 +105,7 @@ val buildGoMobile = tasks.register<Exec>("buildGoMobile") {
     group = "go mobile"
     description = "Builds the shared Codex Go logic as an Android AAR."
     dependsOn(initializeGoMobile)
+    onlyIf { !usePrebuiltGoMobileAar }
     workingDir(repositoryRoot)
     commandLine(
         "go", "tool", "gomobile", "bind",
