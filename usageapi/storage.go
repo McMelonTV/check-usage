@@ -7,7 +7,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/McMelonTV/check-usage/internal/filelock"
 )
+
+func (service *Service) lockAccounts() (func(), error) {
+	service.mu.Lock()
+	unlockFile, err := filelock.Lock(service.accountsFile)
+	if err != nil {
+		service.mu.Unlock()
+		return nil, err
+	}
+	return func() {
+		unlockFile()
+		service.mu.Unlock()
+	}, nil
+}
+
+func (service *Service) lockAccountsFile() (func(), error) {
+	return filelock.Lock(service.accountsFile)
+}
 
 // DefaultAccountsPath returns the accounts file used by the CLI.
 func DefaultAccountsPath() string {
@@ -118,7 +137,27 @@ func writeJSONFile(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, content, 0o600)
+	file, err := os.CreateTemp(filepath.Dir(path), ".usage-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if err := file.Chmod(0600); err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := file.Write(content); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func normalizeSettings(settings *Settings) {

@@ -53,9 +53,12 @@ type CreditStatus struct {
 // early. It is Codex's wire format and also the shared representation for
 // other providers' resets (see providers.ClaudeResetCredits).
 type ResetCreditsPayload struct {
-	AvailableCount   int                 `json:"available_count"`
-	TotalEarnedCount int                 `json:"total_earned_count"`
-	Credits          []ResetCreditDetail `json:"credits"`
+	AvailableCount   int `json:"available_count"`
+	TotalEarnedCount int `json:"total_earned_count"`
+	// Native usage reports do not include the lifetime total. Persist that
+	// distinction without changing legacy API payloads or existing caches.
+	TotalEarnedUnknown bool                `json:"total_earned_unknown,omitempty"`
+	Credits            []ResetCreditDetail `json:"credits"`
 }
 
 type ResetCreditDetail struct {

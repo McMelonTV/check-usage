@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/McMelonTV/check-usage/internal/filelock"
 	"github.com/McMelonTV/check-usage/internal/providers"
 )
 
@@ -67,14 +68,50 @@ func SaveAccounts(path string, store *AccountStore) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(path), ".accounts-")
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	tempName := file.Name()
+	defer os.Remove(tempName)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := file.Write(b); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempName, path); err != nil {
 		return err
 	}
 	store.NeedsSave = false
 	return nil
+}
+
+// UpdateAccounts serializes a read-modify-write cycle on accounts.json across
+// processes so CLI administration is safe while the HTTP server is running.
+func UpdateAccounts(path string, fn func(*AccountStore) error) error {
+	unlock, err := filelock.Lock(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	store, err := LoadAccountsOrEmpty(path)
+	if err != nil {
+		return err
+	}
+	if err := fn(store); err != nil {
+		return err
+	}
+	return SaveAccounts(path, store)
 }
 
 func DefaultAccountsPath() string {

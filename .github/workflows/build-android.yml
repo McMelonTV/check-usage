@@ -2,6 +2,16 @@ name: Build Android app
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "android/**"
+      - "internal/providers/**"
+      - "mobile/codexlogic/**"
+      - go.mod
+      - go.sum
+      - .github/workflows/build-android.yml
   push:
     branches:
       - main

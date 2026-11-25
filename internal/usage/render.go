@@ -75,36 +75,51 @@ func RenderTable(rows []Row, now time.Time) string {
 // reset-credit expiry countdown on the second line.
 func renderTableExpiry(rows []Row, now time.Time, expiryDates bool) string {
 	labels := ColumnLabels
-	for index, slot := range Slots {
-		for _, row := range rows {
-			if metric, ok := MetricForSlot(row, slot); ok && metric.IsScoped() {
-				labels[index] += " " + ScopedMarker
-				break
-			}
-		}
-	}
 	header := []tableCell{plainCell("ACCOUNT"), plainCell("PROVIDER"), plainCell("PLAN"), plainCell(labels[0]), plainCell(labels[1]), plainCell(labels[2]), plainCell("RESETS")}
 	for i := range header {
 		header[i].style = func(s string) string { return colorizeScopedMarker(s, HeaderText) }
 	}
 	lines := [][]tableCell{header}
 	for _, row := range rows {
-		slots := Slots
-		main := []tableCell{plainCell(row.Name), plainCell(row.Provider), plainCell(row.Plan)}
-		sub := []tableCell{plainCell(""), plainCell(""), plainCell("")}
-		for _, slot := range slots {
-			main = append(main, usageSlotCell(row, slot))
-			sub = append(sub, dimCell(ResetSubtitleText(row, slot, now)))
+		grouped := HasMetricGroups(row)
+		parts := MetricRows(row)
+		if grouped {
+			header := []tableCell{plainCell(row.Name), plainCell(row.Provider), plainCell(row.Plan)}
+			for range Slots {
+				header = append(header, plainCell(""))
+			}
+			header = append(header, plainCell(""))
+			lines = append(lines, header)
 		}
-		count, _, _ := strings.Cut(ResetSlotText(row), ",")
-		main = append(main, tableCell{text: count, style: colorizeResetCreditsSummary})
-		// The earliest expiry sits under the count, like reset times under usage.
-		expiry := ResetCountdownText(row.ResetCreditsExpireAt, now)
-		if expiryDates && row.SupportsResetCredits {
-			expiry = CreditExpirySubtitle(row, now, math.MaxInt)
+		for index, row := range parts {
+			if grouped {
+				prefix := "├ "
+				if index == len(parts)-1 {
+					prefix = "└ "
+				}
+				name := prefix + ScopedMarker + " " + MetricGroupName(row)
+				row = MetricGroupValues(row)
+				row.Name, row.Provider, row.Plan = name, "", ""
+			} else if index > 0 {
+				row.Name, row.Provider, row.Plan = "", "", ""
+			}
+			slots := Slots
+			main := []tableCell{{text: row.Name, style: func(s string) string { return colorizeScopedMarker(s, nil) }}, plainCell(row.Provider), plainCell(row.Plan)}
+			sub := []tableCell{plainCell(""), plainCell(""), plainCell("")}
+			for _, slot := range slots {
+				main = append(main, usageSlotCell(row, slot))
+				sub = append(sub, dimCell(ResetSubtitleText(row, slot, now)))
+			}
+			count, _, _ := strings.Cut(ResetSlotText(row), ",")
+			main = append(main, tableCell{text: count, style: colorizeResetCreditsSummary})
+			// The earliest expiry sits under the count, like reset times under usage.
+			expiry := ResetCountdownText(row.ResetCreditsExpireAt, now)
+			if expiryDates && row.SupportsResetCredits {
+				expiry = CreditExpirySubtitle(row, now, math.MaxInt)
+			}
+			sub = append(sub, dimCell(expiry))
+			lines = append(lines, main, sub)
 		}
-		sub = append(sub, dimCell(expiry))
-		lines = append(lines, main, sub)
 	}
 	return formatTableCells(lines)
 }

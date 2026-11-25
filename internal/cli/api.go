@@ -31,7 +31,7 @@ func runAPICommand(args []string) int {
 		return 2
 	}
 	if fs.NArg() < 1 || fs.NArg() > 2 {
-		fmt.Fprintln(os.Stderr, "usage: check-usage api [flags] <method|serve> [params-json|-]")
+		fmt.Fprintln(os.Stderr, "usage: check-usage server api [flags] <method|serve> [params-json|-]")
 		return 2
 	}
 

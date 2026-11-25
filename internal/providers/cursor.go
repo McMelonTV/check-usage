@@ -45,15 +45,14 @@ func cursorUsage(data cursorapi.UsageData) Usage {
 		resetAt = &value
 	}
 	plan := data.Current.PlanUsage
-	// Cursor's pools both run on the monthly billing cycle and have no session
-	// window. Like Claude's Fable limit, they borrow the weekly and monthly
-	// columns as scoped metrics.
+	// Both pools use the monthly billing cycle. Clients show them as separate
+	// child rows so neither has to borrow a weekly column.
 	for _, pool := range []struct {
 		slot    MetricSlot
 		scope   string
 		percent *float64
 	}{
-		{WeeklySlot, CursorModelsScope, plan.AutoPercentUsed},
+		{MonthlySlot, CursorModelsScope, plan.AutoPercentUsed},
 		{MonthlySlot, OtherModelsScope, plan.APIPercentUsed},
 	} {
 		metric := Metric{Kind: Percentage, Slot: pool.slot, Label: strings.ToUpper(pool.scope), Scope: pool.scope, ResetAt: resetAt}
@@ -75,7 +74,18 @@ const (
 // CursorMetrics returns Cursor's placeholder metrics before usage is loaded.
 func CursorMetrics() []Metric {
 	return []Metric{
-		{Kind: Percentage, Slot: WeeklySlot, Label: strings.ToUpper(CursorModelsScope), Scope: CursorModelsScope},
+		{Kind: Percentage, Slot: MonthlySlot, Label: strings.ToUpper(CursorModelsScope), Scope: CursorModelsScope},
 		{Kind: Percentage, Slot: MonthlySlot, Label: strings.ToUpper(OtherModelsScope), Scope: OtherModelsScope},
 	}
+}
+
+// NormalizeCursorUsage also upgrades cached pools written before child rows.
+func NormalizeCursorUsage(usage Usage) Usage {
+	usage.Metrics = append([]Metric(nil), usage.Metrics...)
+	for i := range usage.Metrics {
+		if usage.Metrics[i].Scope == CursorModelsScope || usage.Metrics[i].Scope == OtherModelsScope {
+			usage.Metrics[i].Slot = MonthlySlot
+		}
+	}
+	return usage
 }

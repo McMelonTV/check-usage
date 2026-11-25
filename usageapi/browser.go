@@ -61,6 +61,11 @@ func (service *Service) PollBrowserAuth(ctx context.Context, request BrowserAuth
 	if err != nil {
 		return DeviceAuthResult{}, err
 	}
+	unlockFile, err := service.lockAccountsFile()
+	if err != nil {
+		return DeviceAuthResult{}, err
+	}
+	defer unlockFile()
 	store, err := service.loadAccounts()
 	if err != nil {
 		return DeviceAuthResult{}, err

@@ -63,7 +63,9 @@ func printResetCreditsDetails(account storage.Account, payload *codexapi.ResetCr
 	fmt.Printf("%s %s\n", usage.HeaderText("Account:"), account.Name)
 	fmt.Printf("%s %s\n", usage.HeaderText("Email:"), usage.ValueOrDash(account.Email))
 	fmt.Printf("%s %s\n", usage.HeaderText("Available reset credits:"), usage.ColorizeAvailableResetCreditCount(payload.AvailableCount))
-	fmt.Printf("%s %d\n", usage.HeaderText("Total earned reset credits:"), payload.TotalEarnedCount)
+	if !payload.TotalEarnedUnknown {
+		fmt.Printf("%s %d\n", usage.HeaderText("Total earned reset credits:"), payload.TotalEarnedCount)
+	}
 
 	credits := usage.FilteredResetCredits(payload.Credits)
 	if len(credits) == 0 {

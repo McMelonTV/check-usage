@@ -1,6 +1,7 @@
 package ing.boykiss.aiusagewidgets.data.repository
 
 import ing.boykiss.aiusagewidgets.data.database.*
+import ing.boykiss.aiusagewidgets.data.server.*
 import ing.boykiss.aiusagewidgets.domain.*
 import ing.boykiss.aiusagewidgets.providers.api.*
 import ing.boykiss.aiusagewidgets.providers.codex.AuthenticationRequiredException
@@ -141,6 +142,72 @@ class UsageRepositoryTest {
         try { repository.refresh(account.id.value); fail("Cancellation swallowed") } catch (_: CancellationException) { }
         assertNull(repository.snapshot(account.id.value))
     }
+    @Test fun serverCatalogSynchronizesNamesAndPreservesWidgetsUntilAuthoritativeRemoval() = runBlocking {
+        val dao = FakeDao()
+        val server = FakeServer()
+        val repository = UsageRepository(dao, ProviderRegistry(emptyList()), server)
+        repository.syncServerAccounts()
+        dao.upsertWidgetConfiguration(WidgetConfigurationEntity(12, "codex", "remote"))
+        server.catalog = listOf(server.catalog.single().copy(name = "Renamed elsewhere"))
+        repository.syncServerAccounts()
+        assertEquals("Renamed elsewhere", dao.account("remote")!!.displayName)
+        assertEquals("remote", dao.widgetConfiguration(12)!!.accountId)
+        server.fail = true
+        assertTrue(runCatching { repository.syncServerAccounts() }.isFailure)
+        assertNotNull(dao.account("remote"))
+        assertNotNull(dao.widgetConfiguration(12))
+        server.fail = false
+        server.catalog = emptyList()
+        repository.syncServerAccounts()
+        assertNull(dao.account("remote"))
+        assertNull(dao.widgetConfiguration(12))
+    }
+
+    @Test fun serverBackoffAndOfflineStateKeepLastMeasurements() = runBlocking {
+        val dao = FakeDao()
+        val server = FakeServer()
+        val repository = UsageRepository(dao, ProviderRegistry(emptyList()), server)
+        repository.syncServerAccounts()
+        val before = repository.refresh("remote").getOrThrow()
+        server.fail = true
+        assertTrue(repository.refresh("remote").isFailure)
+        assertEquals(before.windows, repository.snapshot("remote")!!.windows)
+        assertEquals(AuthenticationState.CONNECTED, dao.account("remote")!!.toDomain().authenticationState)
+    }
+
+    @Test fun catalogRenameDuringUsageFetchIsNotOverwritten() = runBlocking {
+        val server = FakeServer()
+        val dao = FakeDao()
+        val repository = UsageRepository(dao, ProviderRegistry(emptyList()), server)
+        repository.syncServerAccounts()
+        val entered = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        server.beforeUsage = { entered.complete(Unit); finish.await() }
+        val refresh = async { repository.refresh("remote") }
+        entered.await()
+        server.catalog = listOf(server.catalog.single().copy(name = "Renamed on laptop"))
+        repository.syncServerAccounts()
+        finish.complete(Unit)
+        refresh.await().getOrThrow()
+        assertEquals("Renamed on laptop", dao.account("remote")!!.displayName)
+    }
+
+    @Test fun switchingServersDiscardsInFlightUsageWithReusedAccountId() = runBlocking {
+        val server = FakeServer()
+        val dao = FakeDao()
+        val repository = UsageRepository(dao, ProviderRegistry(emptyList()), server)
+        repository.syncServerAccounts()
+        val entered = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        server.beforeUsage = { entered.complete(Unit); finish.await() }
+        val refresh = async { runCatching { repository.refresh("remote") } }
+        entered.await()
+        server.connections.put(ServerConnection("https://other.ts.net", "other-token", "other-server"))
+        finish.complete(Unit)
+        assertTrue(refresh.await().exceptionOrNull() is CancellationException)
+        assertNull(repository.snapshot("remote"))
+    }
+
 }
 
 private class FakeProvider(private val fetch: suspend () -> ProviderUsageSnapshot) : UsageProvider, ProviderAuthenticator, ProviderUsageSource {
@@ -181,4 +248,25 @@ private class FakeDao : UsageWidgetsDao {
     override suspend fun upsertWidgetConfiguration(configuration: WidgetConfigurationEntity) { widgets[configuration.appWidgetId] = configuration }
     override suspend fun deleteWidgetConfigurations(ids: List<Int>) { ids.forEach(widgets::remove) }
     override suspend fun widgetIdsForAccount(accountId: String) = widgets.values.filter { it.accountId == accountId }.map { it.appWidgetId }
+}
+
+private class FakeServer : UsageServer {
+    override val connections = object : ConnectionStore {
+        private var value: ServerConnection? = ServerConnection("https://fixture.ts.net", "fixture-token", "server")
+        override fun get() = value
+        override fun put(connection: ServerConnection) { value = connection }
+    }
+    var fail = false
+    var beforeUsage: suspend () -> Unit = {}
+    var catalog = listOf(ServerAccount("remote", "Server account", "codex"))
+    override suspend fun accounts(connection: ServerConnection): List<ServerAccount> { check(!fail) { "Offline" }; return catalog }
+    override suspend fun usage(account: String, refresh: Boolean, connection: ServerConnection): List<ServerUsage> {
+        beforeUsage()
+        check(!fail) { "Offline" }
+        return listOf(ServerUsage(catalog.single(), listOf(ServerMetric("session", "SESSION", used = 25.0)), fetchedAt = System.currentTimeMillis()))
+    }
+    override suspend fun pair(address: String, code: String) = ServerConnection(address, "fixture-token", "server")
+    override suspend fun rename(account: String, name: String) { catalog = catalog.map { if (it.id == account) it.copy(name = name) else it } }
+    override suspend fun remove(account: String) { catalog = catalog.filterNot { it.id == account } }
+    override suspend fun resets(account: String) = ServerResetCredits(0, 0)
 }

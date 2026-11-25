@@ -171,6 +171,9 @@ const throttledStaleAfter = 30 * time.Minute
 // ThrottledRow returns the cached row for an account whose provider must
 // not be asked again yet (see storage.CacheEntry.NextFetchAt).
 func ThrottledRow(account storage.Account, entry storage.CacheEntry, now time.Time) (Row, bool) {
+	if account.Provider == providers.Antigravity && entry.NextFetchAt > now.Unix() && (entry.ProviderUsage == nil || entry.FetchedAt <= 0) {
+		return CachedOrUnavailableRow(account, entry, now), true
+	}
 	if entry.NextFetchAt <= now.Unix() || entry.ProviderUsage == nil || entry.FetchedAt <= 0 {
 		return Row{}, false
 	}
@@ -181,8 +184,89 @@ func ThrottledRow(account storage.Account, entry storage.CacheEntry, now time.Ti
 }
 
 func ApplyProviderUsage(row *Row, usage providers.Usage) {
+	if row.ProviderID == providers.Cursor {
+		usage = providers.NormalizeCursorUsage(usage)
+	}
 	row.Plan = FirstNonEmpty(usage.Plan, row.Plan)
 	row.Metrics = append([]providers.Metric(nil), usage.Metrics...)
+}
+
+// HasMetricGroups identifies providers whose independent families or pools
+// share a set of columns under one account header.
+func HasMetricGroups(row Row) bool {
+	if row.ProviderID != providers.Antigravity && row.ProviderID != providers.Cursor {
+		return false
+	}
+	for _, metric := range row.Metrics {
+		if metric.Scope != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// MetricGroupName is the family/pool name on a child row.
+func MetricGroupName(row Row) string {
+	if len(row.Metrics) > 0 {
+		return row.Metrics[0].Scope
+	}
+	return ""
+}
+
+// MetricGroupValues removes redundant per-cell scope markers after the scope
+// has been named on the child row. Its independent limits still share a scope.
+func MetricGroupValues(row Row) Row {
+	row.Metrics = append([]providers.Metric(nil), row.Metrics...)
+	for i := range row.Metrics {
+		row.Metrics[i].Scope = ""
+	}
+	row.SupportsResetCredits = false
+	return row
+}
+
+func MetricGroupSlots(row Row) []providers.MetricSlot {
+	var slots []providers.MetricSlot
+	for _, slot := range Slots {
+		if _, ok := MetricForSlot(row, slot); ok {
+			slots = append(slots, slot)
+		}
+	}
+	return slots
+}
+
+// MetricRows keeps model families with overlapping windows visible in tabular
+// clients. Account identity and selection belong to the original account.
+func MetricRows(row Row) []Row {
+	seen := map[providers.MetricSlot]bool{}
+	multiple := false
+	for _, metric := range row.Metrics {
+		multiple = multiple || seen[metric.Slot]
+		seen[metric.Slot] = true
+	}
+	if !multiple {
+		return []Row{row}
+	}
+	var result []Row
+	for _, metric := range row.Metrics {
+		index := -1
+		for i, part := range result {
+			if part.Metrics[0].Scope != metric.Scope {
+				continue
+			}
+			if _, occupied := MetricForSlot(part, metric.Slot); !occupied {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			index = len(result)
+			part := row
+			part.Metrics = nil
+			result = append(result, part)
+		}
+		result[index].Metrics = append(result[index].Metrics, metric)
+	}
+	return result
 }
 
 // ScopedMarker flags a provider-specific limit shown in a borrowed column.
@@ -197,6 +281,13 @@ var ColumnLabels = [3]string{"SESSION (~5h)", "WEEKLY", "MONTHLY"}
 // SlotLabel is the short label for a slot, naming the scope for scoped metrics.
 func SlotLabel(row Row, slot providers.MetricSlot) string {
 	if metric, ok := MetricForSlot(row, slot); ok && metric.IsScoped() {
+		if row.ProviderID == providers.Antigravity {
+			window := "WEEKLY"
+			if slot == providers.SessionSlot {
+				window = "5H"
+			}
+			return strings.ToUpper(metric.Scope) + " " + window
+		}
 		return strings.ToUpper(metric.Scope)
 	}
 	return strings.ToUpper(string(slot))
@@ -213,12 +304,12 @@ func MetricForSlot(row Row, slot providers.MetricSlot) (providers.Metric, bool) 
 
 func providerSupportsUsageSlot(providerID string, slot providers.MetricSlot) bool {
 	switch providerID {
-	case providers.Codex, providers.Claude:
+	case providers.Codex, providers.Claude, providers.Antigravity:
 		return slot == providers.SessionSlot || slot == providers.WeeklySlot
 	case providers.OpenCodeGo:
 		return slot == providers.SessionSlot || slot == providers.WeeklySlot || slot == providers.MonthlySlot
 	case providers.Cursor:
-		return slot == providers.WeeklySlot || slot == providers.MonthlySlot
+		return slot == providers.MonthlySlot
 	default:
 		return false
 	}
@@ -295,6 +386,19 @@ func slotRank(slot providers.MetricSlot) (int, bool) {
 func IsSlotBlockedByLongerWindow(row Row, slot providers.MetricSlot) bool {
 	rank, ok := slotRank(slot)
 	if !ok {
+		return false
+	}
+	if row.ProviderID == providers.Antigravity {
+		target, ok := MetricForSlot(row, slot)
+		if !ok {
+			return false
+		}
+		for _, metric := range row.Metrics {
+			otherRank, _ := slotRank(metric.Slot)
+			if metric.Scope == target.Scope && otherRank > rank && metric.Used != nil && PercentValue(*metric.Used) >= 100 {
+				return true
+			}
+		}
 		return false
 	}
 	if target, ok := MetricForSlot(row, slot); ok && target.IsScoped() {

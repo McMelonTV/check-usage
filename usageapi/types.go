@@ -3,12 +3,13 @@
 package usageapi
 
 import (
+	"github.com/McMelonTV/check-usage/internal/nativecli"
 	"github.com/McMelonTV/check-usage/internal/providers"
 	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 )
 
 // ProtocolVersion is the compatibility version returned by rpc.discover.
-const ProtocolVersion = "1.4"
+const ProtocolVersion = "2.0"
 
 // Account is the public, credential-free representation of a saved account.
 type Account struct {
@@ -92,11 +93,14 @@ type DeviceAuthResult struct {
 
 // UsageResult contains one account snapshot or an account-scoped provider error.
 type UsageResult struct {
-	Account  Account        `json:"account"`
-	Snapshot *UsageSnapshot `json:"snapshot,omitempty"`
-	Metrics  []Metric       `json:"metrics,omitempty"`
-	Cached   bool           `json:"cached"`
-	Error    string         `json:"error,omitempty"`
+	FetchedAtMillis int64          `json:"fetched_at_epoch_millis,omitempty"`
+	RetryAtMillis   int64          `json:"retry_at_epoch_millis,omitempty"`
+	Source          string         `json:"source,omitempty"`
+	Account         Account        `json:"account"`
+	Snapshot        *UsageSnapshot `json:"snapshot,omitempty"`
+	Metrics         []Metric       `json:"metrics,omitempty"`
+	Cached          bool           `json:"cached"`
+	Error           string         `json:"error,omitempty"`
 }
 
 // ResetCreditsResult contains reset-credit details for one account.
@@ -131,13 +135,14 @@ type storedAccount struct {
 }
 
 type authData struct {
-	Type         string  `json:"type"`
-	APIKey       *string `json:"api_key,omitempty"`
-	IDToken      *string `json:"id_token,omitempty"`
-	AccessToken  *string `json:"access_token,omitempty"`
-	RefreshToken *string `json:"refresh_token,omitempty"`
-	AccountID    *string `json:"account_id,omitempty"`
-	ExpiresAt    *int64  `json:"expires_at,omitempty"`
+	Native       *nativecli.Config `json:"native_cli,omitempty"`
+	Type         string            `json:"type"`
+	APIKey       *string           `json:"api_key,omitempty"`
+	IDToken      *string           `json:"id_token,omitempty"`
+	AccessToken  *string           `json:"access_token,omitempty"`
+	RefreshToken *string           `json:"refresh_token,omitempty"`
+	AccountID    *string           `json:"account_id,omitempty"`
+	ExpiresAt    *int64            `json:"expires_at,omitempty"`
 }
 
 type accountsStore struct {
@@ -145,6 +150,8 @@ type accountsStore struct {
 }
 
 type cacheEntry struct {
+	NativeError    string                        `json:"native_error,omitempty"`
+	Source         string                        `json:"source,omitempty"`
 	PlanType       string                        `json:"plan_type,omitempty"`
 	RateLimit      *codexapi.RateLimitDetails    `json:"rate_limit,omitempty"`
 	ResetCredits   *codexapi.ResetCreditsPayload `json:"reset_credits,omitempty"`

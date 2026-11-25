@@ -69,14 +69,14 @@ type UsageWindow struct {
 // within a UsageSnapshot. AvailableCount is what can be used now.
 type CreditMetric struct {
 	AvailableCount      int    `json:"available_count"`
-	TotalEarnedCount    int    `json:"total_earned_count"`
+	TotalEarnedCount    *int   `json:"total_earned_count,omitempty"`
 	EarliestExpiryEpoch *int64 `json:"earliest_expiry_epoch_seconds,omitempty"`
 }
 
 // ResetCredits lists the available reset credits of a Codex or Claude account.
 type ResetCredits struct {
 	AvailableCount   int           `json:"available_count"`
-	TotalEarnedCount int           `json:"total_earned_count"`
+	TotalEarnedCount *int          `json:"total_earned_count,omitempty"`
 	Credits          []ResetCredit `json:"credits"`
 }
 
@@ -121,8 +121,8 @@ func publicSnapshot(snapshot *codexapi.UsageSnapshot) *UsageSnapshot {
 		}
 	}
 	if snapshot.Credits != nil {
-		credits := CreditMetric(*snapshot.Credits)
-		result.Credits = &credits
+		credits := snapshot.Credits
+		result.Credits = &CreditMetric{AvailableCount: credits.AvailableCount, TotalEarnedCount: &credits.TotalEarnedCount, EarliestExpiryEpoch: credits.EarliestExpiryEpoch}
 	}
 	return result
 }
@@ -130,8 +130,11 @@ func publicSnapshot(snapshot *codexapi.UsageSnapshot) *UsageSnapshot {
 // publicResetCredits converts a payload, keeping only available credits.
 func publicResetCredits(payload *codexapi.ResetCreditsPayload) *ResetCredits {
 	result := &ResetCredits{
-		AvailableCount: payload.AvailableCount, TotalEarnedCount: payload.TotalEarnedCount,
-		Credits: make([]ResetCredit, 0, len(payload.Credits)),
+		AvailableCount: payload.AvailableCount,
+		Credits:        make([]ResetCredit, 0, len(payload.Credits)),
+	}
+	if !payload.TotalEarnedUnknown {
+		result.TotalEarnedCount = &payload.TotalEarnedCount
 	}
 	for _, credit := range payload.Credits {
 		if creditAvailable(credit) {

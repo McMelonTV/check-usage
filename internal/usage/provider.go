@@ -79,6 +79,8 @@ func emptyProviderMetrics(providerID string) []providers.Metric {
 		return nil
 	case providers.Cursor:
 		return providers.CursorMetrics()
+	case providers.Antigravity:
+		return providers.AntigravityMetrics()
 	default:
 		return nil
 	}
@@ -88,6 +90,9 @@ func FetchProviderUsage(ctx context.Context, client *http.Client, account storag
 	definition, err := ProviderFor(account.Provider)
 	if err != nil {
 		return providerFetchResult{}, err
+	}
+	if definition.ID == providers.Antigravity {
+		return providerFetchResult{}, fmt.Errorf("configure Antigravity as a native agy account on the server")
 	}
 	if definition.Credentials == providers.APIKey {
 		var usage providers.Usage

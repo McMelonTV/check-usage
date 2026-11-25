@@ -25,14 +25,21 @@ import java.util.UUID
     @SerialName("reset_at") val resetAt: Long? = null,
     val scope: String = "",
 ) {
-    fun toDomain() = UsageWindow(
-        when (slot) {
-            "session" -> UsageMetricKind.SHORT_WINDOW
-            "weekly" -> UsageMetricKind.LONG_WINDOW
-            "monthly" -> UsageMetricKind.MONTHLY_WINDOW
-            else -> error("Unknown metric slot: $slot")
-        }, scope.ifBlank { label }, used, used.remainingPercent(), resetAt, null,
-    )
+    fun toDomain(): UsageWindow {
+        val displayLabel = when {
+            scope.isBlank() -> label
+            label.equals("$scope $slot", ignoreCase = true) -> "$scope ${if (slot == "session") "5-hour" else slot}"
+            else -> scope
+        }
+        return UsageWindow(
+            when (slot) {
+                "session" -> UsageMetricKind.SHORT_WINDOW
+                "weekly" -> UsageMetricKind.LONG_WINDOW
+                "monthly" -> UsageMetricKind.MONTHLY_WINDOW
+                else -> error("Unknown metric slot: $slot")
+            }, displayLabel, used, used.remainingPercent(), resetAt, null, scope,
+        )
+    }
 }
 @Serializable private data class SharedUsage(val plan: String? = null, val metrics: List<SharedMetric> = emptyList())
 @Serializable private data class SharedSnapshot(
@@ -94,7 +101,9 @@ class SharedUsageProvider(
     )
 
     override suspend fun refreshCredentials(account: ProviderAccount) { fetchUsage(account) }
-    override suspend fun replaceCredentials(fromAccountId: String, toAccountId: String) = credentials.move(fromAccountId, toAccountId)
+    override suspend fun replaceCredentials(fromAccountId: String, toAccountId: String) {
+        credentials.move(fromAccountId, toAccountId)
+    }
 
     override suspend fun removeCredentials(accountId: String) = credentials.remove(accountId)
 

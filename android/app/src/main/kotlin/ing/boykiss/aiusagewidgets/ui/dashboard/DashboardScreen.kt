@@ -19,6 +19,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -42,16 +48,17 @@ fun DashboardScreen(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Usage") }, actions = {
-                IconButton(onClick = { onEvent(DashboardEvent.Refresh) }, enabled = !state.refreshing && state.accounts.isNotEmpty()) {
+                TextButton(onClick = { onEvent(DashboardEvent.ConfigureServer) }) { Text("Server") }
+                IconButton(onClick = { onEvent(DashboardEvent.Refresh) }, enabled = !state.refreshing && state.serverConfigured) {
                     Icon(painterResource(R.drawable.ic_widget_refresh), contentDescription = "Refresh usage")
                 }
             })
         },
         floatingActionButton = {
             if (!state.loading && state.accounts.isNotEmpty()) ExtendedFloatingActionButton(
-                onClick = { onEvent(DashboardEvent.AddAccount) },
-                icon = { Icon(painterResource(R.drawable.ic_add), contentDescription = null) },
-                text = { Text("Add account") },
+                onClick = { onEvent(DashboardEvent.Refresh) },
+                icon = { Icon(painterResource(R.drawable.ic_widget_refresh), contentDescription = null) },
+                text = { Text("Sync accounts") },
             )
         },
     ) { padding ->
@@ -65,9 +72,9 @@ fun DashboardScreen(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
                 ) {
                     Text("Your limits, at a glance", style = MaterialTheme.typography.headlineLarge)
                     Spacer(Modifier.height(12.dp))
-                    Text("Connect your AI accounts to see remaining usage and keep it on your home screen.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (state.serverConfigured) "No accounts are configured on your server. Add your provider logins there, then refresh here." else "Connect to your homelab usage server to synchronize accounts and home-screen widgets.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(24.dp))
-                    Button(onClick = { onEvent(DashboardEvent.AddAccount) }) { Text("Connect an account") }
+                    Button(onClick = { onEvent(if (state.serverConfigured) DashboardEvent.Refresh else DashboardEvent.ConfigureServer) }) { Text(if (state.serverConfigured) "Sync accounts" else "Connect to server") }
                 }
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(340.dp),
@@ -78,7 +85,7 @@ fun DashboardScreen(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
                 ) {
                     gridItems(state.accounts, key = { it.id.value }) { account ->
                         AccountCard(account, state.providers.firstOrNull { it.id == account.providerId }?.displayName
-                            ?: account.providerId.value, state.snapshots[account.id.value], now, onEvent)
+                            ?: account.providerId.value, state.snapshots[account.id.value], now, state.canManageAccounts, onEvent)
                     }
                 }
             }
@@ -86,7 +93,7 @@ fun DashboardScreen(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
     }
     state.resetAccount?.let { account -> ResetDetailsSheet(account, state.snapshot, state.refreshingResets, onEvent) }
     AccountDialogs(state, onEvent)
-    AuthenticationDialogs(state, onEvent)
+    ServerConnectionDialog(state, onEvent)
     state.notice?.let { notice ->
         AlertDialog(onDismissRequest = { onEvent(DashboardEvent.DismissNotice) }, title = { Text("AI Usage Widgets") },
             text = { Text(notice) }, confirmButton = { TextButton(onClick = { onEvent(DashboardEvent.DismissNotice) }) { Text("OK") } })
@@ -94,7 +101,7 @@ fun DashboardScreen(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
 }
 
 @Composable
-private fun AccountCard(account: ProviderAccount, providerName: String, snapshot: ProviderUsageSnapshot?, now: Long, onEvent: (DashboardEvent) -> Unit) {
+private fun AccountCard(account: ProviderAccount, providerName: String, snapshot: ProviderUsageSnapshot?, now: Long, canManageAccounts: Boolean, onEvent: (DashboardEvent) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     val isBalance = account.providerId.value == "deepseek"
     val cached = snapshot != null && (snapshot.freshness != DataFreshness.FRESH || now - snapshot.fetchedAtEpochMillis > 30 * 60_000L)
@@ -112,9 +119,9 @@ private fun AccountCard(account: ProviderAccount, providerName: String, snapshot
                         Icon(painterResource(R.drawable.ic_more_vert), contentDescription = "Manage ${account.displayName}")
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onEvent(DashboardEvent.StartRenamingAccount(account)) })
-                        DropdownMenuItem(text = { Text("Sign in again") }, onClick = { menu = false; onEvent(DashboardEvent.Reauthenticate(account)) })
-                        DropdownMenuItem(text = { Text("Remove account") }, onClick = { menu = false; onEvent(DashboardEvent.StartRemovingAccount(account)) })
+                        DropdownMenuItem(enabled = canManageAccounts, text = { Text("Rename shared account") }, onClick = { menu = false; onEvent(DashboardEvent.StartRenamingAccount(account)) })
+                        DropdownMenuItem(text = { Text("Manage on server") }, onClick = { menu = false; onEvent(DashboardEvent.Reauthenticate(account)) })
+                        DropdownMenuItem(enabled = canManageAccounts, text = { Text("Remove shared account") }, onClick = { menu = false; onEvent(DashboardEvent.StartRemovingAccount(account)) })
                     }
                 }
             }
@@ -132,7 +139,9 @@ private fun AccountCard(account: ProviderAccount, providerName: String, snapshot
                         Text(snapshot.planLabel ?: account.planLabel ?: "—", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     }
                 }
-                snapshot.windows.forEach { window -> UsageMetric(window, now) }
+                val groups = groupedUsage(account.providerId, snapshot.windows)
+                if (groups.isNotEmpty()) UsageGrid(groups, now)
+                else snapshot.windows.forEach { window -> UsageMetric(window, now) }
                 if (snapshot.windows.isEmpty() && !isBalance && snapshot.errorMessage == null) Text("No usage windows reported")
                 snapshot.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (snapshot.fetchedAtEpochMillis > 0) Text(
@@ -152,6 +161,63 @@ private fun AccountCard(account: ProviderAccount, providerName: String, snapshot
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun UsageGrid(groups: List<UsageGroup>, now: Long) {
+    val kinds = groups.windowKinds()
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Spacer(Modifier.width(84.dp))
+            kinds.forEach { kind ->
+                Text(when (kind) {
+                    UsageMetricKind.SHORT_WINDOW -> "5-hour"
+                    UsageMetricKind.LONG_WINDOW -> "Weekly"
+                    else -> "Monthly"
+                }, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        groups.forEach { group ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(group.name, Modifier.width(84.dp), style = MaterialTheme.typography.labelLarge,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                kinds.forEach { kind ->
+                    val window = group.window(kind)
+                    UsageGridCell(window, window?.let(group::isBlocked) == true, now, Modifier.weight(1f), group.name)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UsageGridCell(window: UsageWindow?, blocked: Boolean, now: Long, modifier: Modifier, group: String) {
+    val remaining = window?.remainingPercent
+    val color = when {
+        remaining == null -> MaterialTheme.colorScheme.onSurfaceVariant
+        blocked -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+        remaining <= 20 -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.primary
+    }
+    val decoration = if (blocked) TextDecoration.LineThrough else TextDecoration.None
+    val caption = when {
+        remaining == null -> "Not reported"
+        window?.resetsAtEpochSeconds != null -> resetText(window.resetsAtEpochSeconds, now)
+        remaining == 100.0 -> "Full"
+        else -> "Reset time unknown"
+    }
+    Column(modifier.then(if (blocked) Modifier.semantics { contentDescription = "$group ${window?.label}, unavailable until weekly reset" } else Modifier),
+        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(remaining?.roundToInt()?.let { "$it% left" } ?: "—", style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold, color = color, textDecoration = decoration)
+        val bar = Modifier.fillMaxWidth().height(6.dp).drawWithContent {
+            drawContent()
+            if (blocked) drawLine(color, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = 1.dp.toPx())
+        }
+        if (remaining == null) Surface(bar, color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) {}
+        else LinearProgressIndicator(progress = { (remaining / 100).toFloat().coerceIn(0f, 1f) }, modifier = bar, color = color)
+        Text(caption, style = MaterialTheme.typography.bodySmall, color = color, textDecoration = decoration)
     }
 }
 
@@ -239,62 +305,62 @@ private fun ResetCreditRow(credit: ResetCredit) {
 }
 
 @Composable
-private fun AuthenticationDialogs(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
-    val context = LocalContext.current
-    if (state.choosingProvider) {
-        var choosingCursorMethod by rememberSaveable { mutableStateOf(false) }
-        AlertDialog(onDismissRequest = { onEvent(DashboardEvent.CancelAuthentication) },
-            title = { Text(if (choosingCursorMethod) "Connect Cursor" else "Connect an account") },
-            text = {
-                Column {
-                    if (choosingCursorMethod) {
-                        TextButton(onClick = { onEvent(DashboardEvent.ConnectProvider(ProviderId("cursor"))) }) { Text("Sign in with browser") }
-                        TextButton(onClick = { onEvent(DashboardEvent.ConnectProvider(ProviderId("cursor"), true)) }) { Text("Use an API key") }
-                        TextButton(onClick = { choosingCursorMethod = false }) { Text("Back to providers") }
-                    } else state.providers.forEach { provider ->
-                        TextButton(onClick = {
-                            if (provider.id.value == "cursor") choosingCursorMethod = true
-                            else onEvent(DashboardEvent.ConnectProvider(provider.id))
-                        }, modifier = Modifier.fillMaxWidth()) { Text(provider.displayName) }
-                    }
-                }
-            }, confirmButton = {}, dismissButton = {
-                TextButton(onClick = { onEvent(DashboardEvent.CancelAuthentication) }) { Text("Cancel") }
-            })
+private fun ServerConnectionDialog(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
+    if (!state.serverDialog) return
+    var url by rememberSaveable(state.serverAddress, state.pendingServerAddress) {
+        mutableStateOf(state.pendingServerAddress ?: state.serverAddress)
     }
-    state.connectingProvider?.let { provider ->
-        var code by rememberSaveable(provider.id.value, state.authSession?.sessionId) { mutableStateOf("") }
-        val session = state.authSession
-        AlertDialog(onDismissRequest = { onEvent(DashboardEvent.CancelAuthentication) },
-            title = { Text("Connect ${provider.displayName}") }, text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (state.enteringAPIKey) {
-                        TextField(value = code, onValueChange = { code = it }, label = { Text("API key") }, singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), enabled = !state.authenticating)
-                    } else if (session != null) {
-                        if (session.userCode.isNotEmpty()) {
-                            Text("Enter this code on the verification page:")
-                            SelectionContainer { Text(session.userCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
-                        }
-                        if (session.requiresCode) Text("Sign in in your browser, then paste the authorization code here.")
-                        if (session.requiresCode) TextField(value = code, onValueChange = { code = it }, label = { Text("Authorization code") }, singleLine = true, enabled = !state.authenticating)
-                        else Text("Waiting for browser approval…")
-                    }
-                    if (state.authenticating) CircularProgressIndicator(Modifier.size(24.dp))
-                    state.authError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                }
-            }, confirmButton = {
-                when {
-                    state.enteringAPIKey -> TextButton(enabled = code.isNotBlank() && !state.authenticating, onClick = { onEvent(DashboardEvent.SubmitAPIKey(code)) }) { Text("Connect") }
-                    session?.requiresCode == true -> Row {
-                        TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(session.verificationUrl))) }) { Text("Open browser") }
-                        TextButton(enabled = code.isNotBlank() && !state.authenticating, onClick = { onEvent(DashboardEvent.SubmitCode(code)) }) { Text("Connect") }
-                    }
-                    session != null -> TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(session.verificationUrl))) }) { Text("Open browser") }
-                    state.authError != null -> TextButton(onClick = { onEvent(DashboardEvent.ConnectProvider(provider.id)) }) { Text("Retry") }
-                }
-            }, dismissButton = { TextButton(onClick = { onEvent(DashboardEvent.CancelAuthentication) }) { Text("Cancel") } })
+    var code by remember(state.pendingPairCode) {
+        mutableStateOf(state.pendingPairCode.orEmpty())
     }
+    var inviteApplied by remember(state.inviteFromLink, state.pendingPairCode) {
+        mutableStateOf(state.inviteFromLink)
+    }
+    fun applyIfInvite(input: String): Boolean {
+        val invite = ing.boykiss.aiusagewidgets.data.server.parsePairingInvite(input) ?: return false
+        url = invite.url
+        code = invite.code
+        inviteApplied = true
+        return true
+    }
+    AlertDialog(
+        onDismissRequest = { onEvent(DashboardEvent.CloseServerDialog) },
+        title = { Text("Connect to usage server") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    if (inviteApplied) "Pairing invite loaded. Confirm the server address below, then tap Pair device."
+                    else "Run check-usage server pair on your homelab, then scan its QR code or paste the pairing link below."
+                )
+                TextField(
+                    value = url,
+                    onValueChange = { if (!applyIfInvite(it)) { url = it; inviteApplied = false } },
+                    label = { Text("Server URL or pairing link") },
+                    placeholder = { Text("https://homelab.your-tailnet.ts.net") },
+                    singleLine = true,
+                    enabled = !state.pairingServer,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                )
+                TextField(
+                    value = code,
+                    onValueChange = { if (!applyIfInvite(it)) code = it },
+                    label = { Text("One-time pairing code") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    enabled = !state.pairingServer,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                )
+                Text("Keep Tailscale connected. Provider logins stay on the server. Pairing to a different server replaces local accounts and widget assignments.", style = MaterialTheme.typography.bodySmall)
+                state.serverError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (state.pairingServer) CircularProgressIndicator(Modifier.size(24.dp))
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = url.isNotBlank() && code.isNotBlank() && !state.pairingServer,
+                onClick = { onEvent(DashboardEvent.PairServer(url.trim(), code.trim())) }) { Text("Pair device") }
+        },
+        dismissButton = { TextButton(enabled = !state.pairingServer, onClick = { onEvent(DashboardEvent.CloseServerDialog) }) { Text("Cancel") } },
+    )
 }
 
 @Composable private fun AccountDialogs(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
@@ -310,7 +376,7 @@ private fun AuthenticationDialogs(state: DashboardState, onEvent: (DashboardEven
     }
     state.accountBeingRemoved?.let { account ->
         AlertDialog(onDismissRequest = { onEvent(DashboardEvent.CancelRemovingAccount) }, title = { Text("Remove ${account.displayName}?") },
-            text = { Text("This removes its saved login and cached usage. Its widgets will ask you to choose an account.") },
+            text = { Text("This removes the shared account from the server and all connected devices. Provider CLI sign-ins on the server are kept. Its widgets will ask you to choose an account.") },
             confirmButton = { TextButton(onClick = { onEvent(DashboardEvent.RemoveAccount) }) { Text("Remove") } },
             dismissButton = { TextButton(onClick = { onEvent(DashboardEvent.CancelRemovingAccount) }) { Text("Cancel") } })
     }

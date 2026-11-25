@@ -1,144 +1,271 @@
 # check-usage
 
-A Go CLI app for checking usage across Codex, Claude, OpenCode, DeepSeek, and Cursor accounts, including Codex "reset credits" and Claude limit resets.
+A self-hosted AI usage server with a terminal dashboard (`check-usage`) and an Android companion app (**AI Usage Widgets**).
 
-This repository also includes an Android app with home-screen widgets for the same usage information.
+Run the server on your homelab alongside your signed-in AI CLIs and provider credentials. Every paired laptop or phone reads from the same account catalog and shared usage cache over your Tailscale tailnet—without storing provider credentials on client devices. Device display settings and cached snapshots stay local.
+
+## Supported providers
+
+| Provider | Collection method | Server registration |
+| --- | --- | --- |
+| **Antigravity** (Gemini & Claude/GPT) | Native CLI only (`agy`) | `server accounts native --driver agy` |
+| **Codex** (OpenAI) | Native CLI (`codex`), opt-in API fallback, or direct login | `server accounts native --driver codex` or `server accounts login --provider codex` |
+| **Claude** | OAuth browser code | `server accounts login --provider claude` |
+| **Cursor** | Browser login or API key | `server accounts login --provider cursor` or `server accounts add --provider cursor` |
+| **OpenCode Go** | API key | `server accounts add --provider opencode-go` |
+| **DeepSeek** | API key | `server accounts add --provider deepseek` |
+| **Custom adapter** | Trusted admin JSON executable | `server accounts native --provider ID --source-file ...` |
 
 ## Install
 
-Download a prebuilt binary for your platform from [GitHub Releases](https://github.com/McMelonTV/check-usage/releases) and run `check-usage`/`check-usage.exe` in a terminal.
+The same CLI binary runs both the homelab server and the paired terminal client, and ships with a short `cu` alias (usable anywhere `check-usage` is shown below). For Android, see [Android app](#android-app).
 
-To build the CLI from source instead, install [Go](https://go.dev/doc/install) and run:
+### With `mise`
 
-On Linux/macOS:
+Install the latest prebuilt release (puts both `check-usage` and `cu` on your `$PATH`):
+
+```bash
+mise use -g github:McMelonTV/check-usage
+```
+
+Upgrade later with `mise upgrade github:McMelonTV/check-usage`.
+
+### With `go install`
+
+Requires **Go 1.26 or newer** (ensure `$(go env GOPATH)/bin` is on your `$PATH`):
+
+```bash
+# Install check-usage and/or the short cu alias:
+go install github.com/McMelonTV/check-usage@latest
+go install github.com/McMelonTV/check-usage/cmd/cu@latest
+```
+
+### Prebuilt archives or source build
+
+Download a platform archive from [GitHub Releases](https://github.com/McMelonTV/check-usage/releases) (each `.tar.gz` / `.zip` includes `check-usage` and the `cu` symlink/alias alongside `check-usage-SHA256SUMS.txt`), or build from a local checkout:
+
 ```bash
 go build -o check-usage .
 ```
 
-On Windows:
-```sh
-go build -o check-usage.exe .
-```
+### Self-updates
 
-## Get started
-
-Sign in to your first account:
+Standalone installs (from GitHub Releases or `go install`) can update themselves directly from GitHub Releases with SHA-256 checksum verification:
 
 ```bash
-./check-usage accounts login --provider codex --name "My Account"
+cu update            # Download, verify, and replace the binary in place
+cu update --check    # Check whether a newer release is available
+cu version           # Show the installed version
 ```
 
-Sign in to a Claude Pro or Max subscription. A browser opens claude.com; after approving, paste the code it shows back into the terminal:
+On Unix, `update` also creates a `cu -> check-usage` symlink next to `check-usage` if one does not already exist (without overwriting an unrelated `cu` binary). On Linux, if `check-usage.service` is running, it is restarted automatically (pass `--no-restart` to skip). If the binary is managed by `mise`, `update` directs you to `mise upgrade` unless `--force` is passed.
+
+## Set up the homelab server
+
+Run these commands as the **same OS user** who owns your signed-in AI CLI profiles. Make sure you have already signed in interactively through `agy` (using a release that supports `agy -p /usage --output-format json`) and `codex` on the host.
+
+### Quick setup (recommended)
 
 ```bash
-./check-usage accounts login --provider claude --name "My Claude"
+./check-usage server setup
 ```
 
-The account provider is always explicit. Add OpenCode or DeepSeek with an API key:
+The interactive wizard walks through everything in one pass and can be re-run any time to add more accounts:
+
+1. Initializes `~/.config/check-usage/server.json` if needed (all `server` commands auto-initialize on first run).
+2. Auto-detects installed `agy` and `codex` CLIs on `$PATH` and offers one-key registration.
+3. Lets you add **Claude**, **Cursor**, **OpenCode Go**, or **DeepSeek** from one menu (skips launching a local browser automatically over SSH/headless Linux, and prompts securely for API keys or reuses existing env vars).
+4. Optionally runs `tailscale serve --bg http://127.0.0.1:8787` and saves the resulting `https://<host>.<tailnet>.ts.net` URL in `server.json`.
+5. On Linux, optionally installs and starts the `systemd --user` service with your current `$PATH` so `agy`, `codex`, and shims (such as mise) work out of the box.
+6. Generates a QR code and one-paste pairing link for your first device.
+
+### Manual setup & background service
+
+If you prefer explicit commands or scripted provisioning:
 
 ```bash
-./check-usage accounts add --provider opencode-go --api-key-env OPENCODE_API_KEY
-./check-usage accounts add --provider deepseek --api-key-env DEEPSEEK_API_KEY
+./check-usage server accounts native --driver agy --name "Google"
+./check-usage server accounts native --driver codex --name "OpenAI"
+./check-usage server accounts add                  # Interactive provider picker (or pass flags)
+./check-usage server serve                         # Run in the foreground on 127.0.0.1:8787
 ```
 
-Sign in to Cursor through its browser login:
+Override the config path on any server command with `check-usage server --config /path/server.json <command>`. Keep `server-state` persistent across restarts so paired devices stay connected.
+
+**Tailscale Serve:** By default, the server listens on `127.0.0.1:8787` (bind addresses are restricted to loopback or an explicit Tailscale IP—no public port is needed). Expose it over your tailnet with HTTPS:
 
 ```bash
-./check-usage accounts login --provider cursor
+tailscale serve --bg http://127.0.0.1:8787
 ```
 
-See [Cursor setup](#cursor-setup) below for details and existing API keys.
+**Systemd user service (Linux):** Install, inspect, or remove the background unit with one command (captures your current binary path and `$PATH`):
 
-Then open the interactive usage dashboard:
+```bash
+./check-usage server service install
+./check-usage server service status
+./check-usage server service uninstall
+```
+
+> **Note:** To start the user service at boot and keep it running after logout, enable user lingering for this account through your homelab's normal host administration.
+
+**Live updates:** Server account files use cross-process locking and atomic writes, so you can run `server accounts ...`, `server pair`, and `server devices ...` while the server or systemd service is running.
+
+### Provider logins, API keys, and native fallbacks
+
+All provider credentials and source configurations are managed locally on the server. Over SSH or headless Linux, browser launches are skipped automatically (no need to pass `--no-browser`):
+
+```bash
+./check-usage server accounts login --provider claude --name "Claude"
+./check-usage server accounts login --provider cursor --name "Cursor"
+./check-usage server accounts login --provider codex --name "OpenAI API"
+./check-usage server accounts add --provider opencode-go   # Prompts securely or reads OPENCODE_API_KEY
+./check-usage server accounts add --provider deepseek --api-key-env DEEPSEEK_API_KEY
+./check-usage server accounts add --provider cursor --api-key-env CURSOR_API_KEY
+./check-usage server accounts reauth <id-or-name>
+```
+
+**Opt-in API fallback for Codex:** You can attach a native Codex profile to an existing OAuth-backed server account (such as "OpenAI API" above) and explicitly enable its saved API integration as fallback:
+
+```bash
+./check-usage server accounts native --driver codex --account "OpenAI API" --fallback
+```
+
+- Fallback is **off by default** and must be explicitly enabled for an existing account with saved API credentials (`--fallback` or the source file’s `fallback` setting).
+- **Antigravity is native-only.** Direct Google quota/OAuth emulation is not used; the locally installed `agy` CLI owns authentication and upstream requests.
+- **Usage-only native probes:** Built-in native drivers run fixed usage-only commands (`agy -p /usage --output-format json` and Codex `app-server` read RPCs) and never send inference prompts. Probes run in private temporary working directories with timeouts, bounded output, and process cleanup; auto-updates and browser launches are disabled for `agy`. Using a native CLI does not guarantee any provider's enforcement policy, and this project makes no promises regarding account standing.
+- Removing a native account unregisters it from `check-usage` without signing out the underlying CLI.
+
+### Multiple profiles and other native adapters
+
+To register multiple Codex profiles, point each one at its own configuration directory (passed to the CLI via `CODEX_HOME`):
+
+```bash
+./check-usage server accounts native --driver codex \
+  --config-dir /srv/ai-profiles/work-codex \
+  --name "Work OpenAI"
+```
+
+For administrator-supplied adapters for supported providers, use the `json` driver with `--source-file` pointing to a private JSON definition:
+
+```json
+{
+  "driver": "json",
+  "executable": "/srv/check-usage/adapters/provider-usage",
+  "args": ["--json"],
+  "env": {"PROVIDER_CONFIG_DIR": "/srv/ai-profiles/work"},
+  "timeout_seconds": 30,
+  "refresh_seconds": 300,
+  "fallback": false
+}
+```
+
+Register the adapter locally on the server:
+
+```bash
+./check-usage server accounts native \
+  --provider claude \
+  --source-file /private/claude-source.json \
+  --name "Work Claude"
+```
+
+The executable must print a normalized JSON usage object to stdout:
+
+```json
+{
+  "plan": "Pro",
+  "metrics": [
+    {"kind": "percentage", "slot": "session", "label": "SESSION", "used_percent": 25, "reset_at": 1795568400},
+    {"kind": "percentage", "slot": "weekly", "label": "WEEKLY", "used_percent": 40, "reset_at": 1796083200}
+  ]
+}
+```
+
+- Valid slots are `session`, `weekly`, and `monthly`; optional `scope` identifies a model family or pool.
+- Omitting `used_percent` reports the metric as unknown (`0` means measured zero usage).
+- The server never accepts executable paths, arguments, environment overrides, or shell commands from remote clients.
+
+## Pair and manage devices
+
+Each device must be paired with its own fresh, one-use code (valid for 10 minutes) and receives an independent random bearer token. The server stores only token hashes.
+
+Generate a pairing QR code and one-paste `check-usage://pair?...` link on the homelab (automatically detects your Tailscale Serve HTTPS URL, or pass `--url https://...`):
+
+```bash
+./check-usage server pair laptop
+./check-usage server pair phone
+```
+
+### Pair a terminal client
+
+On your laptop (with Tailscale connected), run `./check-usage` (or `./check-usage connect`) and paste the `check-usage://pair?...` link when prompted:
 
 ```bash
 ./check-usage
 ```
 
-The Bubble Tea interface has Usage, Resets, and Settings tabs. Press `Tab` to focus the tab row, then use Left/Right to switch tabs; the active content row remains selected but muted. Press `Tab` again to restore content focus, or press Up/Down to restore focus and move immediately. Use `r` to refresh, `a` to add an account, `x` to reauthenticate the selected account, `e` to rename it, `d` to remove it, `?` for help, and `q` to quit.
+For scripted setups, `check-usage connect --url https://homelab.your-tailnet.ts.net --pair-code-file path` (`-` reads stdin) and `check-usage server pair --code-only` / `--out path` remain supported. The CLI saves its token to owner-only `~/.config/check-usage/client.json` (override with `--connection-file path`).
 
-Resets uses an account sidebar and immediately shows cached resets for the focused account. Choose an account with Up/Down, then press Enter or Right to focus its reset rows and refresh them. Press Enter twice on a reset to confirm a claim. Claiming is currently a UI-only placeholder and does not call an API; Left or Escape returns to the account sidebar.
+### Pair the Android app
 
-Settings let you show used or remaining usage, place the bar fill on either side, order the percent, bar, and reset countdown however you like (each one can be hidden), choose a default, colorblind, or monochrome semantic palette, set an automatic refresh interval, and enable compact account rows. Preferences are stored in `settings.json` beside `accounts.json`. Each account has its own cached snapshot under the platform cache directory (`~/.cache/check-usage/accounts/` on Linux), including when zero resets are available, so cached values or skeletons appear immediately while account requests refresh in parallel.
+1. Generate a pairing code on the homelab (`./check-usage server pair phone`).
+2. **Scan the terminal QR code** with your phone's camera—it opens **AI Usage Widgets** with the server URL and code pre-filled so you just confirm and tap **Pair device**.
+   - Alternatively, open **Server** in the app and paste the `check-usage://pair?...` link into either field to auto-fill both, or enter the URL and code manually.
 
-For a non-interactive table suitable for scripts or logs, use:
+The token is encrypted with Android Keystore. Accounts sync from the server automatically—pull to refresh or tap **Sync accounts** at any time. Foreground sync runs every minute, while background and widget sync follow Android's ~15-minute schedule.
 
-```bash
-./check-usage --plain
-```
+### Permissions and revocation
 
-Output also switches to the plain table automatically when it is redirected or piped.
-
-For structured application integration, use the importable `usageapi` Go package or the versioned stdin/stdout JSON-RPC interface. No HTTP server is required:
+Paired devices are **read-only by default**. To allow a device to rename or remove shared accounts on the server, issue its code with `--allow-account-changes`:
 
 ```bash
-./check-usage api accounts.list
-./check-usage api usage.get '{"refresh":true}'
-./check-usage api serve
+./check-usage server pair phone --allow-account-changes
 ```
 
-See [Application API](docs/application-api.md) for the complete method list, authentication flows, NDJSON framing, error behavior, and Go example. API responses expose public account metadata but never stored credentials.
+Shared renames and removals propagate to other devices on their next account refresh. Credential changes and provider sign-ins always stay server-local.
 
-To see individual reset credits for an account:
+List or revoke devices independently on the homelab (by name or ID; pass `--json` for machine-readable output):
 
 ```bash
-./check-usage resets "My Account"
+./check-usage server devices list
+./check-usage server devices revoke phone
 ```
 
-An account can be identified by its name, email, or ID.
+- Revocation takes effect on the next request; a revoked device may still show previously cached display data locally, and reconnecting requires a new code.
+- Pairing Android to a different server replaces its local account cache and widget assignments.
+- **Upgrading from an older client-only version:** Previous local provider sign-ins on CLI or Android devices are not uploaded automatically—configure your accounts on the homelab server, then pair each device.
 
-## Commands
-
-```text
-check-usage accounts list
-check-usage accounts add --provider opencode-go|deepseek|cursor (--api-key key|--api-key-env name) [--name name]
-check-usage accounts login --provider codex|claude|cursor [--name name] [--no-browser] [--auth-flow device|browser]
-check-usage accounts reauth [--api-key key|--api-key-env name] <account-name-email-or-id>
-check-usage accounts remove <id-or-name>
-check-usage accounts rename <id-or-name> <new-name>
-check-usage resets <account-name-email-or-id>
-check-usage api [--accounts-file path] [--cache-dir path] <method|serve> [params-json|-]
-```
-
-Use `--accounts-file path` to choose a different accounts file or `--timeout seconds` to change the request timeout. By default, accounts are stored in `~/.config/check-usage/accounts.json`.
-
-API keys are stored in that file with owner-only permissions. Prefer `--api-key-env` over `--api-key` so secrets are not exposed in process arguments or shell history.
-
-## Cursor setup
-
-Cursor displays two separate monthly allowances: **Cursor Models** and **Other Models**. The CLI shows both percentages and their billing-cycle reset date; on-demand spending is not shown. Cursor has no session window, so its SESSION column stays empty; Cursor Models appears under WEEKLY and Other Models under MONTHLY as provider-specific limits. Each value is marked with a violet ✦ and named on the line below it (for example `Cursor models · 12d`), the same way Claude's Fable weekly limit appears under MONTHLY. A column header gets a ✦ when any row borrows it.
-
-Run the following command and complete sign-in in the browser. Add `--no-browser` to open the printed URL yourself:
+## Terminal client
 
 ```bash
-./check-usage accounts login --provider cursor
+cu                                                 # Interactive dashboard (TUI)
+cu --plain                                         # Non-interactive usage table
+cu accounts list                                   # List shared server accounts
+cu accounts rename ACCOUNT "New name"              # Rename shared account (requires write access)
+cu accounts remove ACCOUNT                         # Remove shared account (requires write access)
+cu resets ACCOUNT                                  # Show reset-credit details
+cu api usage.get '{"refresh":true}'                # Call the authenticated HTTP JSON-RPC API
+cu update                                          # Self-update from GitHub Releases
+cu version                                         # Show installed version
 ```
 
-You can also press `a` in the terminal dashboard and choose **Cursor**. Reauthenticate with `x` on the account, or `check-usage accounts reauth Cursor`.
+- **Dashboard controls:** Switch between **Usage**, **Resets**, and **Settings** tabs. Press `r` to refresh, `e` to rename a shared account, `d` twice to remove it (when permitted), and `q` to quit. Display preferences stay local to each terminal client.
+- **Caching & rate limits:** Clients display cached usage immediately and mark it stale when offline. Manual refreshes share the server cache and coalesce overlapping requests, enforcing minimum refresh intervals (**≥ 5 minutes** for native Antigravity and Claude; **≥ 1 minute** for other standard providers). Failed probes back off while retaining the last measured values, and slow providers do not block account discovery or other accounts. Source metadata distinguishes native reads from API fallback.
+- Reset credit claiming is not implemented.
 
-The login implements the PKCE browser handshake used by [Cursor's TypeScript SDK](https://cursor.com/docs/sdk/typescript). Like `Cursor.auth.login()`, it creates a revocable API key, named `check-usage`, that expires after 90 days. The key and short-lived bearer token are stored locally with owner-only permissions; bearer tokens refresh automatically by exchanging the key. Browser refresh tokens are discarded. No Node runtime or Cursor installation is needed.
+## Grouped model limits
 
-An existing Cursor user API key also works:
+Some subscriptions expose multiple model pools under a single account. The TUI, Android cards, and widgets render these in a shared grouped layout with clean column headers:
 
-```bash
-./check-usage accounts add --provider cursor --api-key-env CURSOR_API_KEY
-```
+- **Antigravity:** Preserves all four scoped limits reported by `agy` across **Gemini** and **Claude/GPT** rows with **5-hour** and **Weekly** columns under one selectable account. Weekly-only plans do not receive invented 5-hour allowances, and missing measurements remain unknown. If a family's weekly allowance is exhausted, only that family's 5-hour allowance is struck through. In the TUI, scoped rows use a purple star indicator, muted tree connectors, and normal-text family names.
+- **Cursor:** Renders **Cursor models** and **Other models** as separate independent rows, both under **Monthly** (older cached slots are normalized automatically).
+- **Compact widgets:** Small square Android widgets retain all four Antigravity values; very short widgets summarize the tightest reported limit per family.
 
-The SDK's documented `Agent.getUsage()` reports costs for an individual agent. Account quota fetching instead uses the bearer-authenticated `GetCurrentPeriodUsage` and `GetPlanInfo` RPCs used by Cursor CLI's `/usage` command. These internal APIs can change. Individual plans exposing `autoPercentUsed` and `apiPercentUsed` are supported; missing pools display `-`. Percentages are not inferred from subscription prices or spending totals. Cursor reset credits are not supported. The Android app and widgets show both model pools with their provider-specific labels.
+## Android app
 
-## Android app ("AI Usage Widgets")
-
-The app signs in separately from the CLI and supports the same five providers: Codex device login, Claude browser login with a pasted authorization code, Cursor browser login or an API key, and OpenCode Go / DeepSeek API keys.
-
-The app uses a mobile account overview with remaining-usage cards, model-specific limits, and DeepSeek balances. Pull down to refresh, or use the refresh button. Cards arrange into multiple columns on wider screens. Add an account with the floating button; each account's overflow menu lets you rename it, sign in again, or remove it. Signing in again preserves its name and widget assignments. Removing an account clears its credentials, cached usage and widget assignments.
-
-Tap **Reset credits** on a Codex card to view its credit statuses and grant, expiry, and redemption dates in a bottom sheet. Cached details appear while refreshing, including when there are zero credits. Reset claiming is not implemented.
-
-The app follows Android's system theme and wallpaper colors. Foreground usage refreshes automatically every minute; Claude respects its five-minute minimum and rate-limit backoff. Widget styles are chosen separately for each widget, and background refresh follows Android's approximately 15-minute schedule.
-
-Cached usage is displayed immediately and all accounts refresh in parallel. Failed requests retain the last values and show an error or sign-in prompt. The database upgrade preserves existing Codex accounts, snapshots and widget configurations.
-
-It offers Tonal (wallpaper-based colors), Frosted, Midnight and Sunset widget styles, plus a Dot Matrix style available on devices with the NDot system fonts. Each widget can use a different account and style.
+- **Offline resilience:** Cached usage stays visible when the homelab or Tailscale is unreachable. Network errors never wipe the local account catalog.
+- **Account sync:** Successful sync reconciles additions, renames, and removals while preserving widget assignments for unchanged account IDs.
+- **Widget styles:** Tonal, Frosted, Midnight, Sunset, and Dot Matrix on supported Nothing devices.
+- **Privacy:** No analytics or hosted backend.
 
 ### Screenshots
 
@@ -152,17 +279,21 @@ It offers Tonal (wallpaper-based colors), Frosted, Midnight and Sunset widget st
   <img src=".github/assets/tablet-landscape.png" alt="AI Usage Widgets on a tablet in landscape orientation" width="800">
 </p>
 
-After installing the app, connect an account and add **AI Usage Widgets** from your launcher's widget picker. Account credentials are encrypted using Android Keystore, and the app has no analytics or backend.
+### Build from source
 
-To build the Android app from source, you need Go 1.26, JDK 25, Android SDK 36, and an Android 8.0 (API 26) or newer device or emulator. The Gradle build automatically compiles the shared Go provider logic into an AAR using the pinned Go Mobile tool:
+Requires **Go 1.26+**, **JDK 25**, **Android SDK 36**, and an **Android NDK** supported by Go Mobile. Minimum supported OS is **Android 8.0 (API 26)**.
 
 ```bash
 cd android
-./gradlew :app:assembleDebug
+./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 
-The build creates a universal APK plus `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86` APKs under `android/app/build/outputs/apk/debug/`. CI publishes all five variants with stable filenames and a SHA-256 checksum manifest.
+Debug APKs (one universal APK plus four per-architecture variants) are written to `android/app/build/outputs/apk/debug/`.
 
-The CLI and Android app share `internal/providers` through the `mobile/codexlogic` Go Mobile bridge for device/browser authorization, token refresh, provider requests, identity parsing, balances, and usage-window mapping. Android-specific UI, encrypted credential storage, background work, and widgets remain Kotlin code.
+## Application API
 
-The widgets should automatically refresh approximately every 15 minutes, although the exact refresh timing is controlled by Android and appears to be a bit inconsistent. You should always be able to trigger a refresh using the button in the widget.
+Protocol **2.0** exposes versioned HTTP endpoints for paired devices (`/v1/pair`, authenticated `/v1/info`, and `/v1/rpc`) while keeping provider authentication, provider credentials, and native source configuration local to the server.
+
+For local server administration and embedding, the importable `usageapi` Go package and local NDJSON interface (`check-usage server api serve`) remain available.
+
+See [docs/application-api.md](docs/application-api.md) for the transport specification, pairing flow, metric schema, and local administration API.
