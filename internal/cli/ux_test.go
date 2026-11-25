@@ -178,3 +178,41 @@ func TestSystemdUnitGenerationOnLinux(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalServerAutoConnectsClientConfig(t *testing.T) {
+	dir := t.TempDir()
+	serverPath := filepath.Join(dir, "server.json")
+	clientPath := filepath.Join(dir, "client.json")
+
+	serverCfg := remoteserver.Config{
+		ServerID:     "local-server-id",
+		Listen:       "127.0.0.1:8787",
+		AccountsFile: filepath.Join(dir, "accounts.json"),
+		CacheDir:     filepath.Join(dir, "cache"),
+		StateDir:     filepath.Join(dir, "state"),
+	}
+	if err := remoteserver.SaveConfig(serverPath, serverCfg); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadOrAutoConnectClientConfig(clientPath, serverPath)
+	if err != nil {
+		t.Fatalf("loadOrAutoConnectClientConfig() error = %v", err)
+	}
+	if cfg.URL != "http://127.0.0.1:8787" || cfg.ServerID != "local-server-id" || cfg.Token == "" {
+		t.Fatalf("unexpected auto-connected config: %#v", cfg)
+	}
+
+	// Second load should reuse the saved client.json without creating another device.
+	cfg2, err := loadOrAutoConnectClientConfig(clientPath, serverPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.Token != cfg.Token {
+		t.Fatalf("expected existing client.json token to be reused")
+	}
+	devices, err := remoteserver.ListDevices(serverCfg)
+	if err != nil || len(devices) != 1 || devices[0].Access != "write" {
+		t.Fatalf("expected exactly one local write device, got %#v err=%v", devices, err)
+	}
+}

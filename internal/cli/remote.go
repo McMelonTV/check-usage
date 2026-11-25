@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/McMelonTV/check-usage/internal/remote"
+	"github.com/McMelonTV/check-usage/internal/remoteserver"
 	"github.com/McMelonTV/check-usage/internal/storage"
 	"github.com/McMelonTV/check-usage/usageapi"
 	"github.com/charmbracelet/x/term"
@@ -117,8 +119,64 @@ func connectFromReader(connectionPath, serverURL string, reader io.Reader, inter
 	}
 	return config, nil
 }
+func loadClientConfig(connectionPath string) (remote.Config, error) {
+	defaultServerPath := ""
+	if filepath.Clean(connectionPath) == filepath.Clean(remote.DefaultConfigPath()) {
+		defaultServerPath = remoteserver.DefaultConfigPath()
+	}
+	return loadOrAutoConnectClientConfig(connectionPath, defaultServerPath)
+}
+
+func loadOrAutoConnectClientConfig(connectionPath, serverConfigPath string) (remote.Config, error) {
+	config, err := remote.LoadConfig(connectionPath)
+	if err == nil {
+		return config, nil
+	}
+	if serverConfigPath == "" {
+		return remote.Config{}, err
+	}
+	if _, statErr := os.Stat(connectionPath); !os.IsNotExist(statErr) {
+		return remote.Config{}, err
+	}
+	serverCfg, serverErr := remoteserver.LoadConfig(serverConfigPath)
+	if serverErr != nil {
+		return remote.Config{}, err
+	}
+	return ensureLocalServerClient(serverCfg, connectionPath)
+}
+
+func ensureLocalServerClient(serverCfg remoteserver.Config, connectionPath string) (remote.Config, error) {
+	if existing, err := remote.LoadConfig(connectionPath); err == nil {
+		return existing, nil
+	}
+	if _, statErr := os.Stat(connectionPath); !os.IsNotExist(statErr) {
+		return remote.Config{}, fmt.Errorf("existing client config at %s is unreadable", connectionPath)
+	}
+	localURL, err := remoteserver.LocalLoopbackURL(serverCfg.Listen)
+	if err != nil {
+		return remote.Config{}, err
+	}
+	deviceName := "local"
+	if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
+		deviceName = "local (" + strings.TrimSpace(host) + ")"
+	}
+	paired, err := remoteserver.ProvisionLocalDevice(serverCfg, deviceName, true, time.Now())
+	if err != nil {
+		return remote.Config{}, err
+	}
+	cfg := remote.Config{
+		URL:      localURL,
+		Token:    paired.Token,
+		ServerID: paired.ServerID,
+	}
+	if err := remote.SaveConfig(connectionPath, cfg); err != nil {
+		return remote.Config{}, err
+	}
+	return cfg, nil
+}
+
 func connectedClient(path string, timeout time.Duration) (*remote.Client, error) {
-	config, err := remote.LoadConfig(path)
+	config, err := loadClientConfig(path)
 	if err != nil {
 		return nil, err
 	}

@@ -211,3 +211,55 @@ func TestHTTPRejectsOriginsQueriesAndMissingAuthentication(t *testing.T) {
 		}
 	}
 }
+func TestPairHandoffPageAndLocalDeviceProvisioning(t *testing.T) {
+	dir := t.TempDir()
+	config := Config{
+		ServerID:     "pair-page-server",
+		Listen:       "127.0.0.1:8787",
+		AccountsFile: filepath.Join(dir, "accounts.json"),
+		CacheDir:     filepath.Join(dir, "cache"),
+		StateDir:     filepath.Join(dir, "state"),
+	}
+	service := usageapi.New(usageapi.Config{AccountsFile: config.AccountsFile, CacheDir: config.CacheDir})
+	server := httptest.NewServer(&Handler{Config: config, Service: service})
+	defer server.Close()
+
+	resp, err := server.Client().Get(server.URL + "/pair")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("GET /pair status=%d content-type=%q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	if !strings.Contains(string(body), "check-usage://pair?") || !strings.Contains(string(body), "ing.boykiss.aiusagewidgets") {
+		t.Fatalf("GET /pair missing expected deep link handoff:\n%s", string(body))
+	}
+
+	badResp, err := server.Client().Get(server.URL + "/pair?code=leak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("GET /pair?code=leak status=%d, want 400", badResp.StatusCode)
+	}
+
+	localURL, err := LocalLoopbackURL(":8787")
+	if err != nil || localURL != "http://127.0.0.1:8787" {
+		t.Fatalf("LocalLoopbackURL(:8787) = (%q, %v)", localURL, err)
+	}
+	paired, err := ProvisionLocalDevice(config, "local (kube)", true, time.Now())
+	if err != nil {
+		t.Fatalf("ProvisionLocalDevice() error = %v", err)
+	}
+	client, err := remote.New(remote.Config{URL: server.URL, Token: paired.Token, ServerID: paired.ServerID}, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := client.Info(t.Context())
+	if err != nil || info.Device.Access != "write" || info.Device.Name != "local (kube)" {
+		t.Fatalf("unexpected local provisioned device info: %#v err=%v", info, err)
+	}
+}

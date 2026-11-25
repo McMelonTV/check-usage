@@ -20,10 +20,29 @@ type Handler struct {
 }
 
 func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Check-Usage-Server-ID", handler.Config.ServerID)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.URL.Path == "/pair" || r.URL.Path == "/pair/" {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.RawQuery != "" {
+			http.Error(w, "pairing codes must be passed in the URL fragment (#code=...)", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = io.WriteString(w, pairHandoffHTML)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	if r.Header.Get("Origin") != "" {
 		http.Error(w, "browser-origin requests are not supported", http.StatusForbidden)
 		return
@@ -141,3 +160,72 @@ func decodeBody(w http.ResponseWriter, r *http.Request, target any) error {
 	}
 	return nil
 }
+
+const pairHandoffHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pair AI Usage Widgets</title>
+<style>
+  :root { color-scheme: dark light; }
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #111318; color: #e8ecf1; padding: 24px; box-sizing: border-box; }
+  main { max-width: 420px; width: 100%; background: #1a1e26; border: 1px solid #2b3140; border-radius: 16px; padding: 24px; box-sizing: border-box; }
+  h1 { font-size: 1.25rem; margin: 0 0 8px; }
+  p { font-size: 0.95rem; line-height: 1.45; color: #b5bfd0; margin: 0 0 16px; }
+  .actions { display: flex; flex-direction: column; gap: 10px; }
+  a.btn, button.btn { display: block; text-align: center; text-decoration: none; font: inherit; font-weight: 600; padding: 12px 16px; border-radius: 10px; border: 0; cursor: pointer; }
+  a.primary { background: #7aa2f7; color: #0e1117; }
+  button.secondary { background: #262c3a; color: #e8ecf1; }
+  .hint { font-size: 0.85rem; margin-top: 12px; color: #8c98ad; word-break: break-all; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pair device</h1>
+  <p id="status">Opening AI Usage Widgets...</p>
+  <div class="actions">
+    <a id="open" class="btn primary" href="#" hidden>Open AI Usage Widgets</a>
+    <button id="copy" class="btn secondary" type="button" hidden>Copy pairing link</button>
+  </div>
+  <p id="hint" class="hint"></p>
+</main>
+<script>
+(function () {
+  var hash = window.location.hash ? window.location.hash.slice(1) : "";
+  var code = new URLSearchParams(hash).get("code") || "";
+  var status = document.getElementById("status");
+  var openBtn = document.getElementById("open");
+  var copyBtn = document.getElementById("copy");
+  var hint = document.getElementById("hint");
+  if (!code) {
+    status.textContent = "This pairing link is missing its one-time code. Run 'cu server pair' on your homelab to generate a new link.";
+    return;
+  }
+  var origin = window.location.origin;
+  var query = "url=" + encodeURIComponent(origin) + "&code=" + encodeURIComponent(code);
+  var deepLink = "check-usage://pair?" + query;
+  var launchLink = /Android/i.test(navigator.userAgent)
+    ? "intent://pair?" + query + "#Intent;scheme=check-usage;package=ing.boykiss.aiusagewidgets;end"
+    : deepLink;
+  openBtn.href = launchLink;
+  openBtn.hidden = false;
+  copyBtn.hidden = false;
+  hint.textContent = "Server: " + origin;
+  copyBtn.addEventListener("click", function () {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(deepLink).then(function () {
+        copyBtn.textContent = "Copied pairing link";
+      });
+    } else {
+      window.prompt("Copy pairing link:", deepLink);
+    }
+  });
+  status.textContent = "Tap below if AI Usage Widgets does not open automatically.";
+  window.location.href = launchLink;
+})();
+</script>
+</body>
+</html>
+`
+

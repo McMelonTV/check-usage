@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,6 +62,62 @@ func CreatePairing(config Config, name string, allowChanges bool, now time.Time)
 	return Pairing{Code: code, ExpiresAt: record.ExpiresAt}, nil
 }
 
+// LocalLoopbackURL converts a server listen address (e.g. 127.0.0.1:8787 or :8787)
+// into a local HTTP origin suitable for same-host CLI connections.
+func LocalLoopbackURL(listen string) (string, error) {
+	addr := strings.TrimSpace(listen)
+	if addr == "" {
+		addr = "127.0.0.1:8787"
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || strings.TrimSpace(port) == "" {
+		return "", errors.New("invalid server listen address")
+	}
+	switch strings.TrimSpace(host) {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	return "http://" + net.JoinHostPort(host, port), nil
+}
+
+// ProvisionLocalDevice registers a paired device directly in local server state
+// for same-host CLI usage without requiring an interactive pairing code.
+func ProvisionLocalDevice(config Config, name string, allowChanges bool, now time.Time) (PairedDevice, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "local"
+	}
+	if len(name) > 100 {
+		name = name[:100]
+	}
+	access := "read"
+	if allowChanges {
+		access = "write"
+	}
+	return createDeviceRecord(config, name, access, now)
+}
+
+func createDeviceRecord(config Config, name, access string, now time.Time) (PairedDevice, error) {
+	idSecret, err := randomToken(32)
+	if err != nil {
+		return PairedDevice{}, err
+	}
+	id := hash(idSecret)[:32]
+	secret, err := randomToken(32)
+	if err != nil {
+		return PairedDevice{}, err
+	}
+	token := id + "." + secret
+	device := Device{ID: id, Name: name, Access: access, CreatedAt: now.Unix(), TokenHash: hash(token)}
+	if err := writeJSON(filepath.Join(config.StateDir, "devices", id+".json"), device); err != nil {
+		return PairedDevice{}, err
+	}
+	device.TokenHash = ""
+	return PairedDevice{ServerID: config.ServerID, Device: device, Token: token}, nil
+}
+
 func redeemPairing(config Config, code string, now time.Time) (PairedDevice, error) {
 	if len(code) != 43 {
 		return PairedDevice{}, errors.New("invalid or expired pairing code")
@@ -80,22 +137,7 @@ func redeemPairing(config Config, code string, now time.Time) (PairedDevice, err
 	if json.Unmarshal(data, &record) != nil || now.Unix() >= record.ExpiresAt {
 		return PairedDevice{}, errors.New("invalid or expired pairing code")
 	}
-	idSecret, err := randomToken(32)
-	if err != nil {
-		return PairedDevice{}, err
-	}
-	id := hash(idSecret)[:32]
-	secret, err := randomToken(32)
-	if err != nil {
-		return PairedDevice{}, err
-	}
-	token := id + "." + secret
-	device := Device{ID: id, Name: record.Name, Access: record.Access, CreatedAt: now.Unix(), TokenHash: hash(token)}
-	if err := writeJSON(filepath.Join(config.StateDir, "devices", id+".json"), device); err != nil {
-		return PairedDevice{}, err
-	}
-	device.TokenHash = ""
-	return PairedDevice{ServerID: config.ServerID, Device: device, Token: token}, nil
+	return createDeviceRecord(config, record.Name, record.Access, now)
 }
 
 func authenticate(config Config, token string) (Device, bool) {

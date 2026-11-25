@@ -119,7 +119,7 @@ class ServerClient(override val connections: ConnectionStore, private val json: 
     private suspend fun request(origin: String, token: String, serverId: String, path: String, body: JsonElement?): JsonElement = withContext(Dispatchers.IO) {
         val connection = URL(origin + path).openConnection() as HttpURLConnection
         try {
-            connection.connectTimeout = 15_000
+            connection.connectTimeout = 30_000
             connection.readTimeout = 120_000
             connection.instanceFollowRedirects = false
             connection.requestMethod = if (body == null) "GET" else "POST"
@@ -168,23 +168,38 @@ internal fun validateServerURL(value: String): String {
 
 data class PairingInvite(val url: String, val code: String)
 
+private fun parseQueryParams(raw: String?): Map<String, String> = (raw ?: "")
+    .split('&')
+    .mapNotNull { part ->
+        val idx = part.indexOf('=')
+        if (idx <= 0) null
+        else java.net.URLDecoder.decode(part.substring(0, idx), "UTF-8") to
+            java.net.URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+    }
+    .toMap()
+
 internal fun parsePairingInvite(raw: String): PairingInvite? {
     val trimmed = raw.trim()
-    if (!trimmed.startsWith("check-usage://", ignoreCase = true)) return null
-    val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
-    if (!uri.scheme.equals("check-usage", ignoreCase = true) || !uri.host.equals("pair", ignoreCase = true)) return null
-    val params = (uri.rawQuery ?: return null)
-        .split('&')
-        .mapNotNull { part ->
-            val idx = part.indexOf('=')
-            if (idx <= 0) null
-            else java.net.URLDecoder.decode(part.substring(0, idx), "UTF-8") to
-                java.net.URLDecoder.decode(part.substring(idx + 1), "UTF-8")
-        }
-        .toMap()
-    val rawUrl = params["url"]?.trim().orEmpty()
-    val code = params["code"]?.trim().orEmpty()
-    if (rawUrl.isEmpty() || code.isEmpty()) return null
-    val validUrl = runCatching { validateServerURL(rawUrl) }.getOrNull() ?: return null
-    return PairingInvite(validUrl, code)
+    if (trimmed.startsWith("check-usage://", ignoreCase = true)) {
+        val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
+        if (!uri.scheme.equals("check-usage", ignoreCase = true) || !uri.host.equals("pair", ignoreCase = true)) return null
+        val params = parseQueryParams(uri.rawQuery)
+        val rawUrl = params["url"]?.trim().orEmpty()
+        val code = params["code"]?.trim().orEmpty()
+        if (rawUrl.isEmpty() || code.isEmpty()) return null
+        val validUrl = runCatching { validateServerURL(rawUrl) }.getOrNull() ?: return null
+        return PairingInvite(validUrl, code)
+    }
+    if (trimmed.startsWith("https://", ignoreCase = true) || trimmed.startsWith("http://", ignoreCase = true)) {
+        val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
+        if (uri.rawPath != "/pair" && uri.rawPath != "/pair/") return null
+        if (uri.host == null || uri.rawUserInfo != null) return null
+        val code = parseQueryParams(uri.rawFragment)["code"]?.trim().orEmpty()
+            .ifEmpty { parseQueryParams(uri.rawQuery)["code"]?.trim().orEmpty() }
+        if (code.isEmpty()) return null
+        val rawOrigin = URI(uri.scheme, null, uri.host, uri.port, null, null, null).toString()
+        val validUrl = runCatching { validateServerURL(rawOrigin) }.getOrNull() ?: return null
+        return PairingInvite(validUrl, code)
+    }
+    return null
 }
