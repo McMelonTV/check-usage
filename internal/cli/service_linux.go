@@ -111,6 +111,26 @@ func uninstallSystemdService() error {
 	return nil
 }
 
+func restartSystemdServiceIfActive() (bool, error) {
+	if !systemdAvailable() {
+		return false, nil
+	}
+	unitPath, err := systemdUnitPath()
+	if err != nil {
+		return false, nil
+	}
+	if _, err := os.Stat(unitPath); err != nil {
+		return false, nil
+	}
+	if err := exec.Command("systemctl", "--user", "is-active", "--quiet", systemdUnitName).Run(); err != nil {
+		return false, nil
+	}
+	if out, err := exec.Command("systemctl", "--user", "restart", systemdUnitName).CombinedOutput(); err != nil {
+		return true, fmt.Errorf("systemctl --user restart %s failed: %s", systemdUnitName, strings.TrimSpace(string(out)))
+	}
+	return true, nil
+}
+
 func runServerServiceCommand(configPath string, args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: check-usage server service install|status|uninstall")

@@ -32,6 +32,10 @@ func Run(args []string) int {
 			return runRemoteAccountsCommand(args[2:])
 		case "resets":
 			return runRemoteResetsCommand(args[2:])
+		case "update":
+			return runUpdateCommand(args[2:])
+		case "version":
+			return runVersionCommand(args[2:])
 		}
 	}
 
@@ -40,6 +44,7 @@ func Run(args []string) int {
 	connectionPath := fs.String("connection-file", remote.DefaultConfigPath(), "device server connection file")
 	timeout := fs.Int("timeout", 120, "server request timeout in seconds")
 	plain := fs.Bool("plain", false, "print the non-interactive usage table")
+	showVersion := fs.Bool("version", false, "print the installed version and exit")
 	fs.Usage = func() { printRootCommandUsage(fs) }
 	if err := fs.Parse(args[1:]); err != nil {
 		if err == flag.ErrHelp {
@@ -50,6 +55,10 @@ func Run(args []string) int {
 	if fs.NArg() != 0 {
 		fs.Usage()
 		return 2
+	}
+	if *showVersion {
+		fmt.Println(FormatVersion())
+		return 0
 	}
 
 	interactiveTTY := !*plain && term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
@@ -93,13 +102,19 @@ func Run(args []string) int {
 }
 
 func printRootCommandUsage(fs *flag.FlagSet) {
+	prog := fs.Name()
+	if prog == "" {
+		prog = os.Args[0]
+	}
 	fmt.Println(usage.HeaderText("Usage:"))
-	fmt.Printf("  %s [flags]\n", os.Args[0])
-	fmt.Printf("  %s connect [--url <server HTTPS origin>] [flags]\n", os.Args[0])
-	fmt.Printf("  %s server [--config path] <setup|serve|pair|devices|accounts|service|init|api> [flags]\n", os.Args[0])
-	fmt.Printf("  %s accounts [flags] <list|rename|remove> [arguments]\n", os.Args[0])
-	fmt.Printf("  %s resets [flags] <account name/email/id>\n", os.Args[0])
-	fmt.Printf("  %s api [flags] <method> [params-json|-]\n", os.Args[0])
+	fmt.Printf("  %s [flags]\n", prog)
+	fmt.Printf("  %s connect [--url <server HTTPS origin>] [flags]\n", prog)
+	fmt.Printf("  %s server [--config path] <setup|serve|pair|devices|accounts|service|init|api> [flags]\n", prog)
+	fmt.Printf("  %s accounts [flags] <list|rename|remove> [arguments]\n", prog)
+	fmt.Printf("  %s resets [flags] <account name/email/id>\n", prog)
+	fmt.Printf("  %s api [flags] <method> [params-json|-]\n", prog)
+	fmt.Printf("  %s update [--check] [--version tag] [--force]\n", prog)
+	fmt.Printf("  %s version\n", prog)
 	fmt.Println()
 	fmt.Println(usage.HeaderText("Subcommands:"))
 	fmt.Println("  connect   pair this device with a usage server (accepts a pairing link or URL + code)")
@@ -107,6 +122,8 @@ func printRootCommandUsage(fs *flag.FlagSet) {
 	fmt.Println("  accounts  list, rename, or remove shared server accounts")
 	fmt.Println("  resets    show reset-credit details for one account")
 	fmt.Println("  api       call the authenticated server JSON-RPC interface")
+	fmt.Println("  update    update check-usage (and its cu alias) from GitHub Releases")
+	fmt.Println("  version   print the installed check-usage version")
 	fmt.Println()
 	fmt.Println(usage.HeaderText("Flags:"))
 	printDoubleDashFlagDefaults(fs)

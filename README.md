@@ -18,13 +18,47 @@ Run the server on your homelab alongside your signed-in AI CLIs and provider cre
 
 ## Install
 
-Download a prebuilt binary from [GitHub Releases](https://github.com/McMelonTV/check-usage/releases), or build from source with **Go 1.26 or newer**:
+The same CLI binary runs both the homelab server and the paired terminal client, and ships with a short `cu` alias (usable anywhere `check-usage` is shown below). For Android, see [Android app](#android-app).
+
+### With `mise`
+
+Install the latest prebuilt release (puts both `check-usage` and `cu` on your `$PATH`):
+
+```bash
+mise use -g github:McMelonTV/check-usage
+```
+
+Upgrade later with `mise upgrade github:McMelonTV/check-usage`.
+
+### With `go install`
+
+Requires **Go 1.26 or newer** (ensure `$(go env GOPATH)/bin` is on your `$PATH`):
+
+```bash
+# Install check-usage and/or the short cu alias:
+go install github.com/McMelonTV/check-usage@latest
+go install github.com/McMelonTV/check-usage/cmd/cu@latest
+```
+
+### Prebuilt archives or source build
+
+Download a platform archive from [GitHub Releases](https://github.com/McMelonTV/check-usage/releases) (each `.tar.gz` / `.zip` includes `check-usage` and the `cu` symlink/alias alongside `check-usage-SHA256SUMS.txt`), or build from a local checkout:
 
 ```bash
 go build -o check-usage .
 ```
 
-The same binary runs both the homelab server and the paired terminal client. For Android, see [Android app](#android-app).
+### Self-updates
+
+Standalone installs (from GitHub Releases or `go install`) can update themselves directly from GitHub Releases with SHA-256 checksum verification:
+
+```bash
+cu update            # Download, verify, and replace the binary in place
+cu update --check    # Check whether a newer release is available
+cu version           # Show the installed version
+```
+
+On Unix, `update` also creates a `cu -> check-usage` symlink next to `check-usage` if one does not already exist (without overwriting an unrelated `cu` binary). On Linux, if `check-usage.service` is running, it is restarted automatically (pass `--no-restart` to skip). If the binary is managed by `mise`, `update` directs you to `mise upgrade` unless `--force` is passed.
 
 ## Set up the homelab server
 
@@ -203,13 +237,15 @@ List or revoke devices independently on the homelab (by name or ID; pass `--json
 ## Terminal client
 
 ```bash
-./check-usage                                      # Interactive dashboard (TUI)
-./check-usage --plain                              # Non-interactive usage table
-./check-usage accounts list                        # List shared server accounts
-./check-usage accounts rename ACCOUNT "New name"   # Rename shared account (requires write access)
-./check-usage accounts remove ACCOUNT              # Remove shared account (requires write access)
-./check-usage resets ACCOUNT                       # Show reset-credit details
-./check-usage api usage.get '{"refresh":true}'     # Call the authenticated HTTP JSON-RPC API
+cu                                                 # Interactive dashboard (TUI)
+cu --plain                                         # Non-interactive usage table
+cu accounts list                                   # List shared server accounts
+cu accounts rename ACCOUNT "New name"              # Rename shared account (requires write access)
+cu accounts remove ACCOUNT                         # Remove shared account (requires write access)
+cu resets ACCOUNT                                  # Show reset-credit details
+cu api usage.get '{"refresh":true}'                # Call the authenticated HTTP JSON-RPC API
+cu update                                          # Self-update from GitHub Releases
+cu version                                         # Show installed version
 ```
 
 - **Dashboard controls:** Switch between **Usage**, **Resets**, and **Settings** tabs. Press `r` to refresh, `e` to rename a shared account, `d` twice to remove it (when permitted), and `q` to quit. Display preferences stay local to each terminal client.

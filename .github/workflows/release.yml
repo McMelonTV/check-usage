@@ -23,20 +23,66 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Find latest successful builds
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test CLI
+        run: go test ./...
+
+      - name: Build and package CLI release archives
+        env:
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets_dir="$PWD/release-assets"
+          mkdir -p "$assets_dir"
+          ldflags="-s -w -X github.com/McMelonTV/check-usage/internal/cli.Version=${TAG} -X github.com/McMelonTV/check-usage/internal/cli.Commit=${GITHUB_SHA}"
+
+          targets=(
+            "linux amd64 check-usage-linux-amd64.tar.gz"
+            "linux arm64 check-usage-linux-arm64.tar.gz"
+            "windows amd64 check-usage-windows-amd64.zip"
+            "windows arm64 check-usage-windows-arm64.zip"
+            "darwin amd64 check-usage-macos-amd64.tar.gz"
+            "darwin arm64 check-usage-macos-arm64.tar.gz"
+          )
+
+          for target in "${targets[@]}"; do
+            read -r goos goarch archive <<< "$target"
+            stage=$(mktemp -d)
+            if [[ "$goos" == "windows" ]]; then
+              GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+                go build -trimpath -ldflags="$ldflags" -o "$stage/check-usage.exe" .
+              cp "$stage/check-usage.exe" "$stage/cu.exe"
+              (cd "$stage" && zip -q "$assets_dir/$archive" check-usage.exe cu.exe)
+            else
+              GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+                go build -trimpath -ldflags="$ldflags" -o "$stage/check-usage" .
+              ln -s check-usage "$stage/cu"
+              tar -C "$stage" -czf "$assets_dir/$archive" check-usage cu
+            fi
+            rm -rf "$stage"
+          done
+
+          (
+            cd "$assets_dir"
+            sha256sum check-usage-*.tar.gz check-usage-*.zip > check-usage-SHA256SUMS.txt
+            sha256sum -c check-usage-SHA256SUMS.txt
+          )
+
+      - name: Find latest successful Android build
         id: builds
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          cli_run=$(gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow build-cli.yml \
-            --branch main \
-            --status success \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
           android_run=$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow build-android.yml \
@@ -46,26 +92,13 @@ jobs:
             --json databaseId \
             --jq '.[0].databaseId')
 
-          if [[ -z "$cli_run" || -z "$android_run" ]]; then
-            echo "A successful CLI and Android build must exist on main." >&2
+          if [[ -z "$android_run" ]]; then
+            echo "A successful Android build must exist on main." >&2
             exit 1
           fi
 
-          echo "cli_run=$cli_run" >> "$GITHUB_OUTPUT"
           echo "android_run=$android_run" >> "$GITHUB_OUTPUT"
-          {
-            echo "Using CLI build run $cli_run"
-            echo "Using Android build run $android_run"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Download CLI binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: cli-binaries
-          path: release-assets
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ steps.builds.outputs.cli_run }}
+          echo "Using Android build run $android_run" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Download Android APKs
         uses: actions/download-artifact@v4
