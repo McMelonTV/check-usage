@@ -131,7 +131,7 @@ class ServerClient(override val connections: ConnectionStore, private val json: 
                 connection.outputStream.use { it.write(json.encodeToString(body).toByteArray(Charsets.UTF_8)) }
             }
             val status = connection.responseCode
-            if (serverId.isNotEmpty() && connection.getHeaderField("X-Check-Usage-Server-ID") != serverId) error("Server identity changed; reconnect explicitly")
+            checkServerIdentity(serverId, status, connection.getHeaderField("X-Check-Usage-Server-ID"))
             when (status) {
                 401 -> error("Device authorization rejected. Pair again or check whether this device was revoked.")
                 403 -> error("This device has read-only access. Enable account changes when pairing to rename or remove shared accounts.")
@@ -152,6 +152,20 @@ class ServerClient(override val connections: ConnectionStore, private val json: 
             json.parseToJsonElement(bytes.toString(Charsets.UTF_8))
         } finally { connection.disconnect() }
     }
+}
+
+/**
+ * A response without the server-ID header did not come from check-usage (usually a
+ * Tailscale Serve / reverse-proxy error while the server restarts), so report it as
+ * unavailable instead of as an identity change. Successful responses must carry it.
+ */
+internal fun checkServerIdentity(serverId: String, status: Int, header: String?) {
+    if (serverId.isEmpty()) return
+    if (header.isNullOrEmpty()) {
+        if (status == 200) error("Response did not come from a check-usage server; check the server URL")
+        error("Usage server is unavailable (HTTP $status from proxy). Is the server running?")
+    }
+    if (header != serverId) error("Server identity changed; reconnect explicitly")
 }
 
 internal fun validateServerURL(value: String): String {
