@@ -15,6 +15,7 @@ import (
 type Config struct {
 	ServerID     string `json:"server_id"`
 	Listen       string `json:"listen"`
+	PublicURL    string `json:"public_url,omitempty"`
 	AccountsFile string `json:"accounts_file"`
 	CacheDir     string `json:"cache_dir"`
 	StateDir     string `json:"state_dir"`
@@ -35,6 +36,19 @@ func Initialize(path string) (Config, error) {
 	}
 	config := Config{ServerID: id, Listen: "127.0.0.1:8787", AccountsFile: storage.DefaultAccountsPath(), CacheDir: storage.CacheDir(), StateDir: filepath.Join(filepath.Dir(path), "server-state")}
 	return config, writeJSON(path, config)
+}
+func EnsureInitialized(path string) (Config, bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		cfg, loadErr := LoadConfig(path)
+		return cfg, false, loadErr
+	} else if !os.IsNotExist(err) {
+		return Config{}, false, err
+	}
+	cfg, err := Initialize(path)
+	return cfg, err == nil, err
+}
+func SaveConfig(path string, config Config) error {
+	return writeJSON(path, config)
 }
 func LoadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)

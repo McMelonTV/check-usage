@@ -15,15 +15,18 @@ import (
 	"github.com/McMelonTV/check-usage/internal/remote"
 	"github.com/McMelonTV/check-usage/internal/storage"
 	"github.com/McMelonTV/check-usage/usageapi"
+	"github.com/charmbracelet/x/term"
 )
 
 func runConnectCommand(args []string) int {
 	fs := flag.NewFlagSet("connect", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	setDoubleDashFlagUsage(fs)
 	path := fs.String("connection-file", remote.DefaultConfigPath(), "device connection file")
-	address := fs.String("url", "", "server HTTPS origin")
-	codeFile := fs.String("pair-code-file", "-", "one-time pairing code file, or - for stdin")
-	if fs.Parse(args) != nil || fs.NArg() != 0 || *address == "" {
-		fmt.Fprintln(os.Stderr, "usage: check-usage connect --url https://server.tailnet.ts.net [--pair-code-file path|-]")
+	address := fs.String("url", "", "server HTTPS origin (optional when pasting a pairing link)")
+	codeFile := fs.String("pair-code-file", "-", "one-time pairing code or invite link file, or - for stdin")
+	if fs.Parse(args) != nil || fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "usage: check-usage connect [--url https://server.tailnet.ts.net] [--pair-code-file path|-]")
 		return 2
 	}
 	var reader io.Reader = os.Stdin
@@ -35,32 +38,84 @@ func runConnectCommand(args []string) int {
 		}
 		defer file.Close()
 		reader = file
-	} else {
-		fmt.Fprintln(os.Stderr, "Enter the one-time pairing code:")
 	}
-	code, err := bufio.NewReader(io.LimitReader(reader, 1024)).ReadString('\n')
-	if err != nil && err != io.EOF {
-		return 1
-	}
-	config, err := remote.Pair(context.Background(), *address, strings.TrimSpace(code), nil)
+	config, err := connectFromReader(*path, strings.TrimSpace(*address), reader, *codeFile == "-" && term.IsTerminal(os.Stdin.Fd()))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	client, err := remote.New(config, nil)
-	if err != nil {
-		return 1
-	}
-	if _, err = client.Info(context.Background()); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	if err := remote.SaveConfig(*path, config); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
 	fmt.Println("Connected to", config.URL)
 	return 0
+}
+
+func connectFromReader(connectionPath, serverURL string, reader io.Reader, interactive bool) (remote.Config, error) {
+	buf := bufio.NewReader(io.LimitReader(reader, 4096))
+	readLine := func() (string, error) {
+		line, err := buf.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return "", err
+		}
+		return strings.TrimSpace(line), nil
+	}
+
+	var code string
+	if serverURL == "" {
+		if interactive {
+			fmt.Fprint(os.Stderr, "Paste pairing link (or server URL): ")
+		}
+		first, err := readLine()
+		if err != nil {
+			return remote.Config{}, err
+		}
+		if first == "" {
+			return remote.Config{}, fmt.Errorf("server URL or pairing link is required")
+		}
+		if inviteURL, inviteCode, ok, err := remote.ParseInvite(first); ok {
+			if err != nil {
+				return remote.Config{}, err
+			}
+			serverURL, code = inviteURL, inviteCode
+		} else {
+			serverURL = first
+		}
+	}
+
+	if code == "" {
+		if interactive {
+			fmt.Fprint(os.Stderr, "Enter one-time pairing code: ")
+		}
+		entered, err := readLine()
+		if err != nil {
+			return remote.Config{}, err
+		}
+		if inviteURL, inviteCode, ok, err := remote.ParseInvite(entered); ok {
+			if err != nil {
+				return remote.Config{}, err
+			}
+			if serverURL == "" {
+				serverURL = inviteURL
+			}
+			code = inviteCode
+		} else {
+			code = entered
+		}
+	}
+
+	config, err := remote.Pair(context.Background(), serverURL, code, nil)
+	if err != nil {
+		return remote.Config{}, err
+	}
+	client, err := remote.New(config, nil)
+	if err != nil {
+		return remote.Config{}, err
+	}
+	if _, err = client.Info(context.Background()); err != nil {
+		return remote.Config{}, err
+	}
+	if err := remote.SaveConfig(connectionPath, config); err != nil {
+		return remote.Config{}, err
+	}
+	return config, nil
 }
 func connectedClient(path string, timeout time.Duration) (*remote.Client, error) {
 	config, err := remote.LoadConfig(path)

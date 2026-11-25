@@ -6,7 +6,7 @@ Protocol version **2.0** separates paired network clients from local provider ad
 
 Use the server's Tailscale HTTPS origin. The default listener is `127.0.0.1:8787`; Tailscale Serve forwards tailnet HTTPS to it. See [server setup](../README.md#set-up-the-homelab-server). Explicit loopback/Tailscale IPs also permit HTTP inside those networks.
 
-Create a pairing code locally with `check-usage server pair --name laptop`. A code expires after ten minutes and can be redeemed once, including under concurrent requests. Add `--allow-account-changes` to grant shared rename/removal permission. Provider sign-in and source configuration always remain local server operations.
+Create a pairing code locally with `check-usage server pair laptop` (or `--name laptop`). On an interactive terminal, `server pair` also renders a QR code and `check-usage://pair?url=...&code=...` invite link when the server's Tailscale HTTPS URL is known. A code expires after ten minutes and can be redeemed once, including under concurrent requests. Add `--allow-account-changes` to grant shared rename/removal permission. Provider sign-in and source configuration always remain local server operations.
 
 | Endpoint | Authentication | Request / response |
 | --- | --- | --- |
@@ -16,7 +16,7 @@ Create a pairing code locally with `check-usage server pair --name laptop`. A co
 
 Send JSON bodies with `Content-Type: application/json`. Tokens belong in the authorization header. Query parameters and browser `Origin` headers are rejected. Requests are limited to 1 MiB; the bundled clients bound responses to 4 MiB and refuse redirects. HTTP responses include `Cache-Control: no-store` and `X-Check-Usage-Server-ID`; clients retain the paired server ID and require explicit reconnection if it changes.
 
-The server stores a SHA-256 hash of each random device token in private state files. Devices store the token in an owner-only CLI connection file or Android Keystore-encrypted storage. `check-usage server devices list` lists devices without token hashes; `devices revoke ID` revokes just that device on subsequent requests. Keep the server state directory persistent across restarts.
+The server stores a SHA-256 hash of each random device token in private state files. Devices store the token in an owner-only CLI connection file or Android Keystore-encrypted storage. `check-usage server devices list` lists devices without token hashes (`--json` for JSON); `devices revoke ID_OR_NAME` revokes just that device on subsequent requests. Keep the server state directory persistent across restarts.
 
 ## Network methods
 
@@ -80,7 +80,7 @@ check-usage server api serve
 check-usage server --config ./server.json api serve
 ```
 
-Stop the HTTP server before running local credential/source mutation commands against its accounts file, and restart afterward. Separate service processes do not coordinate account/cache writes. Pairing/revocation use separate state and can run while the HTTP server is active.
+Account catalog mutations coordinate across processes with an advisory lock file and atomic writes, so local CLI administration (`server accounts ...`, `server pair`, `server devices ...`) can safely run while the HTTP server is active.
 
 The local process accepts one JSON-RPC request per line and returns one response per line:
 

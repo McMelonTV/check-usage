@@ -7,7 +7,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/McMelonTV/check-usage/internal/filelock"
 )
+
+func (service *Service) lockAccounts() (func(), error) {
+	service.mu.Lock()
+	unlockFile, err := filelock.Lock(service.accountsFile)
+	if err != nil {
+		service.mu.Unlock()
+		return nil, err
+	}
+	return func() {
+		unlockFile()
+		service.mu.Unlock()
+	}, nil
+}
+
+func (service *Service) lockAccountsFile() (func(), error) {
+	return filelock.Lock(service.accountsFile)
+}
 
 // DefaultAccountsPath returns the accounts file used by the CLI.
 func DefaultAccountsPath() string {

@@ -307,20 +307,49 @@ private fun ResetCreditRow(credit: ResetCredit) {
 @Composable
 private fun ServerConnectionDialog(state: DashboardState, onEvent: (DashboardEvent) -> Unit) {
     if (!state.serverDialog) return
-    var url by rememberSaveable(state.serverAddress) { mutableStateOf(state.serverAddress) }
-    var code by remember { mutableStateOf("") }
+    var url by rememberSaveable(state.serverAddress, state.pendingServerAddress) {
+        mutableStateOf(state.pendingServerAddress ?: state.serverAddress)
+    }
+    var code by remember(state.pendingPairCode) {
+        mutableStateOf(state.pendingPairCode.orEmpty())
+    }
+    var inviteApplied by remember(state.inviteFromLink, state.pendingPairCode) {
+        mutableStateOf(state.inviteFromLink)
+    }
+    fun applyIfInvite(input: String): Boolean {
+        val invite = ing.boykiss.aiusagewidgets.data.server.parsePairingInvite(input) ?: return false
+        url = invite.url
+        code = invite.code
+        inviteApplied = true
+        return true
+    }
     AlertDialog(
         onDismissRequest = { onEvent(DashboardEvent.CloseServerDialog) },
         title = { Text("Connect to usage server") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("On your homelab server, run check-usage server pair --name phone, then enter the one-time code below.")
-                TextField(value = url, onValueChange = { url = it }, label = { Text("Server HTTPS address") },
-                    placeholder = { Text("https://homelab.your-tailnet.ts.net") }, singleLine = true, enabled = !state.pairingServer,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-                TextField(value = code, onValueChange = { code = it }, label = { Text("One-time pairing code") },
-                    singleLine = true, visualTransformation = PasswordVisualTransformation(), enabled = !state.pairingServer,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+                Text(
+                    if (inviteApplied) "Pairing invite loaded. Confirm the server address below, then tap Pair device."
+                    else "Run check-usage server pair on your homelab, then scan its QR code or paste the pairing link below."
+                )
+                TextField(
+                    value = url,
+                    onValueChange = { if (!applyIfInvite(it)) { url = it; inviteApplied = false } },
+                    label = { Text("Server URL or pairing link") },
+                    placeholder = { Text("https://homelab.your-tailnet.ts.net") },
+                    singleLine = true,
+                    enabled = !state.pairingServer,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                )
+                TextField(
+                    value = code,
+                    onValueChange = { if (!applyIfInvite(it)) code = it },
+                    label = { Text("One-time pairing code") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    enabled = !state.pairingServer,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                )
                 Text("Keep Tailscale connected. Provider logins stay on the server. Pairing to a different server replaces local accounts and widget assignments.", style = MaterialTheme.typography.bodySmall)
                 state.serverError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (state.pairingServer) CircularProgressIndicator(Modifier.size(24.dp))

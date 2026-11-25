@@ -52,17 +52,28 @@ func Run(args []string) int {
 		return 2
 	}
 
+	interactiveTTY := !*plain && term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
 	config, err := remote.LoadConfig(*connectionPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
+		if interactiveTTY {
+			if _, statErr := os.Stat(*connectionPath); os.IsNotExist(statErr) {
+				fmt.Fprintln(os.Stderr, "Not connected to a usage server yet.")
+				fmt.Fprintln(os.Stderr, "Run `check-usage server pair` on your homelab (or `check-usage server setup` to set up a server here).")
+				fmt.Fprintln(os.Stderr)
+				config, err = connectFromReader(*connectionPath, "", os.Stdin, true)
+			}
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
 	}
 	client, err := remote.New(config, &http.Client{Timeout: time.Duration(*timeout) * time.Second})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	if !*plain && term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
+	if interactiveTTY {
 		if err := tui.RunRemote(*connectionPath, client); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1
@@ -84,15 +95,15 @@ func Run(args []string) int {
 func printRootCommandUsage(fs *flag.FlagSet) {
 	fmt.Println(usage.HeaderText("Usage:"))
 	fmt.Printf("  %s [flags]\n", os.Args[0])
-	fmt.Printf("  %s connect --url <server HTTPS origin> [flags]\n", os.Args[0])
-	fmt.Printf("  %s server [--config path] <command> [flags]\n", os.Args[0])
+	fmt.Printf("  %s connect [--url <server HTTPS origin>] [flags]\n", os.Args[0])
+	fmt.Printf("  %s server [--config path] <setup|serve|pair|devices|accounts|service|init|api> [flags]\n", os.Args[0])
 	fmt.Printf("  %s accounts [flags] <list|rename|remove> [arguments]\n", os.Args[0])
 	fmt.Printf("  %s resets [flags] <account name/email/id>\n", os.Args[0])
 	fmt.Printf("  %s api [flags] <method> [params-json|-]\n", os.Args[0])
 	fmt.Println()
 	fmt.Println(usage.HeaderText("Subcommands:"))
-	fmt.Println("  connect   pair this device with a usage server")
-	fmt.Println("  server    initialize/serve; administer accounts and paired devices locally")
+	fmt.Println("  connect   pair this device with a usage server (accepts a pairing link or URL + code)")
+	fmt.Println("  server    run the setup wizard, serve usage, pair devices, or administer accounts locally")
 	fmt.Println("  accounts  list, rename, or remove shared server accounts")
 	fmt.Println("  resets    show reset-credit details for one account")
 	fmt.Println("  api       call the authenticated server JSON-RPC interface")

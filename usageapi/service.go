@@ -80,8 +80,11 @@ func New(config Config) *Service {
 
 // ListAccounts returns public account metadata sorted by display name.
 func (service *Service) ListAccounts() ([]Account, error) {
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	store, err := service.loadAccounts()
 	if err != nil {
 		return nil, err
@@ -96,8 +99,11 @@ func (service *Service) ListAccounts() ([]Account, error) {
 
 // RenameAccount renames the account selected by ID, name, or email.
 func (service *Service) RenameAccount(target, newName string) (AccountMutation, error) {
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return AccountMutation{}, err
+	}
+	defer unlock()
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
 		return AccountMutation{}, fmt.Errorf("new account name cannot be empty")
@@ -124,8 +130,11 @@ func (service *Service) RenameAccount(target, newName string) (AccountMutation, 
 
 // RemoveAccount deletes an account and its CLI usage cache.
 func (service *Service) RemoveAccount(target string) (AccountMutation, error) {
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return AccountMutation{}, err
+	}
+	defer unlock()
 	store, err := service.loadAccounts()
 	if err != nil {
 		return AccountMutation{}, err
@@ -263,8 +272,11 @@ func (service *Service) CompleteOAuthAuth(ctx context.Context, request OAuthComp
 }
 
 func (service *Service) saveLogin(candidate storedAccount, explicitName bool) (DeviceAuthResult, error) {
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return DeviceAuthResult{}, err
+	}
+	defer unlock()
 	store, err := service.loadAccounts()
 	if err != nil {
 		return DeviceAuthResult{}, err
@@ -300,8 +312,11 @@ func (service *Service) SaveAPIKeyAccount(request APIKeyAccount) (AccountMutatio
 	if name == "" {
 		name = provider.Name
 	}
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return AccountMutation{}, err
+	}
+	defer unlock()
 	store, err := service.loadAccounts()
 	if err != nil {
 		return AccountMutation{}, err
@@ -347,22 +362,25 @@ func accountNameExists(accounts []storedAccount, name string) bool {
 // Usage returns one account or all accounts when target is empty. When refresh
 // is false it performs no provider requests and only reads cached data.
 func (service *Service) Usage(ctx context.Context, target string, refresh bool) ([]UsageResult, error) {
-	service.mu.Lock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return nil, err
+	}
 	store, err := service.loadAccounts()
 	if err != nil {
-		service.mu.Unlock()
+		unlock()
 		return nil, err
 	}
 	indexes, err := accountIndexes(store.Accounts, target)
 	if err != nil {
-		service.mu.Unlock()
+		unlock()
 		return nil, err
 	}
 	accounts := make([]storedAccount, 0, len(indexes))
 	for _, index := range indexes {
 		accounts = append(accounts, store.Accounts[index])
 	}
-	service.mu.Unlock()
+	unlock()
 	results := make([]UsageResult, len(accounts))
 	// A slow native probe must not block account discovery or other providers.
 	// Per-account locks coalesce overlapping device refreshes.
@@ -391,20 +409,23 @@ func (service *Service) usageOne(ctx context.Context, id string, refresh bool) U
 	lock := value.(*sync.Mutex)
 	lock.Lock()
 	defer lock.Unlock()
-	service.mu.Lock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return UsageResult{Error: "Cannot lock server accounts"}
+	}
 	store, err := service.loadAccounts()
 	if err != nil {
-		service.mu.Unlock()
+		unlock()
 		return UsageResult{Error: "Cannot read server accounts"}
 	}
 	index, err := findAccount(store.Accounts, id)
 	if err != nil {
-		service.mu.Unlock()
+		unlock()
 		return UsageResult{Error: "Account was removed"}
 	}
 	account := store.Accounts[index]
 	original := account
-	service.mu.Unlock()
+	unlock()
 	result, changed, fetchErr := service.usageForAccount(ctx, &account, refresh)
 	if fetchErr != nil {
 		result = UsageResult{Account: account.public(), Error: fetchErr.Error()}
@@ -426,8 +447,12 @@ func (service *Service) usageOne(ctx context.Context, id string, refresh bool) U
 		}
 		result.RetryAtMillis = entry.NextFetchAt * 1000
 	}
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	unlock, err = service.lockAccounts()
+	if err != nil {
+		result.Error = "Cannot lock server accounts"
+		return result
+	}
+	defer unlock()
 	latest, err := service.loadAccounts()
 	if err != nil {
 		result.Error = "Cannot read server accounts"
@@ -455,19 +480,22 @@ func (service *Service) usageOne(ctx context.Context, id string, refresh bool) U
 
 // ResetCredits returns available credits for one account, optionally using cache only.
 func (service *Service) ResetCredits(ctx context.Context, target string, refresh bool) (ResetCreditsResult, error) {
-	service.mu.Lock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return ResetCreditsResult{}, err
+	}
 	store, err := service.loadAccounts()
 	if err != nil {
-		service.mu.Unlock()
+		unlock()
 		return ResetCreditsResult{}, err
 	}
 	index, err := findAccount(store.Accounts, target)
 	if err != nil {
-		service.mu.Unlock()
+		unlock()
 		return ResetCreditsResult{}, err
 	}
 	account := store.Accounts[index]
-	service.mu.Unlock()
+	unlock()
 	if account.AuthData.Native == nil && service.minRefresh == 0 {
 		return service.legacyResetCredits(ctx, target, refresh)
 	}
@@ -492,8 +520,11 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 }
 
 func (service *Service) legacyResetCredits(ctx context.Context, target string, refresh bool) (ResetCreditsResult, error) {
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return ResetCreditsResult{}, err
+	}
+	defer unlock()
 	store, err := service.loadAccounts()
 	if err != nil {
 		return ResetCreditsResult{}, err

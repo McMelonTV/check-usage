@@ -165,3 +165,26 @@ internal fun validateServerURL(value: String): String {
     }
     return value.trim().trimEnd('/')
 }
+
+data class PairingInvite(val url: String, val code: String)
+
+internal fun parsePairingInvite(raw: String): PairingInvite? {
+    val trimmed = raw.trim()
+    if (!trimmed.startsWith("check-usage://", ignoreCase = true)) return null
+    val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
+    if (!uri.scheme.equals("check-usage", ignoreCase = true) || !uri.host.equals("pair", ignoreCase = true)) return null
+    val params = (uri.rawQuery ?: return null)
+        .split('&')
+        .mapNotNull { part ->
+            val idx = part.indexOf('=')
+            if (idx <= 0) null
+            else java.net.URLDecoder.decode(part.substring(0, idx), "UTF-8") to
+                java.net.URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+        }
+        .toMap()
+    val rawUrl = params["url"]?.trim().orEmpty()
+    val code = params["code"]?.trim().orEmpty()
+    if (rawUrl.isEmpty() || code.isEmpty()) return null
+    val validUrl = runCatching { validateServerURL(rawUrl) }.getOrNull() ?: return null
+    return PairingInvite(validUrl, code)
+}

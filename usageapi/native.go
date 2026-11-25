@@ -25,8 +25,11 @@ func (service *Service) SaveNativeAccount(request NativeAccount) (AccountMutatio
 	if err := request.Config.Validate(request.Provider); err != nil {
 		return AccountMutation{}, err
 	}
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	unlock, err := service.lockAccounts()
+	if err != nil {
+		return AccountMutation{}, err
+	}
+	defer unlock()
 	store, err := service.loadAccounts()
 	if err != nil {
 		return AccountMutation{}, err

@@ -12,8 +12,20 @@ import (
 	"github.com/McMelonTV/check-usage/internal/login"
 	"github.com/McMelonTV/check-usage/internal/providers"
 	"github.com/McMelonTV/check-usage/internal/storage"
+	"github.com/McMelonTV/check-usage/internal/terminal"
 	"github.com/McMelonTV/check-usage/internal/usage"
+	"github.com/charmbracelet/x/term"
 )
+
+func shouldOpenBrowser(fs *flag.FlagSet, noBrowser bool) bool {
+	if noBrowser {
+		return false
+	}
+	if flagsSet(fs, "no-browser") {
+		return true
+	}
+	return !terminal.IsHeadless()
+}
 
 func runAccountsCommand(args []string) int {
 	if len(args) == 0 {
@@ -89,6 +101,21 @@ func runAccountsAdd(args []string) int {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
 	}
+	if resolvedKey == "" && !flagsSet(fs, "api-key", "api-key-env") && term.IsTerminal(os.Stdin.Fd()) {
+		envName := defaultAPIKeyEnvName(provider.ID)
+		if envName != "" && strings.TrimSpace(os.Getenv(envName)) != "" {
+			if useEnv, pErr := promptYesNo(fmt.Sprintf("Use %s from environment?", envName), true); pErr == nil && useEnv {
+				resolvedKey = strings.TrimSpace(os.Getenv(envName))
+			}
+		}
+		if resolvedKey == "" {
+			resolvedKey, err = promptSecret(fmt.Sprintf("%s API key (input hidden)", provider.Name))
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1
+			}
+		}
+	}
 	if resolvedKey == "" {
 		fmt.Fprintln(os.Stderr, "error: --api-key cannot be empty")
 		return 2
@@ -97,19 +124,16 @@ func runAccountsAdd(args []string) int {
 	if accountName == "" {
 		accountName = provider.Name
 	}
-	store, err := storage.LoadAccountsOrEmpty(*accountsPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	for _, account := range store.Accounts {
-		if strings.EqualFold(strings.TrimSpace(account.Name), accountName) {
-			fmt.Fprintf(os.Stderr, "error: account name %q already exists\n", accountName)
-			return 1
+	err = storage.UpdateAccounts(*accountsPath, func(store *storage.AccountStore) error {
+		for _, account := range store.Accounts {
+			if strings.EqualFold(strings.TrimSpace(account.Name), accountName) {
+				return fmt.Errorf("account name %q already exists", accountName)
+			}
 		}
-	}
-	store.Accounts = append(store.Accounts, storage.Account{ID: storage.NewAccountID(), Name: accountName, Provider: provider.ID, PlanType: storage.OptionalString(provider.Plan), AuthData: storage.AuthData{Type: string(providers.APIKey), APIKey: new(resolvedKey)}})
-	if err := storage.SaveAccounts(*accountsPath, store); err != nil {
+		store.Accounts = append(store.Accounts, storage.Account{ID: storage.NewAccountID(), Name: accountName, Provider: provider.ID, PlanType: storage.OptionalString(provider.Plan), AuthData: storage.AuthData{Type: string(providers.APIKey), APIKey: new(resolvedKey)}})
+		return nil
+	})
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
@@ -166,13 +190,26 @@ func runAccountsReauth(args []string) int {
 			fmt.Fprintln(os.Stderr, "error:", keyErr)
 			return 2
 		}
+		if key == "" && !flagsSet(fs, "api-key", "api-key-env") && term.IsTerminal(os.Stdin.Fd()) {
+			key, keyErr = promptSecret(fmt.Sprintf("New %s API key (input hidden)", provider.Name))
+			if keyErr != nil {
+				fmt.Fprintln(os.Stderr, "error:", keyErr)
+				return 1
+			}
+		}
 		if key == "" {
 			fmt.Fprintf(os.Stderr, "error: %s requires --api-key\n", provider.Name)
 			return 2
 		}
-		existing.AuthData = storage.AuthData{Type: string(providers.APIKey), APIKey: new(key)}
-		store.Accounts[index] = existing
-		if err := storage.SaveAccounts(*accountsPath, store); err != nil {
+		err = storage.UpdateAccounts(*accountsPath, func(latest *storage.AccountStore) error {
+			idx, findErr := findAccountForRemoval(latest.Accounts, existing.ID)
+			if findErr != nil {
+				return findErr
+			}
+			latest.Accounts[idx].AuthData = storage.AuthData{Type: string(providers.APIKey), APIKey: new(key)}
+			return nil
+		})
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1
 		}
@@ -205,15 +242,16 @@ func runAccountsReauth(args []string) int {
 		}
 		flow = "cursor"
 	}
+	openBrowser := shouldOpenBrowser(fs, *noBrowser)
 	switch flow {
 	case "cursor":
-		refreshed, err = login.RunCursorBrowser(existing.Name, client, !*noBrowser)
+		refreshed, err = login.RunCursorBrowser(existing.Name, client, openBrowser)
 	case "code":
-		refreshed, err = login.RunClaude(existing.Name, client, !*noBrowser)
+		refreshed, err = login.RunClaude(existing.Name, client, openBrowser)
 	case "device":
-		refreshed, err = login.RunCodexDevice(existing.Name, client, !*noBrowser)
+		refreshed, err = login.RunCodexDevice(existing.Name, client, openBrowser)
 	case "browser", "oauth":
-		refreshed, err = login.RunCodexBrowser(existing.Name, client, !*noBrowser)
+		refreshed, err = login.RunCodexBrowser(existing.Name, client, openBrowser)
 	default:
 		fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
 		return 2
@@ -237,8 +275,16 @@ func runAccountsReauth(args []string) int {
 
 	refreshed.ID, refreshed.Name = existing.ID, existing.Name
 	refreshed.Provider = existing.Provider
-	store.Accounts[index] = refreshed
-	if err := storage.SaveAccounts(*accountsPath, store); err != nil {
+	err = storage.UpdateAccounts(*accountsPath, func(latest *storage.AccountStore) error {
+		idx, findErr := findAccountForRemoval(latest.Accounts, existing.ID)
+		if findErr != nil {
+			return findErr
+		}
+		refreshed.Name = latest.Accounts[idx].Name
+		latest.Accounts[idx] = refreshed
+		return nil
+	})
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
@@ -348,16 +394,17 @@ func runAccountsLogin(args []string) int {
 		}
 		flow, recheckPlan = "cursor", nil
 	}
+	openBrowser := shouldOpenBrowser(fs, *noBrowser)
 	var account storage.Account
 	switch flow {
 	case "cursor":
-		account, err = login.RunCursorBrowser(requestedName, client, !*noBrowser)
+		account, err = login.RunCursorBrowser(requestedName, client, openBrowser)
 	case "code":
-		account, err = login.RunClaude(requestedName, client, !*noBrowser)
+		account, err = login.RunClaude(requestedName, client, openBrowser)
 	case "device":
-		account, err = login.RunCodexDevice(requestedName, client, !*noBrowser)
+		account, err = login.RunCodexDevice(requestedName, client, openBrowser)
 	case "browser", "oauth":
-		account, err = login.RunCodexBrowser(requestedName, client, !*noBrowser)
+		account, err = login.RunCodexBrowser(requestedName, client, openBrowser)
 	default:
 		fmt.Fprintln(os.Stderr, "error: --auth-flow must be one of: device, browser")
 		return 2
@@ -368,60 +415,57 @@ func runAccountsLogin(args []string) int {
 		return 1
 	}
 
-	store, err := storage.LoadAccountsOrEmpty(*accountsPath)
+	var updated bool
+	var clearCacheID string
+	err = storage.UpdateAccounts(*accountsPath, func(store *storage.AccountStore) error {
+		idx := storage.FindMatchingAccount(store.Accounts, account)
+		if provider.ID == providers.Cursor && idx >= 0 && requestedName != "" && !strings.EqualFold(requestedName, store.Accounts[idx].Name) {
+			idx = -1
+		}
+		if provider.ID == providers.Cursor && idx >= 0 {
+			account.ID = store.Accounts[idx].ID
+			if requestedName == "" {
+				account.Name = store.Accounts[idx].Name
+			}
+			store.Accounts[idx] = account
+			updated = true
+			clearCacheID = account.ID
+			return nil
+		}
+		if idx >= 0 {
+			upsert, reason, existing, candidate := shouldUpsertMatchedAccount(store.Accounts[idx], account, requestedName, client, recheckPlan)
+			store.Accounts[idx] = existing
+			account = candidate
+			if !upsert {
+				fmt.Printf("Found account with same email but %s; adding as separate account.\n", reason)
+			} else {
+				account.ID = store.Accounts[idx].ID
+				if requestedName == "" && strings.TrimSpace(store.Accounts[idx].Name) != "" {
+					account.Name = store.Accounts[idx].Name
+				}
+				store.Accounts[idx] = account
+				updated = true
+				return nil
+			}
+		}
+		store.Accounts = append(store.Accounts, account)
+		return nil
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-
-	idx := storage.FindMatchingAccount(store.Accounts, account)
-	if provider.ID == providers.Cursor && idx >= 0 && requestedName != "" && !strings.EqualFold(requestedName, store.Accounts[idx].Name) {
-		idx = -1
+	if clearCacheID != "" {
+		if err := storage.RemoveAccountCache(clearCacheID); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
 	}
-	if provider.ID == providers.Cursor && idx >= 0 {
-		account.ID = store.Accounts[idx].ID
-		if requestedName == "" {
-			account.Name = store.Accounts[idx].Name
-		}
-		store.Accounts[idx] = account
-		if err := storage.SaveAccounts(*accountsPath, store); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
-		}
-		if err := storage.RemoveAccountCache(account.ID); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			return 1
-		}
+	if updated {
 		fmt.Printf("Updated account %q (%s).\n", account.Name, account.ID)
-		return 0
+	} else {
+		fmt.Printf("Added account %q (%s).\n", account.Name, account.ID)
 	}
-	if idx >= 0 {
-		upsert, reason, existing, candidate := shouldUpsertMatchedAccount(store.Accounts[idx], account, requestedName, client, recheckPlan)
-		store.Accounts[idx] = existing
-		account = candidate
-		if !upsert {
-			fmt.Printf("Found account with same email but %s; adding as separate account.\n", reason)
-		} else {
-			account.ID = store.Accounts[idx].ID
-			if requestedName == "" && strings.TrimSpace(store.Accounts[idx].Name) != "" {
-				account.Name = store.Accounts[idx].Name
-			}
-			store.Accounts[idx] = account
-			if err := storage.SaveAccounts(*accountsPath, store); err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				return 1
-			}
-			fmt.Printf("Updated account %q (%s).\n", account.Name, account.ID)
-			return 0
-		}
-	}
-
-	store.Accounts = append(store.Accounts, account)
-	if err := storage.SaveAccounts(*accountsPath, store); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	fmt.Printf("Added account %q (%s).\n", account.Name, account.ID)
 	return 0
 }
 
@@ -439,27 +483,28 @@ func runAccountsRemove(args []string) int {
 	}
 	target := strings.TrimSpace(fs.Arg(0))
 
-	store, err := storage.LoadAccountsOrEmpty(*accountsPath)
+	var removed storage.Account
+	var empty bool
+	err := storage.UpdateAccounts(*accountsPath, func(store *storage.AccountStore) error {
+		if len(store.Accounts) == 0 {
+			empty = true
+			return nil
+		}
+		index, findErr := findAccountForRemoval(store.Accounts, target)
+		if findErr != nil {
+			return findErr
+		}
+		removed = store.Accounts[index]
+		store.Accounts = append(store.Accounts[:index], store.Accounts[index+1:]...)
+		return nil
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	if len(store.Accounts) == 0 {
+	if empty {
 		fmt.Println("No accounts to remove.")
 		return 0
-	}
-
-	index, err := findAccountForRemoval(store.Accounts, target)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	removed := store.Accounts[index]
-	store.Accounts = append(store.Accounts[:index], store.Accounts[index+1:]...)
-
-	if err := storage.SaveAccounts(*accountsPath, store); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
 	}
 	if err := storage.RemoveAccountCache(removed.ID); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -490,39 +535,40 @@ func runAccountsRename(args []string) int {
 		return 2
 	}
 
-	store, err := storage.LoadAccountsOrEmpty(*accountsPath)
+	var oldName, accountID string
+	var empty bool
+	err := storage.UpdateAccounts(*accountsPath, func(store *storage.AccountStore) error {
+		if len(store.Accounts) == 0 {
+			empty = true
+			return nil
+		}
+		index, findErr := findAccountForRemoval(store.Accounts, target)
+		if findErr != nil {
+			return findErr
+		}
+		for i := range store.Accounts {
+			if i == index {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(store.Accounts[i].Name), newName) {
+				return fmt.Errorf("account name %q already exists", newName)
+			}
+		}
+		oldName = store.Accounts[index].Name
+		accountID = store.Accounts[index].ID
+		store.Accounts[index].Name = newName
+		return nil
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
-	if len(store.Accounts) == 0 {
+	if empty {
 		fmt.Println("No accounts to rename.")
 		return 0
 	}
 
-	index, err := findAccountForRemoval(store.Accounts, target)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-	for i := range store.Accounts {
-		if i == index {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(store.Accounts[i].Name), newName) {
-			fmt.Fprintf(os.Stderr, "error: account name %q already exists\n", newName)
-			return 1
-		}
-	}
-
-	oldName := store.Accounts[index].Name
-	store.Accounts[index].Name = newName
-	if err := storage.SaveAccounts(*accountsPath, store); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
-
-	fmt.Printf("Renamed account %q (%s) to %q.\n", oldName, store.Accounts[index].ID, newName)
+	fmt.Printf("Renamed account %q (%s) to %q.\n", oldName, accountID, newName)
 	return 0
 }
 

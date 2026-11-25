@@ -30,75 +30,61 @@ The same binary runs both the homelab server and the paired terminal client. For
 
 Run these commands as the **same OS user** who owns your signed-in AI CLI profiles. Make sure you have already signed in interactively through `agy` (using a release that supports `agy -p /usage --output-format json`) and `codex` on the host.
 
-### 1. Initialize and register accounts
+### Quick setup (recommended)
 
 ```bash
-./check-usage server init
-./check-usage server accounts native --driver agy --name "Google"
-./check-usage server accounts native --driver codex --name "OpenAI"
-./check-usage server serve
+./check-usage server setup
 ```
 
-`server init` writes `~/.config/check-usage/server.json`, pointing to `~/.config/check-usage/accounts.json`, the shared usage cache, and a private `server-state` directory. Override the config path on any server command with `check-usage server --config /path/server.json <command>`. Keep `server-state` persistent across restarts so paired devices stay connected.
+The interactive wizard walks through everything in one pass and can be re-run any time to add more accounts:
 
-### 2. Expose over Tailscale Serve
+1. Initializes `~/.config/check-usage/server.json` if needed (all `server` commands auto-initialize on first run).
+2. Auto-detects installed `agy` and `codex` CLIs on `$PATH` and offers one-key registration.
+3. Lets you add **Claude**, **Cursor**, **OpenCode Go**, or **DeepSeek** from one menu (skips launching a local browser automatically over SSH/headless Linux, and prompts securely for API keys or reuses existing env vars).
+4. Optionally runs `tailscale serve --bg http://127.0.0.1:8787` and saves the resulting `https://<host>.<tailnet>.ts.net` URL in `server.json`.
+5. On Linux, optionally installs and starts the `systemd --user` service with your current `$PATH` so `agy`, `codex`, and shims (such as mise) work out of the box.
+6. Generates a QR code and one-paste pairing link for your first device.
 
-By default, the server listens on `127.0.0.1:8787`. Bind addresses are restricted to loopback or an explicit Tailscale IP—no public listener or open internet port is needed.
+### Manual setup & background service
 
-On the homelab, publish the loopback listener over your tailnet with HTTPS:
+If you prefer explicit commands or scripted provisioning:
+
+```bash
+./check-usage server accounts native --driver agy --name "Google"
+./check-usage server accounts native --driver codex --name "OpenAI"
+./check-usage server accounts add                  # Interactive provider picker (or pass flags)
+./check-usage server serve                         # Run in the foreground on 127.0.0.1:8787
+```
+
+Override the config path on any server command with `check-usage server --config /path/server.json <command>`. Keep `server-state` persistent across restarts so paired devices stay connected.
+
+**Tailscale Serve:** By default, the server listens on `127.0.0.1:8787` (bind addresses are restricted to loopback or an explicit Tailscale IP—no public port is needed). Expose it over your tailnet with HTTPS:
 
 ```bash
 tailscale serve --bg http://127.0.0.1:8787
 ```
 
-Use the HTTPS URL Tailscale prints when pairing clients, and keep Tailscale connected on each device. Tailnet ACLs control network reachability while per-device bearer tokens handle application authentication.
-
-### Keep the server running with systemd
-
-To run the server as an optional **systemd user service**, install the binary for the same OS user after initializing your configuration:
+**Systemd user service (Linux):** Install, inspect, or remove the background unit with one command (captures your current binary path and `$PATH`):
 
 ```bash
-install -Dm755 check-usage "$HOME/.local/bin/check-usage"
-mkdir -p "$HOME/.config/systemd/user"
-```
-
-Save the unit below as `~/.config/systemd/user/check-usage.service`. Adjust `PATH` so it includes your installed AI CLIs (`agy`, `codex`) and their runtimes (the example includes mise shims):
-
-```ini
-[Unit]
-Description=Shared AI usage server
-
-[Service]
-ExecStart=%h/.local/bin/check-usage server serve
-Environment="PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin"
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-```
-
-Stop any foreground `server serve` process, then enable and start the unit:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now check-usage.service
-journalctl --user -u check-usage.service -f
+./check-usage server service install
+./check-usage server service status
+./check-usage server service uninstall
 ```
 
 > **Note:** To start the user service at boot and keep it running after logout, enable user lingering for this account through your homelab's normal host administration.
 
-**Operational note:** Stop the server before running local credential or source-configuration commands (`server accounts login|add|reauth|native`), then start it again. Device pairing and revocation (`server pair`, `server devices`) use separate state and can run while the server is active.
+**Live updates:** Server account files use cross-process locking and atomic writes, so you can run `server accounts ...`, `server pair`, and `server devices ...` while the server or systemd service is running.
 
 ### Provider logins, API keys, and native fallbacks
 
-All provider credentials and source configurations are managed locally on the server:
+All provider credentials and source configurations are managed locally on the server. Over SSH or headless Linux, browser launches are skipped automatically (no need to pass `--no-browser`):
 
 ```bash
 ./check-usage server accounts login --provider claude --name "Claude"
 ./check-usage server accounts login --provider cursor --name "Cursor"
 ./check-usage server accounts login --provider codex --name "OpenAI API"
-./check-usage server accounts add --provider opencode-go --api-key-env OPENCODE_API_KEY
+./check-usage server accounts add --provider opencode-go   # Prompts securely or reads OPENCODE_API_KEY
 ./check-usage server accounts add --provider deepseek --api-key-env DEEPSEEK_API_KEY
 ./check-usage server accounts add --provider cursor --api-key-env CURSOR_API_KEY
 ./check-usage server accounts reauth <id-or-name>
@@ -168,26 +154,28 @@ The executable must print a normalized JSON usage object to stdout:
 
 Each device must be paired with its own fresh, one-use code (valid for 10 minutes) and receives an independent random bearer token. The server stores only token hashes.
 
+Generate a pairing QR code and one-paste `check-usage://pair?...` link on the homelab (automatically detects your Tailscale Serve HTTPS URL, or pass `--url https://...`):
+
+```bash
+./check-usage server pair laptop
+./check-usage server pair phone
+```
+
 ### Pair a terminal client
 
-1. Generate a pairing code on the homelab:
+On your laptop (with Tailscale connected), run `./check-usage` (or `./check-usage connect`) and paste the `check-usage://pair?...` link when prompted:
 
-   ```bash
-   ./check-usage server pair --name laptop
-   ```
+```bash
+./check-usage
+```
 
-2. Connect from your laptop using the server's Tailscale HTTPS origin:
-
-   ```bash
-   ./check-usage connect --url https://homelab.your-tailnet.ts.net
-   ```
-
-Paste the code when prompted, or pass `--pair-code-file path` (`-` reads stdin). The CLI saves its token to owner-only `~/.config/check-usage/client.json` (override with `--connection-file path`).
+For scripted setups, `check-usage connect --url https://homelab.your-tailnet.ts.net --pair-code-file path` (`-` reads stdin) and `check-usage server pair --code-only` / `--out path` remain supported. The CLI saves its token to owner-only `~/.config/check-usage/client.json` (override with `--connection-file path`).
 
 ### Pair the Android app
 
-1. Generate a fresh code on the homelab (`./check-usage server pair --name phone`).
-2. In **AI Usage Widgets**, tap **Server**, enter the HTTPS URL and pairing code, and tap **Pair device**.
+1. Generate a pairing code on the homelab (`./check-usage server pair phone`).
+2. **Scan the terminal QR code** with your phone's camera—it opens **AI Usage Widgets** with the server URL and code pre-filled so you just confirm and tap **Pair device**.
+   - Alternatively, open **Server** in the app and paste the `check-usage://pair?...` link into either field to auto-fill both, or enter the URL and code manually.
 
 The token is encrypted with Android Keystore. Accounts sync from the server automatically—pull to refresh or tap **Sync accounts** at any time. Foreground sync runs every minute, while background and widget sync follow Android's ~15-minute schedule.
 
@@ -196,16 +184,16 @@ The token is encrypted with Android Keystore. Accounts sync from the server auto
 Paired devices are **read-only by default**. To allow a device to rename or remove shared accounts on the server, issue its code with `--allow-account-changes`:
 
 ```bash
-./check-usage server pair --name phone --allow-account-changes
+./check-usage server pair phone --allow-account-changes
 ```
 
 Shared renames and removals propagate to other devices on their next account refresh. Credential changes and provider sign-ins always stay server-local.
 
-List or revoke devices independently on the homelab:
+List or revoke devices independently on the homelab (by name or ID; pass `--json` for machine-readable output):
 
 ```bash
 ./check-usage server devices list
-./check-usage server devices revoke DEVICE_ID
+./check-usage server devices revoke phone
 ```
 
 - Revocation takes effect on the next request; a revoked device may still show previously cached display data locally, and reconnecting requires a new code.

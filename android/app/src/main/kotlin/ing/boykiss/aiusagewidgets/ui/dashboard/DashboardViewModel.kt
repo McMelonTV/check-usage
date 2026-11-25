@@ -35,6 +35,9 @@ data class DashboardState(
     val serverConfigured: Boolean = false,
     val serverAddress: String = "",
     val serverDialog: Boolean = false,
+    val pendingServerAddress: String? = null,
+    val pendingPairCode: String? = null,
+    val inviteFromLink: Boolean = false,
     val pairingServer: Boolean = false,
     val serverError: String? = null,
     val canManageAccounts: Boolean = false,
@@ -45,6 +48,7 @@ data class DashboardState(
 sealed interface DashboardEvent {
     data object ConfigureServer : DashboardEvent
     data object CloseServerDialog : DashboardEvent
+    data class ReceivePairingInvite(val url: String, val code: String) : DashboardEvent
     data class PairServer(val url: String, val code: String) : DashboardEvent
     data object AddAccount : DashboardEvent
     data object CancelAuthentication : DashboardEvent
@@ -103,8 +107,15 @@ class DashboardViewModel(private val container: AppContainer, private val contex
 
     fun onEvent(event: DashboardEvent) {
         when (event) {
-            DashboardEvent.ConfigureServer -> mutable.update { it.copy(serverDialog = true, serverError = null) }
-            DashboardEvent.CloseServerDialog -> if (!mutable.value.pairingServer) mutable.update { it.copy(serverDialog = false) }
+            DashboardEvent.ConfigureServer -> mutable.update {
+                it.copy(serverDialog = true, serverError = null, pendingServerAddress = null, pendingPairCode = null, inviteFromLink = false)
+            }
+            DashboardEvent.CloseServerDialog -> if (!mutable.value.pairingServer) mutable.update {
+                it.copy(serverDialog = false, pendingServerAddress = null, pendingPairCode = null, inviteFromLink = false)
+            }
+            is DashboardEvent.ReceivePairingInvite -> mutable.update {
+                it.copy(serverDialog = true, pendingServerAddress = event.url, pendingPairCode = event.code, inviteFromLink = true, serverError = null)
+            }
             is DashboardEvent.PairServer -> pair(event.url, event.code)
             DashboardEvent.AddAccount, is DashboardEvent.Reauthenticate, is DashboardEvent.ConnectProvider,
             is DashboardEvent.SubmitAPIKey, is DashboardEvent.SubmitCode -> mutable.update { it.copy(notice = "Manage provider logins on your homelab server, then refresh here to synchronize them.") }
@@ -144,7 +155,8 @@ class DashboardViewModel(private val container: AppContainer, private val contex
                 container.repository.connectToServer(url, code)
                 UsageSyncWorker.scheduleCatalog(context)
                 mutable.update { it.copy(serverConfigured = true, serverAddress = container.server.address,
-                    serverDialog = false, canManageAccounts = container.server.connections.get()?.access == "write") }
+                    serverDialog = false, pendingServerAddress = null, pendingPairCode = null, inviteFromLink = false,
+                    canManageAccounts = container.server.connections.get()?.access == "write") }
                 refresh()
                 updateWidgets()
             } catch (error: Exception) {

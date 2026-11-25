@@ -37,4 +37,14 @@ class ServerModelsTest {
             assertTrue("Accepted an unsafe endpoint", runCatching { validateServerURL(url) }.isFailure)
         }
     }
+
+    @Test fun pairingInviteParsesValidLinksAndRejectsUnsafeURLs() {
+        val invite = parsePairingInvite("check-usage://pair?url=https%3A%2F%2Fhomelab.tail123.ts.net%2F&code=abc123XYZ")
+        assertEquals(PairingInvite("https://homelab.tail123.ts.net", "abc123XYZ"), invite)
+
+        assertNull(parsePairingInvite("https://homelab.tail123.ts.net"))
+        assertNull(parsePairingInvite("check-usage://pair?url=http%3A%2F%2Fpublic.example.com&code=abc123XYZ"))
+        assertNull(parsePairingInvite("check-usage://pair?url=https%3A%2F%2Fhomelab.tail123.ts.net"))
+        assertNull(parsePairingInvite("check-usage://other?url=https%3A%2F%2Fhomelab.tail123.ts.net&code=abc"))
+    }
 }

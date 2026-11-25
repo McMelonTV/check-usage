@@ -135,11 +135,36 @@ func ListDevices(config Config) ([]Device, error) {
 		device.TokenHash = ""
 		devices = append(devices, device)
 	}
+	for i := 0; i < len(devices); i++ {
+		for j := i + 1; j < len(devices); j++ {
+			if devices[j].CreatedAt > devices[i].CreatedAt || (devices[j].CreatedAt == devices[i].CreatedAt && strings.ToLower(devices[j].Name) < strings.ToLower(devices[i].Name)) {
+				devices[i], devices[j] = devices[j], devices[i]
+			}
+		}
+	}
 	return devices, nil
 }
-func RevokeDevice(config Config, id string) error {
-	if !deviceIDPattern.MatchString(id) {
-		return errors.New("invalid device ID")
+func RevokeDevice(config Config, target string) error {
+	target = strings.TrimSpace(target)
+	if deviceIDPattern.MatchString(target) {
+		return os.Remove(filepath.Join(config.StateDir, "devices", target+".json"))
 	}
-	return os.Remove(filepath.Join(config.StateDir, "devices", id+".json"))
+	devices, err := ListDevices(config)
+	if err != nil {
+		return err
+	}
+	var matches []Device
+	for _, device := range devices {
+		if strings.EqualFold(strings.TrimSpace(device.Name), target) {
+			matches = append(matches, device)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return errors.New("device not found (pass a device ID or name from server devices list)")
+	case 1:
+		return os.Remove(filepath.Join(config.StateDir, "devices", matches[0].ID+".json"))
+	default:
+		return errors.New("multiple devices share that name; revoke by device ID instead")
+	}
 }
