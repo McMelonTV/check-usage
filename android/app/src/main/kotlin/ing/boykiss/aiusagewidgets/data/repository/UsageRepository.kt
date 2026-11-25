@@ -1,5 +1,7 @@
 package ing.boykiss.aiusagewidgets.data.repository
 
+import ing.boykiss.aiusagewidgets.data.server.UsageServer
+import ing.boykiss.aiusagewidgets.data.server.ServerAccount
 import ing.boykiss.aiusagewidgets.data.database.AccountEntity
 import ing.boykiss.aiusagewidgets.data.database.SnapshotEntity
 import ing.boykiss.aiusagewidgets.data.database.UsageWidgetsDao
@@ -29,8 +31,10 @@ import kotlinx.coroutines.flow.map
 class UsageRepository(
     private val dao: UsageWidgetsDao,
     private val providers: ProviderRegistry,
+    private val server: UsageServer? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    private val catalogLock = Mutex()
     private val refreshLocks = ConcurrentHashMap<String, Mutex>()
     fun observeSnapshots(): Flow<Map<String, ProviderUsageSnapshot>> = dao.observeSnapshots().map { rows ->
         rows.associate { it.accountId to it.toDomain() }
@@ -38,6 +42,31 @@ class UsageRepository(
     fun observeAccounts(): Flow<List<ProviderAccount>> = dao.observeAccounts().map { rows -> rows.map(AccountEntity::toDomain) }
 
     suspend fun accounts(): List<ProviderAccount> = dao.accounts().map(AccountEntity::toDomain)
+
+    suspend fun connectToServer(url: String, code: String) = catalogLock.withLock {
+        val remote = checkNotNull(server)
+        val connection = remote.pair(url, code)
+        val accounts = remote.accounts(connection)
+        if (remote.connections.get()?.serverId != connection.serverId) {
+            dao.accounts().forEach { dao.removeAccountData(it.id) }
+        }
+        remote.connections.put(connection)
+        reconcile(accounts)
+    }
+
+    suspend fun syncServerAccounts() = catalogLock.withLock {
+        val remote = server ?: return@withLock
+        val connection = remote.connections.get() ?: return@withLock
+        val accounts = remote.accounts(connection)
+        if (remote.connections.get() == connection) reconcile(accounts)
+    }
+
+    private suspend fun reconcile(accounts: List<ServerAccount>) {
+        val ids = accounts.map { it.id }.toSet()
+        dao.accounts().filter { it.id !in ids }.forEach { dao.removeAccountData(it.id) }
+        accounts.forEach { dao.upsertAccount(it.toDomain().toEntity()) }
+    }
+
 
     suspend fun saveAccount(account: ProviderAccount) = dao.upsertAccount(account.toEntity())
 
@@ -69,13 +98,19 @@ class UsageRepository(
     }
 
     suspend fun renameAccount(accountId: String, displayName: String) = refreshLocks.computeIfAbsent(accountId) { Mutex() }.withLock {
-        val normalizedName = normalizedAccountDisplayName(displayName)
-        check(dao.renameAccount(accountId, normalizedName) == 1) { "Account not found" }
+        catalogLock.withLock {
+            val normalizedName = normalizedAccountDisplayName(displayName)
+            server?.rename(accountId, normalizedName)
+            check(dao.renameAccount(accountId, normalizedName) == 1) { "Account not found" }
+        }
     }
 
     suspend fun removeAccount(account: ProviderAccount) = refreshLocks.computeIfAbsent(account.id.value) { Mutex() }.withLock {
-        providers.require(account.providerId).authenticator.removeCredentials(account.id.value)
-        dao.removeAccountData(account.id.value)
+        catalogLock.withLock {
+            if (server != null) server.remove(account.id.value)
+            else providers.require(account.providerId).authenticator.removeCredentials(account.id.value)
+            dao.removeAccountData(account.id.value)
+        }
     }
 
     fun observeSnapshot(accountId: String): Flow<ProviderUsageSnapshot?> = dao.observeSnapshot(accountId).map { it?.toDomain() }
@@ -90,30 +125,40 @@ class UsageRepository(
             if (cached != null && cached.retryAtEpochMillis > System.currentTimeMillis()) {
                 return@withLock Result.success(cached)
             }
+            val connection = server?.connections?.get()
             try {
-                val fetched = providers.require(account.providerId).usageSource.fetchUsage(account)
+                val fetched = if (server == null) providers.require(account.providerId).usageSource.fetchUsage(account)
+                    else server.usage(account.id.value, connection = checkNotNull(connection)).single().toDomain()
                 val saved = if (fetched.freshness == DataFreshness.ERROR && cached != null) {
                     cached.copy(errorMessage = fetched.errorMessage, freshness = DataFreshness.ERROR,
                         retryAtEpochMillis = fetched.retryAtEpochMillis)
                 } else fetched.copy(resetDetails = fetched.resetDetails ?: cached?.resetDetails,
                     planLabel = fetched.planLabel?.takeIf(String::isNotBlank) ?: cached?.planLabel ?: account.planLabel)
                 // An account may have been removed while its request was in flight.
-                if (dao.account(accountId) != null) {
-                    dao.upsertSnapshot(saved.toEntity())
-                    dao.upsertAccount(account.copy(authenticationState = AuthenticationState.CONNECTED,
-                        planLabel = saved.planLabel?.takeIf(String::isNotBlank) ?: account.planLabel).toEntity())
+                catalogLock.withLock {
+                    if (server != null && server.connections.get() != connection) throw CancellationException("Server connection changed")
+                    val current = dao.account(accountId)?.toDomain()
+                    if (current != null) {
+                        dao.upsertSnapshot(saved.toEntity())
+                        dao.upsertAccount(current.copy(authenticationState = AuthenticationState.CONNECTED,
+                            planLabel = saved.planLabel?.takeIf(String::isNotBlank) ?: current.planLabel).toEntity())
+                    }
                 }
                 Result.success(saved)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                if (dao.account(accountId) != null) {
-                    if (error is AuthenticationRequiredException) {
-                        dao.upsertAccount(account.copy(authenticationState = AuthenticationState.SIGN_IN_REQUIRED).toEntity())
+                catalogLock.withLock {
+                    if (server != null && server.connections.get() != connection) throw CancellationException("Server connection changed")
+                    val current = dao.account(accountId)?.toDomain()
+                    if (current != null) {
+                        if (error is AuthenticationRequiredException) {
+                            dao.upsertAccount(current.copy(authenticationState = AuthenticationState.SIGN_IN_REQUIRED).toEntity())
+                        }
+                        val failed = (cached ?: ProviderUsageSnapshot(account.providerId, account.id, emptyList(), null,
+                            0, DataFreshness.ERROR)).copy(freshness = DataFreshness.ERROR,
+                                errorMessage = error.message ?: "Could not refresh usage")
+                        dao.upsertSnapshot(failed.toEntity())
                     }
-                    val failed = (cached ?: ProviderUsageSnapshot(account.providerId, account.id, emptyList(), null,
-                        0, DataFreshness.ERROR)).copy(freshness = DataFreshness.ERROR,
-                            errorMessage = error.message ?: "Could not refresh usage")
-                    dao.upsertSnapshot(failed.toEntity())
                 }
                 Result.failure(error)
             }
@@ -123,6 +168,24 @@ class UsageRepository(
         refreshLocks.computeIfAbsent(accountId) { Mutex() }.withLock {
             val account = dao.account(accountId)?.toDomain()
                 ?: return@withLock Result.failure(IllegalArgumentException("Account not found"))
+            if (server != null) {
+                return@withLock try {
+                    val connection = server.connections.get()
+                    val details = server.resets(accountId)
+                    catalogLock.withLock {
+                        if (server.connections.get() != connection) throw CancellationException("Server connection changed")
+                        val cached = snapshot(accountId) ?: ProviderUsageSnapshot(account.providerId, account.id, emptyList(), null, 0, DataFreshness.STALE)
+                        if (dao.account(accountId) != null) dao.upsertSnapshot(cached.copy(
+                            resetDetails = details.credits,
+                            credits = CreditMetric(details.available, details.total, details.credits.mapNotNull { runCatching { java.time.Instant.parse(it.expiresAt).epochSecond }.getOrNull() }.minOrNull()),
+                            resetsError = null).toEntity())
+                    }
+                    Result.success(Unit)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    Result.failure(error)
+                }
+            }
             val provider = providers.require(account.providerId) as? CodexUsageProvider
                 ?: return@withLock Result.failure(IllegalArgumentException("Reset credits are unavailable for this provider"))
             val cached = snapshot(accountId) ?: ProviderUsageSnapshot(account.providerId, account.id,

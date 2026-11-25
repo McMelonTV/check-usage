@@ -1,0 +1,143 @@
+package remoteserver
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/McMelonTV/check-usage/usageapi"
+)
+
+type Handler struct {
+	Config  Config
+	Service *usageapi.Service
+	Now     func() time.Time
+}
+
+func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Check-Usage-Server-ID", handler.Config.ServerID)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.Header.Get("Origin") != "" {
+		http.Error(w, "browser-origin requests are not supported", http.StatusForbidden)
+		return
+	}
+	if r.URL.RawQuery != "" {
+		http.Error(w, "query parameters are not supported", http.StatusBadRequest)
+		return
+	}
+	now := time.Now()
+	if handler.Now != nil {
+		now = handler.Now()
+	}
+	if r.URL.Path == "/v1/pair" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var input struct {
+			Code string `json:"code"`
+		}
+		if decodeBody(w, r, &input) != nil {
+			http.Error(w, "invalid pairing request", 400)
+			return
+		}
+		result, err := redeemPairing(handler.Config, input.Code, now)
+		if err != nil {
+			http.Error(w, "invalid or expired pairing code", 401)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(result)
+		return
+	}
+	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		w.WriteHeader(401)
+		return
+	}
+	device, ok := authenticate(handler.Config, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if !ok {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		w.WriteHeader(401)
+		return
+	}
+	if r.URL.Path == "/v1/info" && r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(map[string]any{"server_id": handler.Config.ServerID, "protocol_version": usageapi.ProtocolVersion, "device": device})
+		return
+	}
+	if r.URL.Path != "/v1/rpc" {
+		w.WriteHeader(404)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	var request usageapi.RPCRequest
+	if decodeBody(w, r, &request) != nil {
+		http.Error(w, "invalid JSON-RPC request", 400)
+		return
+	}
+	read := map[string]bool{"rpc.discover": true, "providers.list": true, "accounts.list": true, "usage.get": true, "resets.get": true}
+	write := map[string]bool{"accounts.rename": true, "accounts.remove": true}
+	if !read[request.Method] && (!write[request.Method] || device.Access != "write") {
+		http.Error(w, "method is not permitted for this device", 403)
+		return
+	}
+	if request.JSONRPC != "2.0" || len(request.ID) == 0 {
+		http.Error(w, "JSON-RPC 2.0 with an id is required", 400)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	if request.Method == "providers.list" {
+		definitions := []map[string]any{}
+		for _, definition := range providers.Definitions() {
+			definitions = append(definitions, map[string]any{"id": definition.ID, "name": definition.Name, "reset_credits": definition.SupportsResetCredits})
+		}
+		_ = json.NewEncoder(w).Encode(usageapi.RPCResponse{JSONRPC: "2.0", ID: request.ID, Result: definitions})
+		return
+	}
+	if request.Method == "rpc.discover" {
+		_ = json.NewEncoder(w).Encode(usageapi.RPCResponse{JSONRPC: "2.0", ID: request.ID, Result: map[string]any{"protocol_version": usageapi.ProtocolVersion, "server_id": handler.Config.ServerID, "methods": []string{"providers.list", "accounts.list", "usage.get", "resets.get", "accounts.rename", "accounts.remove"}, "access": device.Access}})
+		return
+	}
+	response := (usageapi.RPCServer{Service: handler.Service}).Handle(ctx, request)
+	// Legacy provider errors can include reflected upstream bodies. Network
+	// clients get a useful recovery message, never raw provider diagnostics.
+	if request.Method == "usage.get" {
+		if results, ok := response.Result.([]usageapi.UsageResult); ok {
+			for i := range results {
+				if results[i].Error != "" {
+					results[i].Error = "Provider usage unavailable; check its login or adapter on the server."
+				}
+			}
+			response.Result = results
+		}
+	}
+	if response.Error != nil && request.Method == "resets.get" {
+		response.Error.Data = "Reset credits unavailable; check this account on the server."
+	}
+	_ = json.NewEncoder(w).Encode(response)
+}
+func decodeBody(w http.ResponseWriter, r *http.Request, target any) error {
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		return errors.New("JSON content type required")
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return errors.New("only one JSON value is allowed")
+	}
+	return nil
+}

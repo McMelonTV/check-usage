@@ -1,6 +1,14 @@
 name: Build CLI
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "**.go"
+      - go.mod
+      - go.sum
+      - .github/workflows/build-cli.yml
   push:
     branches:
       - main

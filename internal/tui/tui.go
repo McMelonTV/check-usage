@@ -15,6 +15,7 @@ import (
 	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
 	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
 	"github.com/McMelonTV/check-usage/internal/providers/cursorapi"
+	"github.com/McMelonTV/check-usage/internal/remote"
 	"github.com/McMelonTV/check-usage/internal/storage"
 	"github.com/McMelonTV/check-usage/internal/terminal"
 	"github.com/McMelonTV/check-usage/internal/usage"
@@ -116,6 +117,7 @@ type autoRefreshTickMsg struct{ version int }
 type spinnerTickMsg struct{}
 
 type Model struct {
+	remote       *remote.Client
 	accountsPath string
 	client       *http.Client
 	loader       tuiDataLoader
@@ -304,6 +306,9 @@ func (m Model) loadDashboard() tea.Cmd {
 // cache without any network traffic, so renames, removals, and new accounts
 // appear immediately while the background refresh is still in flight.
 func (m *Model) applyLocalReload() {
+	if m.remote != nil {
+		return
+	}
 	store, err := storage.LoadAccountsOrEmpty(m.accountsPath)
 	if err != nil {
 		return
@@ -624,7 +629,7 @@ func (m Model) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 					m.removeArmed = account.ID
 					m.notice = "Press d again to remove " + account.Name
 				} else {
-					return m, removeAccountCmd(m.accountsPath, account.ID, account.Name)
+					return m, m.removeAccount(account.ID, account.Name)
 				}
 			}
 		}
@@ -719,6 +724,10 @@ func (m Model) updateActiveTab(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) startAccountAdd() (tea.Model, tea.Cmd) {
+	if m.remote != nil {
+		m.notice = "Add accounts on the server with check-usage server accounts; refresh to sync."
+		return m, nil
+	}
 	m.authVersion++
 	m.authActive, m.authSelectingProvider, m.authLoading, m.authSaving = true, true, false, false
 	m.authProviderID, m.authAPIKeyInput, m.authCode, m.authErr, m.authReauthID = usage.ProviderDefinitions()[0].ID, "", nil, nil, ""
@@ -732,6 +741,10 @@ func (m Model) startAccountReauthentication(account storage.Account) (tea.Model,
 }
 
 func (m Model) beginReauthentication(account storage.Account) (tea.Model, tea.Cmd) {
+	if m.remote != nil {
+		m.notice = "Sign in again using the provider CLI or check-usage server accounts reauth on the server."
+		return m, nil
+	}
 	provider, err := usage.ProviderFor(account.Provider)
 	if err != nil {
 		m.notice = err.Error()
@@ -810,7 +823,7 @@ func (m Model) updateProviderSelection(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAPIKeyAuthentication(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.authSaving {
+	if m.authSaving || m.authLoading {
 		if key.String() == "esc" {
 			m.authVersion++
 			m.clearAuthentication()
@@ -822,9 +835,10 @@ func (m Model) updateAPIKeyAuthentication(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearAuthentication()
 	case "enter":
 		if strings.TrimSpace(m.authAPIKeyInput) == "" {
-			m.authErr = fmt.Errorf("API key cannot be empty")
+			m.authErr = fmt.Errorf("credentials cannot be empty")
 			return m, nil
 		}
+
 		m.authSaving = true
 		return m, m.saveAPIKeyAccount()
 	case "backspace":
@@ -853,7 +867,7 @@ func (m *Model) clearAuthentication() {
 
 func (m Model) authProviderUsesAPIKey() bool {
 	provider, err := usage.ProviderFor(m.authProviderID)
-	return err == nil && provider.Credentials == providers.APIKey && provider.ID != providers.Cursor
+	return err == nil && (provider.Credentials == providers.APIKey) && provider.ID != providers.Cursor
 }
 
 func (m Model) authProviderUsesCode() bool {
@@ -1196,15 +1210,19 @@ func (m Model) updateAuthMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) usageMouseRowIndex(y int) (int, bool) {
-	if m.width >= tuiWideAt {
-		return m.mouseRowIndex(y, len(m.rows), true, 7, 5)
+	width := tuiContentWidth(m.width)
+	height := max(1, m.height-2)
+	if m.notice != "" || m.editingName {
+		height = max(1, height-2)
 	}
+	wide := width >= tuiWideAt
 	currentY := 5
-	for index := range m.rows {
-		height := 5
-		if !m.settings.CompactMode {
-			height++
-		}
+	if wide {
+		currentY = 7
+	}
+	start, end := m.usageVisibleRange(width, height)
+	for index := start; index < end; index++ {
+		height := m.usageRowHeight(m.rows[index], wide)
 		if y >= currentY && y < currentY+height {
 			return index, true
 		}
@@ -1296,7 +1314,7 @@ func (m Model) updateNameEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.editingName, m.nameInput, m.nameCursor = false, "", 0
-		return m, renameAccountCmd(m.accountsPath, account.ID, name)
+		return m, m.renameAccount(account.ID, name)
 	case "left":
 		m.nameCursor = max(0, m.nameCursor-1)
 	case "right":
@@ -1591,6 +1609,8 @@ func (m Model) renderAuthentication(width, height int) string {
 				credential = "Browser login"
 			}
 			switch provider.Credentials {
+			case providers.Native:
+				credential = "Server CLI"
 			case providers.Device:
 				credential = "Device login"
 			case providers.OAuthCode:
@@ -1609,6 +1629,9 @@ func (m Model) renderAuthentication(width, height int) string {
 		input := tuiAccentStyle.Render("> ")
 		if key == "" {
 			placeholder := "API key"
+			if provider.ID == providers.Antigravity {
+				placeholder = "Credentials JSON"
+			}
 			if apiKeyCursorVisible(m.spinnerStep) {
 				cursorStyle := lipgloss.NewStyle().Foreground(textColor).Background(accentColor)
 				input += cursorStyle.Render(placeholder[:1]) + tuiMutedStyle.Render(placeholder[1:])
@@ -1624,7 +1647,10 @@ func (m Model) renderAuthentication(width, height int) string {
 			}
 		}
 		body := tuiMutedStyle.Render("Enter API key for "+provider.Name+":") + "\n" + input
-		if m.authSaving {
+		if provider.ID == providers.Antigravity {
+			body = tuiMutedStyle.Render("Paste Antigravity OAuth credentials JSON:") + "\n" + input + "\n\n" + tuiMutedStyle.Render("Internal Google API; account restrictions remain possible.")
+		}
+		if m.authSaving || m.authLoading {
 			body = tuiAccentStyle.Render(spinnerFrame(m.spinnerStep)+"  Saving account…") + "\n\n" + body
 		}
 		if m.authErr != nil {
@@ -1785,53 +1811,74 @@ func (m Model) renderAccountList(width, height int) string {
 }
 
 func (m Model) renderWideList(width, height int) string {
-	nameWidth := min(18, max(12, width/8))
+	nameWidth := min(22, max(16, width/7))
 	// The credit column fits a count plus its expiry countdown ("12 13d23h").
 	providerWidth, planWidth, creditWidth := 11, 10, 10
 	usageWidth := max(12, (width-nameWidth-providerWidth-planWidth-creditWidth-8)/3)
 	headerStyle := lipgloss.NewStyle().Foreground(mutedColor).Bold(true)
 	header := "  " + cell(headerStyle.Render("ACCOUNT"), nameWidth) + " " +
 		cell(headerStyle.Render("PROVIDER"), providerWidth) + " " + cell(headerStyle.Render("PLAN"), planWidth) + " "
-	for index, slot := range usage.Slots {
-		header += cell(headerStyle.Render(usage.ColumnLabels[index])+m.scopedHeaderSuffix(slot), usageWidth) + " "
+	for index := range usage.Slots {
+		header += cell(headerStyle.Render(usage.ColumnLabels[index]), usageWidth) + " "
 	}
 	header += cell(headerStyle.Render("RESETS"), creditWidth)
 
-	rowStride := 1
-	if !m.settings.CompactMode {
-		rowStride = 2
-	}
-	maxRows := max(tuiMinListLen, (height-15)/rowStride)
-	start, end := visibleRange(len(m.rows), m.cursor, maxRows)
+	start, end := m.usageVisibleRange(width, height)
 	lines := []string{"", header, ""}
 	for i := start; i < end; i++ {
-		row := m.rows[i]
-		marker, nameStyle := "  ", lipgloss.NewStyle().Foreground(textColor)
-		if i == m.cursor {
-			marker, nameStyle = selectedRowVisual(m.tabRowFocused)
+		grouped := usage.HasMetricGroups(m.rows[i])
+		parts := usage.MetricRows(m.rows[i])
+		if grouped {
+			row := m.rows[i]
+			marker, nameStyle := "  ", lipgloss.NewStyle().Foreground(textColor)
+			if i == m.cursor {
+				marker, nameStyle = selectedRowVisual(m.tabRowFocused)
+			}
+			name := row.Name
+			if row.Stale || row.ResetsStale {
+				name += " (Stale)"
+			}
+			lines = append(lines, marker+cell(nameStyle.Render(name), nameWidth)+" "+cell(tuiMutedStyle.Render(row.Provider), providerWidth)+" "+cell(tuiMutedStyle.Render(row.Plan), planWidth))
 		}
-		name := row.Name
-		if row.Stale || row.ResetsStale {
-			name = ansi.Truncate(name, max(1, nameWidth-8), "…") + " " + lipgloss.NewStyle().Foreground(amberColor).Render("(Stale)")
-		}
-		includeReset := m.settings.CompactMode
-		slots := usage.Slots
-		session := m.renderUsageSlot(row, slots[0], usageWidth, includeReset)
-		weekly := m.renderUsageSlot(row, slots[1], usageWidth, includeReset)
-		monthly := m.renderUsageSlot(row, slots[2], usageWidth, includeReset)
-		resets := m.renderResetSlot(row, includeReset)
-		line := marker + cell(nameStyle.Render(name), nameWidth) + " " +
-			cell(tuiMutedStyle.Render(row.Provider), providerWidth) + " " + cell(tuiMutedStyle.Render(row.Plan), planWidth) + " " +
-			cell(session, usageWidth) + " " + cell(weekly, usageWidth) + " " + cell(monthly, usageWidth) + " " + cell(resets, creditWidth)
-		lines = append(lines, line)
-		if !m.settings.CompactMode {
-			now := time.Now()
-			subtitle := "  " + cell("", nameWidth) + " " + cell("", providerWidth) + " " + cell("", planWidth) + " " +
-				cell(usage.ResetSubtitleText(row, slots[0], now), usageWidth) + " " +
-				cell(usage.ResetSubtitleText(row, slots[1], now), usageWidth) + " " +
-				cell(usage.ResetSubtitleText(row, slots[2], now), usageWidth) + " "
-			// The last column may use the rest of the line; drop the date when it does not fit.
-			lines = append(lines, tuiMutedStyle.Render(subtitle+usage.CreditExpirySubtitle(row, now, width-lipgloss.Width(subtitle))))
+		for groupIndex, row := range parts {
+			marker, nameStyle := "  ", lipgloss.NewStyle().Foreground(textColor)
+			if i == m.cursor && !grouped {
+				marker, nameStyle = selectedRowVisual(m.tabRowFocused)
+			}
+			name := row.Name
+			if grouped {
+				name = usage.MetricGroupName(row)
+				row = usage.MetricGroupValues(row)
+				row.Provider, row.Plan = "", ""
+			} else if groupIndex > 0 {
+				marker, name, row.Provider, row.Plan = "  ", "", "", ""
+			}
+			if !grouped && (row.Stale || row.ResetsStale) {
+				name = ansi.Truncate(name, max(1, nameWidth-8), "…") + " " + lipgloss.NewStyle().Foreground(amberColor).Render("(Stale)")
+			}
+			includeReset := m.settings.CompactMode
+			slots := usage.Slots
+			session := m.renderUsageSlot(row, slots[0], usageWidth, includeReset)
+			weekly := m.renderUsageSlot(row, slots[1], usageWidth, includeReset)
+			monthly := m.renderUsageSlot(row, slots[2], usageWidth, includeReset)
+			resets := m.renderResetSlot(row, includeReset)
+			nameText := nameStyle.Render(name)
+			if grouped {
+				nameText = m.renderMetricGroupName(name, groupIndex == len(parts)-1)
+			}
+			line := marker + cell(nameText, nameWidth) + " " +
+				cell(tuiMutedStyle.Render(row.Provider), providerWidth) + " " + cell(tuiMutedStyle.Render(row.Plan), planWidth) + " " +
+				cell(session, usageWidth) + " " + cell(weekly, usageWidth) + " " + cell(monthly, usageWidth) + " " + cell(resets, creditWidth)
+			lines = append(lines, line)
+			if !m.settings.CompactMode {
+				now := time.Now()
+				subtitle := "  " + cell("", nameWidth) + " " + cell("", providerWidth) + " " + cell("", planWidth) + " " +
+					cell(usage.ResetSubtitleText(row, slots[0], now), usageWidth) + " " +
+					cell(usage.ResetSubtitleText(row, slots[1], now), usageWidth) + " " +
+					cell(usage.ResetSubtitleText(row, slots[2], now), usageWidth) + " "
+				// The last column may use the rest of the line; drop the date when it does not fit.
+				lines = append(lines, tuiMutedStyle.Render(subtitle+usage.CreditExpirySubtitle(row, now, width-lipgloss.Width(subtitle))))
+			}
 		}
 	}
 	if start > 0 || end < len(m.rows) {
@@ -1841,12 +1888,7 @@ func (m Model) renderWideList(width, height int) string {
 }
 
 func (m Model) renderCompactList(width, height int) string {
-	rowStride := 5
-	if !m.settings.CompactMode {
-		rowStride++
-	}
-	maxRows := max(tuiMinListLen, (height-15)/rowStride)
-	start, end := visibleRange(len(m.rows), m.cursor, maxRows)
+	start, end := m.usageVisibleRange(width, height)
 	lines := []string{""}
 	for i := start; i < end; i++ {
 		row := m.rows[i]
@@ -1863,8 +1905,14 @@ func (m Model) renderCompactList(width, height int) string {
 		visibleName := ansi.Truncate(row.Name, max(1, width-2-lipgloss.Width(meta)), "…")
 		gap := max(0, width-2-lipgloss.Width(visibleName)-lipgloss.Width(meta))
 		lines = append(lines, marker+nameStyle.Render(visibleName)+strings.Repeat(" ", gap)+meta)
-		for _, slot := range usage.Slots {
-			lines = append(lines, m.renderCompactSlot(row, slot, width))
+		if usage.HasMetricGroups(row) {
+			lines = append(lines, m.renderCompactGroups(row, width)...)
+			continue
+		}
+		for _, part := range usage.MetricRows(row) {
+			for _, slot := range usage.Slots {
+				lines = append(lines, m.renderCompactSlot(part, slot, width))
+			}
 		}
 		lines = append(lines, ansi.Truncate("  "+tuiMutedStyle.Render("RESETS  ")+m.renderResetSlot(row, true), width, "…"))
 		if !m.settings.CompactMode {
@@ -1925,15 +1973,47 @@ func (m Model) scopedMarker() string {
 	return style.Render(usage.ScopedMarker)
 }
 
-// scopedHeaderSuffix flags a column header when any row shows a scoped
-// limit in that column instead of the column's own window.
-func (m Model) scopedHeaderSuffix(slot providers.MetricSlot) string {
-	for _, row := range m.rows {
-		if metric, ok := usage.MetricForSlot(row, slot); ok && metric.IsScoped() {
-			return " " + m.scopedMarker()
-		}
+func (m Model) renderMetricGroupName(name string, last bool) string {
+	prefix := "├ "
+	if last {
+		prefix = "└ "
 	}
-	return ""
+	return tuiMutedStyle.Render(prefix) + m.scopedMarker() + " " + lipgloss.NewStyle().Foreground(textColor).Render(name)
+}
+
+// renderCompactGroups keeps every family and window visible without repeating
+// account metadata or rendering unsupported monthly/session placeholders.
+func (m Model) renderCompactGroups(row usage.Row, width int) []string {
+	slots := usage.MetricGroupSlots(row)
+	if len(slots) == 0 {
+		return nil
+	}
+	labelWidth := min(18, max(10, width/3))
+	valueWidth := max(3, (width-2-labelWidth-len(slots))/len(slots))
+	mode := " LEFT"
+	if !m.showRemaining() {
+		mode = " USED"
+	}
+	header := "  " + cell("", labelWidth) + " "
+	for _, slot := range slots {
+		name := strings.ToUpper(string(slot))
+		if slot == providers.SessionSlot {
+			name = "5H"
+		}
+		header += cell(tuiMutedStyle.Render(name+mode), valueWidth) + " "
+	}
+	lines := []string{strings.TrimRight(header, " ")}
+	parts := usage.MetricRows(row)
+	for index, part := range parts {
+		name := m.renderMetricGroupName(usage.MetricGroupName(part), index == len(parts)-1)
+		line := "  " + cell(name, labelWidth) + " "
+		values := usage.MetricGroupValues(part)
+		for _, slot := range slots {
+			line += cell(m.renderUsageSlot(values, slot, valueWidth, true), valueWidth) + " "
+		}
+		lines = append(lines, strings.TrimRight(line, " "))
+	}
+	return lines
 }
 
 func (m Model) renderCompactSlot(row usage.Row, slot providers.MetricSlot, width int) string {
@@ -2031,7 +2111,11 @@ func (m Model) renderResetMain(width, height int) string {
 		availableColor = semanticPaletteFor(m.settings.ColorTheme).bad
 	}
 	available := lipgloss.NewStyle().Bold(true).Foreground(availableColor).Render(fmt.Sprintf("%d available", m.resetPayload.AvailableCount))
-	lines = append(lines, ansi.Truncate(available+tuiMutedStyle.Render(fmt.Sprintf(" · %d earned", m.resetPayload.TotalEarnedCount)), width, "…"), "")
+	earned := ""
+	if !m.resetPayload.TotalEarnedUnknown {
+		earned = tuiMutedStyle.Render(fmt.Sprintf(" · %d earned", m.resetPayload.TotalEarnedCount))
+	}
+	lines = append(lines, ansi.Truncate(available+earned, width, "…"), "")
 	credits := m.resetPayload.Credits
 	maxRows := max(1, (height-8)/3)
 	start, end := visibleRange(len(credits), m.creditCursor, maxRows)
@@ -2522,4 +2606,49 @@ func (m Model) startCursorAuthentication() (tea.Model, tea.Cmd) {
 		account, err := login.WaitForCursor(ctx, client, session, name)
 		return authCompletedMsg{account: account, err: err, version: version}
 	})
+}
+
+func (m Model) usageRowHeight(row usage.Row, wide bool) int {
+	groups := len(usage.MetricRows(row))
+	if usage.HasMetricGroups(row) {
+		if !wide {
+			return 2 + groups
+		}
+		if m.settings.CompactMode {
+			return 1 + groups
+		}
+		return 1 + groups*2
+	}
+
+	if wide {
+		if m.settings.CompactMode {
+			return groups
+		}
+		return groups * 2
+	}
+	height := 2 + groups*3
+	if !m.settings.CompactMode {
+		height++
+	}
+	return height
+}
+
+func (m Model) usageVisibleRange(width, height int) (int, int) {
+	if len(m.rows) == 0 {
+		return 0, 0
+	}
+	wide := width >= tuiWideAt
+	budget := max(1, height-15)
+	selected := max(0, min(m.cursor, len(m.rows)-1))
+	start, end := selected, selected+1
+	used := m.usageRowHeight(m.rows[selected], wide)
+	for start > 0 && used+m.usageRowHeight(m.rows[start-1], wide) <= budget {
+		start--
+		used += m.usageRowHeight(m.rows[start], wide)
+	}
+	for end < len(m.rows) && used+m.usageRowHeight(m.rows[end], wide) <= budget {
+		used += m.usageRowHeight(m.rows[end], wide)
+		end++
+	}
+	return start, end
 }

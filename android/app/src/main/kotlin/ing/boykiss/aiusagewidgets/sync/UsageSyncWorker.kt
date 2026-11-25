@@ -14,8 +14,18 @@ import java.util.concurrent.TimeUnit
 
 class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val accountId = inputData.getString(KEY_ACCOUNT_ID) ?: return Result.failure()
+        val accountId = inputData.getString(KEY_ACCOUNT_ID)
         val app = applicationContext as UsageWidgetsApplication
+        if (!app.container.server.configured) return Result.success()
+        try { app.container.repository.syncServerAccounts() } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            return if (runAttemptCount < 3) Result.retry() else Result.failure()
+        }
+        if (accountId == null) {
+            val results = app.container.repository.accounts().map { app.container.repository.refresh(it.id.value) }
+            WidgetUpdater.updateAll(applicationContext)
+            return if (results.any { it.isFailure } && runAttemptCount < 3) Result.retry() else Result.success()
+        }
         return app.container.repository.refresh(accountId).fold(
             onSuccess = {
                 WidgetUpdater.updateAll(applicationContext)
@@ -27,6 +37,13 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
 
     companion object {
         const val KEY_ACCOUNT_ID = "account_id"
+
+        fun scheduleCatalog(context: Context) {
+            val request = PeriodicWorkRequestBuilder<UsageSyncWorker>(15, TimeUnit.MINUTES)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build()
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork("usage-server-catalog-sync", ExistingPeriodicWorkPolicy.UPDATE, request)
+        }
 
         fun cancel(context: Context, providerId: String, accountId: String) {
             WorkManager.getInstance(context).cancelUniqueWork("provider-account-sync-$providerId-$accountId")

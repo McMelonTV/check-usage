@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	Codex      = "codex"
-	OpenCodeGo = "opencode-go"
-	DeepSeek   = "deepseek"
-	Claude     = "claude"
-	Cursor     = "cursor"
+	Codex       = "codex"
+	OpenCodeGo  = "opencode-go"
+	DeepSeek    = "deepseek"
+	Claude      = "claude"
+	Cursor      = "cursor"
+	Antigravity = "antigravity"
 )
 
 type CredentialMode string
@@ -28,6 +29,7 @@ const (
 	APIKey CredentialMode = "api_key"
 	// OAuthCode providers sign in through a browser and paste back an authorization code.
 	OAuthCode CredentialMode = "oauth_code"
+	Native    CredentialMode = "native_cli"
 )
 
 type Definition struct {
@@ -44,6 +46,7 @@ var definitions = []Definition{
 	{ID: OpenCodeGo, Name: "OpenCode", Plan: "Go", Credentials: APIKey},
 	{ID: DeepSeek, Name: "DeepSeek", Credentials: APIKey},
 	{ID: Cursor, Name: "Cursor", Credentials: APIKey},
+	{ID: Antigravity, Name: "Antigravity", Credentials: Native},
 }
 
 type MetricKind string

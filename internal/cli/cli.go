@@ -1,14 +1,15 @@
-// Package cli implements the check-usage command line: the root usage command and the accounts, resets, and api subcommands.
+// Package cli implements the usage server and its paired terminal client.
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/McMelonTV/check-usage/internal/storage"
+	"github.com/McMelonTV/check-usage/internal/remote"
 	"github.com/McMelonTV/check-usage/internal/terminal"
 	"github.com/McMelonTV/check-usage/internal/tui"
 	"github.com/McMelonTV/check-usage/internal/usage"
@@ -21,19 +22,23 @@ func Run(args []string) int {
 
 	if len(args) > 1 {
 		switch args[1] {
+		case "server":
+			return runServerCommand(args[2:])
+		case "connect":
+			return runConnectCommand(args[2:])
 		case "api":
-			return runAPICommand(args[2:])
+			return runRemoteAPICommand(args[2:])
 		case "accounts":
-			return runAccountsCommand(args[2:])
+			return runRemoteAccountsCommand(args[2:])
 		case "resets":
-			return runResetsCommand(args[2:])
+			return runRemoteResetsCommand(args[2:])
 		}
 	}
 
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	accountsPath := fs.String("accounts-file", storage.DefaultAccountsPath(), "path to accounts.json")
-	timeout := fs.Int("timeout", 20, "HTTP timeout in seconds")
+	connectionPath := fs.String("connection-file", remote.DefaultConfigPath(), "device server connection file")
+	timeout := fs.Int("timeout", 120, "server request timeout in seconds")
 	plain := fs.Bool("plain", false, "print the non-interactive usage table")
 	fs.Usage = func() { printRootCommandUsage(fs) }
 	if err := fs.Parse(args[1:]); err != nil {
@@ -42,10 +47,23 @@ func Run(args []string) int {
 		}
 		return 2
 	}
+	if fs.NArg() != 0 {
+		fs.Usage()
+		return 2
+	}
 
-	client := &http.Client{Timeout: time.Duration(*timeout) * time.Second}
+	config, err := remote.LoadConfig(*connectionPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	client, err := remote.New(config, &http.Client{Timeout: time.Duration(*timeout) * time.Second})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
 	if !*plain && term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
-		if err := tui.Run(*accountsPath, client); err != nil {
+		if err := tui.RunRemote(*connectionPath, client); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1
 		}
@@ -53,11 +71,12 @@ func Run(args []string) int {
 	}
 
 	defer fmt.Print(usage.ANSIReset)
-	rows, err := usage.CollectRows(*accountsPath, client)
+	results, err := client.Usage(context.Background(), "", true)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
+	rows, _ := remote.Rows(results)
 	usage.PrintTable(rows)
 	return 0
 }
@@ -65,14 +84,18 @@ func Run(args []string) int {
 func printRootCommandUsage(fs *flag.FlagSet) {
 	fmt.Println(usage.HeaderText("Usage:"))
 	fmt.Printf("  %s [flags]\n", os.Args[0])
-	fmt.Printf("  %s accounts <command> [flags]\n", os.Args[0])
+	fmt.Printf("  %s connect --url <server HTTPS origin> [flags]\n", os.Args[0])
+	fmt.Printf("  %s server [--config path] <command> [flags]\n", os.Args[0])
+	fmt.Printf("  %s accounts [flags] <list|rename|remove> [arguments]\n", os.Args[0])
 	fmt.Printf("  %s resets [flags] <account name/email/id>\n", os.Args[0])
-	fmt.Printf("  %s api [flags] <method|serve> [params-json|-]\n", os.Args[0])
+	fmt.Printf("  %s api [flags] <method> [params-json|-]\n", os.Args[0])
 	fmt.Println()
 	fmt.Println(usage.HeaderText("Subcommands:"))
-	fmt.Println("  accounts  manage saved accounts")
+	fmt.Println("  connect   pair this device with a usage server")
+	fmt.Println("  server    initialize/serve; administer accounts and paired devices locally")
+	fmt.Println("  accounts  list, rename, or remove shared server accounts")
 	fmt.Println("  resets    show reset-credit details for one account")
-	fmt.Println("  api       JSON-RPC interface for applications and scripts")
+	fmt.Println("  api       call the authenticated server JSON-RPC interface")
 	fmt.Println()
 	fmt.Println(usage.HeaderText("Flags:"))
 	printDoubleDashFlagDefaults(fs)

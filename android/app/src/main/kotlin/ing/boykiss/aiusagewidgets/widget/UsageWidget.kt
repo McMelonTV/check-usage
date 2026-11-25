@@ -55,6 +55,7 @@ import androidx.glance.text.FontFamily
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
+import androidx.glance.text.TextDecoration
 import androidx.glance.unit.ColorProvider
 import ing.boykiss.aiusagewidgets.MainActivity
 import ing.boykiss.aiusagewidgets.R
@@ -67,6 +68,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import ing.boykiss.aiusagewidgets.domain.UsageMetricKind
 import ing.boykiss.aiusagewidgets.domain.WidgetVisualStyle
+import ing.boykiss.aiusagewidgets.domain.UsageGroup
+import ing.boykiss.aiusagewidgets.domain.groupedUsage
+import ing.boykiss.aiusagewidgets.domain.windowKinds
 import ing.boykiss.aiusagewidgets.sync.UsageSyncWorker
 import ing.boykiss.aiusagewidgets.ui.theme.NothingFont
 import java.time.Duration
@@ -119,12 +123,14 @@ private data class WidgetRenderState(
     val balance: String = "",
     val statusMessage: String = "",
     val generic: Boolean = false,
+    val providerId: String = "",
 )
 
 private val RenderMetricsKey = stringPreferencesKey("render_metrics")
 private val RenderBalanceKey = stringPreferencesKey("render_balance")
 private val RenderStatusKey = stringPreferencesKey("render_status")
 private val RenderGenericKey = booleanPreferencesKey("render_generic")
+private val RenderProviderIdKey = stringPreferencesKey("render_provider_id")
 private val widgetJson = Json { ignoreUnknownKeys = true }
 
 private val HasConfigurationKey = booleanPreferencesKey("has_configuration")
@@ -152,6 +158,7 @@ private fun Preferences.toWidgetRenderState(): WidgetRenderState? {
         balance = this[RenderBalanceKey].orEmpty(),
         statusMessage = this[RenderStatusKey].orEmpty(),
         generic = this[RenderGenericKey] ?: false,
+        providerId = this[RenderProviderIdKey].orEmpty(),
     )
 }
 
@@ -162,6 +169,7 @@ private suspend fun loadWidgetRenderState(context: Context, appWidgetId: Int): W
     val snapshot = app.container.repository.snapshot(config.accountId)
     val shortWindow = snapshot?.windows?.firstOrNull { it.kind == UsageMetricKind.SHORT_WINDOW }
     val longWindow = snapshot?.windows?.firstOrNull { it.kind == UsageMetricKind.LONG_WINDOW }
+    val groups = groupedUsage(ProviderId(config.providerId), snapshot?.windows.orEmpty())
     val providerName = runCatching {
         app.container.providers.require(ProviderId(config.providerId)).descriptor.displayName
     }.getOrDefault(config.providerId.replaceFirstChar(Char::titlecase))
@@ -172,7 +180,8 @@ private suspend fun loadWidgetRenderState(context: Context, appWidgetId: Int): W
         visualStyle = config.visualStyle,
         shortPercent = shortWindow?.remainingPercent,
         longPercent = longWindow?.remainingPercent,
-        resetAt = longWindow?.resetsAtEpochSeconds ?: shortWindow?.resetsAtEpochSeconds,
+        resetAt = if (groups.isNotEmpty()) groups.flatMap { group -> group.windows.filterNot(group::isBlocked) }
+            .mapNotNull { it.resetsAtEpochSeconds }.minOrNull() else longWindow?.resetsAtEpochSeconds ?: shortWindow?.resetsAtEpochSeconds,
         resetCount = snapshot?.credits?.availableCount,
         metricsJson = widgetJson.encodeToString(snapshot?.windows.orEmpty()),
         balance = if (config.providerId == "deepseek") snapshot?.planLabel.orEmpty() else "",
@@ -184,6 +193,7 @@ private suspend fun loadWidgetRenderState(context: Context, appWidgetId: Int): W
             else -> ""
         },
         generic = config.providerId != "codex",
+        providerId = config.providerId,
     )
 }
 
@@ -222,6 +232,7 @@ internal object WidgetUpdater {
                     preferences[RenderBalanceKey] = renderState.balance
                     preferences[RenderStatusKey] = renderState.statusMessage
                     preferences[RenderGenericKey] = renderState.generic
+                    preferences[RenderProviderIdKey] = renderState.providerId
                     renderState.shortPercent?.let { preferences[RenderShortPercentKey] = it }
                     renderState.longPercent?.let { preferences[RenderLongPercentKey] = it }
                     renderState.resetAt?.let { preferences[RenderResetAtKey] = it }
@@ -354,17 +365,15 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
     val verticalPadding = if (layout == WidgetLayout.LARGE) 18.dp else if (layout == WidgetLayout.COMPACT) 10.dp else 12.dp
     val compact = layout == WidgetLayout.COMPACT
     val large = layout == WidgetLayout.LARGE
-    // Generic widgets size their window rows to the space left between the header and footer.
-    val genericPlan = if (state.generic) {
-        val headerHeight = if (large) 38.dp else 32.dp
-        val footerHeight = if (compact) 0.dp else if (large) 18.dp else 16.dp
-        val available = size.height - verticalPadding * 2 - headerHeight - footerHeight - 6.dp
-        planWindowRows(decodeWindows(state.metricsJson).size, available, compact)
-    } else {
-        null
-    }
+    val windows = decodeWindows(state.metricsJson)
+    val groups = groupedUsage(ProviderId(state.providerId), windows)
+    val headerHeight = if (large) 38.dp else 32.dp
+    val footerHeight = if (compact) 0.dp else if (large) 18.dp else 16.dp
+    val available = size.height - verticalPadding * 2 - headerHeight - footerHeight - 6.dp
+    val groupedDetail = if (groups.isEmpty()) null else planGroupedWindows(groups.size, available, compact || barWidth < 180.dp)
+    val genericPlan = if (state.generic && groups.isEmpty()) planWindowRows(windows.size, available, compact) else null
     // Rows that show their own countdown make a shared one redundant.
-    val windowsShowReset = genericPlan?.first == WindowRowDetail.RESET && state.balance.isBlank()
+    val windowsShowReset = (genericPlan?.first == WindowRowDetail.RESET || groupedDetail == GroupedWindowDetail.RESET) && state.balance.isBlank()
     val footer = when {
         compact -> null
         state.statusMessage.isNotBlank() -> state.statusMessage
@@ -384,7 +393,9 @@ private fun UsageWidgetContent(state: WidgetRenderState, size: DpSize, useSystem
     ) {
         Header(state, p, layout, narrow = size.width < 200.dp)
         Spacer(GlanceModifier.defaultWeight())
-        if (genericPlan != null) {
+        if (groupedDetail != null) {
+            GroupedWidgetBody(groups, p, barWidth, groupedDetail)
+        } else if (genericPlan != null) {
             GenericWidgetBody(state, p, barWidth, genericPlan)
         } else when (layout) {
             // Compact cards have no countdown line, so wide ones show the time to reset inline.
@@ -491,6 +502,98 @@ private fun WindowRow(window: UsageWindow, p: WidgetPalette, barWidth: Dp, detai
             )
         }
     }
+}
+
+internal enum class GroupedWindowDetail { SUMMARY, FIGURE, BAR, RESET }
+
+/** Keep all cells at equal detail. Only very short widgets summarize one limit per family. */
+internal fun planGroupedWindows(groups: Int, available: Dp, figuresOnly: Boolean): GroupedWindowDetail {
+    val candidates = if (figuresOnly) listOf(GroupedWindowDetail.FIGURE) else
+        listOf(GroupedWindowDetail.RESET, GroupedWindowDetail.BAR, GroupedWindowDetail.FIGURE)
+    return candidates.firstOrNull { detail ->
+        val row = when (detail) {
+            GroupedWindowDetail.RESET -> 50.dp
+            GroupedWindowDetail.BAR -> 35.dp
+            else -> 22.dp
+        }
+        20.dp + row * groups + 6.dp * (groups - 1).coerceAtLeast(0) <= available
+    } ?: GroupedWindowDetail.SUMMARY
+}
+
+@Composable
+private fun GroupedWidgetBody(groups: List<UsageGroup>, p: WidgetPalette, width: Dp, detail: GroupedWindowDetail) {
+    if (detail == GroupedWindowDetail.SUMMARY) {
+        Row(GlanceModifier.fillMaxWidth()) {
+            groups.forEach { group ->
+                val window = group.windows.filter { it.remainingPercent != null && !group.isBlocked(it) }
+                    .minByOrNull { it.remainingPercent!! } ?: group.windows.first()
+                Column(GlanceModifier.defaultWeight().padding(end = 6.dp)) {
+                    Text(p.text(group.name), style = TextStyle(p.muted, 10.sp, fontFamily = p.labelFont), maxLines = 1)
+                    Text(p.text("${window.remainingPercent?.roundToInt()?.let { "$it%" } ?: "—"} ${groupWindowLabel(window.kind)}"),
+                        style = TextStyle(p.barColor(window.remainingPercent, p.accent), 16.sp, FontWeight.Bold, fontFamily = p.displayFont), maxLines = 1)
+                }
+            }
+        }
+        return
+    }
+    val kinds = groups.windowKinds()
+    val labelWidth = if (kinds.size == 1) minOf(112.dp, width * 0.55f) else minOf(84.dp, width * 0.43f)
+    val cellWidth = (width - labelWidth - 6.dp * kinds.size) / kinds.size
+    val figureSize = if (width < 180.dp) 14.sp else 18.sp
+    Column(GlanceModifier.fillMaxWidth()) {
+        Row(GlanceModifier.fillMaxWidth()) {
+            Text("", GlanceModifier.width(labelWidth))
+            kinds.forEach { kind ->
+                Spacer(GlanceModifier.width(6.dp))
+                Text(p.text("${groupWindowLabel(kind)} left"), GlanceModifier.width(cellWidth),
+                    style = TextStyle(p.muted, 9.sp, fontFamily = p.labelFont), maxLines = 1)
+            }
+        }
+        Spacer(GlanceModifier.height(6.dp))
+        groups.forEachIndexed { index, group ->
+            if (index > 0) Spacer(GlanceModifier.height(6.dp))
+            Row(GlanceModifier.fillMaxWidth()) {
+                Text(p.text(group.name), GlanceModifier.width(labelWidth),
+                    style = TextStyle(p.muted, 10.sp, FontWeight.Medium, fontFamily = p.labelFont), maxLines = 2)
+                kinds.forEach { kind ->
+                    Spacer(GlanceModifier.width(6.dp))
+                    val window = group.window(kind)
+                    val blocked = window?.let(group::isBlocked) == true
+                    val remaining = window?.remainingPercent
+                    val color = if (blocked || remaining == null) p.muted else p.barColor(remaining, p.accent)
+                    Column(GlanceModifier.width(cellWidth)) {
+                        Text(remaining?.roundToInt()?.let { "$it%" } ?: "—",
+                            style = TextStyle(color, figureSize, FontWeight.Bold, fontFamily = p.displayFont,
+                                textDecoration = if (blocked) TextDecoration.LineThrough else null), maxLines = 1)
+                        if (detail != GroupedWindowDetail.FIGURE) {
+                            Spacer(GlanceModifier.height(4.dp))
+                            Box(GlanceModifier.width(cellWidth).height(5.dp), contentAlignment = Alignment.Center) {
+                                UsageBar(remaining, color, p, 5.dp, cellWidth)
+                                if (blocked) Box(GlanceModifier.width(cellWidth).height(1.dp).background(color)) {}
+                            }
+                        }
+                        if (detail == GroupedWindowDetail.RESET) {
+                            Spacer(GlanceModifier.height(3.dp))
+                            val caption = when {
+                                remaining == null -> "Not reported"
+                                window?.resetsAtEpochSeconds != null -> timeUntil(window.resetsAtEpochSeconds) ?: "Now"
+                                remaining == 100.0 -> "Full"
+                                else -> "Reset unknown"
+                            }
+                            Text(p.text(caption), style = TextStyle(color, 10.sp, fontFamily = p.labelFont,
+                                textDecoration = if (blocked) TextDecoration.LineThrough else null), maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun groupWindowLabel(kind: UsageMetricKind): String = when (kind) {
+    UsageMetricKind.SHORT_WINDOW -> "5H"
+    UsageMetricKind.LONG_WINDOW -> "7D"
+    else -> "Monthly"
 }
 
 @Composable

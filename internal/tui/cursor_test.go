@@ -45,7 +45,7 @@ func TestCursorUsageFetchAndRendering(t *testing.T) {
 	}
 	now := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
 	plain := ansi.Strip(usage.RenderTable([]usage.Row{row}, now))
-	for _, want := range []string{"SESSION (~5h)", "✦ 0% used / 100% left", "✦ 100% used / 0% left", "Cursor models · ", "Other models · "} {
+	for _, want := range []string{"MONTHLY", "0% used / 100% left", "100% used / 0% left", "├ ✦ Cursor models", "└ ✦ Other models"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("table missing %q:\n%s", want, plain)
 		}
@@ -55,19 +55,26 @@ func TestCursorUsageFetchAndRendering(t *testing.T) {
 	if strings.Contains(wide, "SESSION (~5h) ✦") || strings.Contains(plain, "Disabled") || strings.Contains(wide, "USD") {
 		t.Fatalf("Cursor still uses the session column or shows spend:\n%s", wide)
 	}
-	if usage.SlotText(row, providers.SessionSlot, now) != "-" || !strings.Contains(usage.SlotLabel(row, providers.WeeklySlot), "CURSOR") || !strings.Contains(usage.SlotLabel(row, providers.MonthlySlot), "OTHER") {
+	parts := usage.MetricRows(row)
+	if usage.SlotText(row, providers.SessionSlot, now) != "-" || usage.SlotText(row, providers.WeeklySlot, now) != "-" || len(parts) != 2 {
 		t.Fatalf("Cursor pools are in the wrong columns: %#v", row.Metrics)
 	}
-	for _, want := range []string{"WEEKLY ✦", "MONTHLY ✦", "Cursor models · ", "Other models · "} {
-		if !strings.Contains(wide, want) {
-			t.Fatalf("dashboard missing %q:\n%s", want, wide)
+	for _, part := range parts {
+		if _, ok := usage.MetricForSlot(part, providers.MonthlySlot); !ok {
+			t.Fatal("pool lost its monthly window")
 		}
 	}
-	for _, want := range []string{"CURSOR MODELS", "OTHER MODELS"} {
-		if !strings.Contains(compact, want) {
-			t.Fatalf("compact dashboard missing %q:\n%s", want, compact)
+	for _, text := range []string{wide, compact} {
+		for _, want := range []string{"MONTHLY", "Cursor models", "Other models"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("dashboard missing %q:\n%s", want, text)
+			}
+		}
+		if strings.Contains(text, "WEEKLY ✦") || strings.Contains(text, "MONTHLY ✦") {
+			t.Fatal("header still has a scoped marker")
 		}
 	}
+
 	for _, text := range []string{wide, ansi.Strip(usage.RenderTable([]usage.Row{usage.BaseRow(storage.Account{Provider: providers.Codex}), row}, now))} {
 		if strings.Contains(text, "/CURSOR") || strings.Contains(text, "/OTHER") || strings.Contains(text, "/SPEND") {
 			t.Fatalf("combined column names are back:\n%s", text)
@@ -75,7 +82,7 @@ func TestCursorUsageFetchAndRendering(t *testing.T) {
 	}
 	loading := usage.BaseRow(account)
 	loading.Loading = true
-	if usage.SlotText(loading, providers.WeeklySlot, now) != "loading…" || usage.SlotText(loading, providers.MonthlySlot, now) != "loading…" || usage.SlotText(loading, providers.SessionSlot, now) != "-" {
+	if usage.SlotText(loading, providers.WeeklySlot, now) != "-" || usage.SlotText(loading, providers.MonthlySlot, now) != "loading…" || usage.SlotText(loading, providers.SessionSlot, now) != "-" {
 		t.Fatal("missing loading state")
 	}
 	auth := usage.AuthenticationRequiredRow(account)

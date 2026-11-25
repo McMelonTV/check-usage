@@ -1,9 +1,11 @@
 package usageapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/McMelonTV/check-usage/internal/nativecli"
 	"github.com/McMelonTV/check-usage/internal/providers"
 	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
 	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
@@ -22,22 +25,27 @@ import (
 
 // Config controls persistence, networking, and time for an embedded Service.
 type Config struct {
-	AccountsFile string
-	CacheDir     string
-	HTTPClient   *http.Client
-	UserAgent    string
-	Now          func() time.Time
+	AccountsFile       string
+	CacheDir           string
+	HTTPClient         *http.Client
+	UserAgent          string
+	Now                func() time.Time
+	NativeFetch        func(context.Context, string, nativecli.Config) (nativecli.Result, error)
+	MinRefreshInterval time.Duration
 }
 
 // Service is the high-level, credential-owning check-usage application API.
 // Its methods are safe for concurrent use within one process.
 type Service struct {
+	nativeFetch     func(context.Context, string, nativecli.Config) (nativecli.Result, error)
+	minRefresh      time.Duration
 	accountsFile    string
 	cacheDir        string
 	client          *http.Client
 	userAgent       string
 	now             func() time.Time
 	mu              sync.Mutex
+	accountLocks    sync.Map
 	browserSessions map[string]cursorapi.LoginSession
 }
 
@@ -58,7 +66,12 @@ func New(config Config) *Service {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
+	if config.NativeFetch == nil {
+		config.NativeFetch = nativecli.Fetch
+	}
 	return &Service{
+		minRefresh:   config.MinRefreshInterval,
+		nativeFetch:  config.NativeFetch,
 		accountsFile: config.AccountsFile, cacheDir: config.CacheDir,
 		client: config.HTTPClient, userAgent: config.UserAgent, now: config.Now,
 		browserSessions: make(map[string]cursorapi.LoginSession),
@@ -335,36 +348,150 @@ func accountNameExists(accounts []storedAccount, name string) bool {
 // is false it performs no provider requests and only reads cached data.
 func (service *Service) Usage(ctx context.Context, target string, refresh bool) ([]UsageResult, error) {
 	service.mu.Lock()
-	defer service.mu.Unlock()
 	store, err := service.loadAccounts()
 	if err != nil {
+		service.mu.Unlock()
 		return nil, err
 	}
 	indexes, err := accountIndexes(store.Accounts, target)
 	if err != nil {
+		service.mu.Unlock()
 		return nil, err
 	}
-	results := make([]UsageResult, 0, len(indexes))
-	accountsChanged := false
+	accounts := make([]storedAccount, 0, len(indexes))
 	for _, index := range indexes {
-		account := &store.Accounts[index]
-		result, changed, err := service.usageForAccount(ctx, account, refresh)
-		if err != nil {
-			result = UsageResult{Account: account.public(), Error: err.Error()}
-		}
-		accountsChanged = accountsChanged || changed
-		results = append(results, result)
+		accounts = append(accounts, store.Accounts[index])
 	}
-	if accountsChanged {
-		if err := service.saveAccounts(store); err != nil {
-			return nil, err
-		}
+	service.mu.Unlock()
+	results := make([]UsageResult, len(accounts))
+	// A slow native probe must not block account discovery or other providers.
+	// Per-account locks coalesce overlapping device refreshes.
+	var group sync.WaitGroup
+	slots := make(chan struct{}, 4)
+	for index, account := range accounts {
+		group.Add(1)
+		go func(index int, account storedAccount) {
+			defer group.Done()
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-ctx.Done():
+				results[index] = UsageResult{Account: account.public(), Error: "Usage refresh cancelled"}
+				return
+			}
+			results[index] = service.usageOne(ctx, account.ID, refresh)
+		}(index, account)
 	}
+	group.Wait()
 	return results, nil
+}
+
+func (service *Service) usageOne(ctx context.Context, id string, refresh bool) UsageResult {
+	value, _ := service.accountLocks.LoadOrStore(id, &sync.Mutex{})
+	lock := value.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+	service.mu.Lock()
+	store, err := service.loadAccounts()
+	if err != nil {
+		service.mu.Unlock()
+		return UsageResult{Error: "Cannot read server accounts"}
+	}
+	index, err := findAccount(store.Accounts, id)
+	if err != nil {
+		service.mu.Unlock()
+		return UsageResult{Error: "Account was removed"}
+	}
+	account := store.Accounts[index]
+	original := account
+	service.mu.Unlock()
+	result, changed, fetchErr := service.usageForAccount(ctx, &account, refresh)
+	if fetchErr != nil {
+		result = UsageResult{Account: account.public(), Error: fetchErr.Error()}
+	}
+	entry, cached, cacheErr := service.loadCache(id)
+	if cacheErr != nil {
+		result.Error = "Cannot read server usage cache"
+	}
+	if cached && cacheErr == nil {
+		result.FetchedAtMillis, result.RetryAtMillis = entry.FetchedAt*1000, entry.NextFetchAt*1000
+		if result.Source == "" {
+			result.Source = firstNonEmpty(entry.Source, "api")
+		}
+	}
+	if refresh && service.minRefresh > 0 && entry.NextFetchAt <= service.now().Unix() {
+		entry.NextFetchAt = service.now().Add(service.minRefresh).Unix()
+		if err := service.saveCache(id, entry); err != nil {
+			result.Error = "Cannot save server usage cache"
+		}
+		result.RetryAtMillis = entry.NextFetchAt * 1000
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	latest, err := service.loadAccounts()
+	if err != nil {
+		result.Error = "Cannot read server accounts"
+		return result
+	}
+	index, err = findAccount(latest.Accounts, id)
+	if err != nil {
+		_ = service.clearCache(id)
+		return UsageResult{Account: original.public(), Error: "Account was removed"}
+	}
+	// Do not overwrite a local credential replacement made during this probe.
+	before, _ := json.Marshal(original.AuthData)
+	current, _ := json.Marshal(latest.Accounts[index].AuthData)
+	if changed && bytes.Equal(before, current) {
+		latest.Accounts[index].AuthData = account.AuthData
+		latest.Accounts[index].Email = account.Email
+		latest.Accounts[index].PlanType = account.PlanType
+		if err := service.saveAccounts(latest); err != nil {
+			result.Error = "Cannot save renewed server credentials"
+		}
+	}
+	result.Account = latest.Accounts[index].public()
+	return result
 }
 
 // ResetCredits returns available credits for one account, optionally using cache only.
 func (service *Service) ResetCredits(ctx context.Context, target string, refresh bool) (ResetCreditsResult, error) {
+	service.mu.Lock()
+	store, err := service.loadAccounts()
+	if err != nil {
+		service.mu.Unlock()
+		return ResetCreditsResult{}, err
+	}
+	index, err := findAccount(store.Accounts, target)
+	if err != nil {
+		service.mu.Unlock()
+		return ResetCreditsResult{}, err
+	}
+	account := store.Accounts[index]
+	service.mu.Unlock()
+	if account.AuthData.Native == nil && service.minRefresh == 0 {
+		return service.legacyResetCredits(ctx, target, refresh)
+	}
+	definition, ok := providerDefinitions[account.Provider]
+	if !ok || !definition.ResetCredits {
+		return ResetCreditsResult{}, fmt.Errorf("reset credits are unavailable for %s", account.Provider)
+	}
+	results, err := service.Usage(ctx, account.ID, refresh)
+	if err != nil {
+		return ResetCreditsResult{}, err
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	entry, _, err := service.loadCache(account.ID)
+	if err != nil {
+		return ResetCreditsResult{}, err
+	}
+	if entry.ResetCredits == nil {
+		return ResetCreditsResult{}, fmt.Errorf("this account's source does not report reset-credit details")
+	}
+	return ResetCreditsResult{Account: results[0].Account, Credits: publicResetCredits(entry.ResetCredits), Cached: results[0].Cached || results[0].Error != "" || entry.ResetFetchedAt < entry.FetchedAt}, nil
+}
+
+func (service *Service) legacyResetCredits(ctx context.Context, target string, refresh bool) (ResetCreditsResult, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	store, err := service.loadAccounts()
@@ -389,6 +516,25 @@ func (service *Service) ResetCredits(ctx context.Context, target string, refresh
 			return ResetCreditsResult{}, fmt.Errorf("no cached reset credits for account %q", account.Name)
 		}
 		return ResetCreditsResult{Account: account.public(), Credits: publicResetCredits(entry.ResetCredits), Cached: true}, nil
+	}
+	if account.AuthData.Native != nil {
+		_, changed, fetchErr := service.nativeUsage(ctx, account, true)
+		if changed {
+			if err := service.saveAccounts(store); err != nil {
+				return ResetCreditsResult{}, err
+			}
+		}
+		if fetchErr != nil {
+			return ResetCreditsResult{}, fetchErr
+		}
+		entry, _, err = service.loadCache(account.ID)
+		if err != nil {
+			return ResetCreditsResult{}, err
+		}
+		if entry.ResetCredits == nil {
+			return ResetCreditsResult{}, fmt.Errorf("native CLI does not report reset-credit details")
+		}
+		return ResetCreditsResult{Account: account.public(), Credits: publicResetCredits(entry.ResetCredits), Cached: entry.FetchedAt < service.now().Unix()}, nil
 	}
 	if provider.ID == providerClaude {
 		return service.claudeResetCredits(ctx, store, account)
@@ -444,9 +590,27 @@ func (service *Service) claudeResetCredits(ctx context.Context, store *accountsS
 }
 
 func (service *Service) usageForAccount(ctx context.Context, account *storedAccount, refresh bool) (UsageResult, bool, error) {
+	if refresh && service.minRefresh > 0 && account.AuthData.Native == nil && account.Provider != providers.Claude {
+		entry, exists, err := service.loadCache(account.ID)
+		if err != nil {
+			return UsageResult{}, false, err
+		}
+		if exists && entry.NextFetchAt > service.now().Unix() && entry.FetchedAt == 0 {
+			return UsageResult{}, false, fmt.Errorf("provider refresh is backing off; try again later")
+		}
+		if exists && entry.FetchedAt > 0 && (entry.NextFetchAt > service.now().Unix() || service.now().Before(time.Unix(entry.FetchedAt, 0).Add(service.minRefresh))) {
+			return service.usageForAccount(ctx, account, false)
+		}
+	}
+	if account.AuthData.Native != nil {
+		return service.nativeUsage(ctx, account, refresh)
+	}
 	provider, ok := providerDefinitions[account.Provider]
 	if !ok {
 		return UsageResult{}, false, fmt.Errorf("unsupported provider %q", account.Provider)
+	}
+	if account.Provider == providers.Antigravity {
+		return UsageResult{}, false, fmt.Errorf("configure Antigravity as a native agy account on the server")
 	}
 	if provider.Credentials == apiKeyCredentials {
 		entry, cached, err := service.loadCache(account.ID)
@@ -458,6 +622,9 @@ func (service *Service) usageForAccount(ctx context.Context, account *storedAcco
 				return UsageResult{}, false, fmt.Errorf("no cached usage for account %q", account.Name)
 			}
 			usage := *entry.ProviderUsage
+			if account.Provider == providers.Cursor {
+				usage = providers.NormalizeCursorUsage(usage)
+			}
 			resultAccount := account.public()
 			if usage.Plan != "" {
 				resultAccount.PlanType = usage.Plan

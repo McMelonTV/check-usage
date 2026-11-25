@@ -73,6 +73,7 @@ data class UsageWindow(
     val remainingPercent: Double?,
     val resetsAtEpochSeconds: Long?,
     val windowSeconds: Int?,
+    val scope: String = "",
 )
 
 @Serializable

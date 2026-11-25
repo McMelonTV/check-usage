@@ -48,7 +48,7 @@ func TestCursorUsageMatchesDashboardPools(t *testing.T) {
 	reset := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC).Unix()
 	for i, want := range []float64{0, 30} {
 		metric := usage.Metrics[i]
-		if metric.Used == nil || *metric.Used != want || metric.ResetAt == nil || *metric.ResetAt != reset {
+		if metric.Slot != MonthlySlot || metric.Used == nil || *metric.Used != want || metric.ResetAt == nil || *metric.ResetAt != reset {
 			t.Fatalf("pool %d = %#v", i, metric)
 		}
 	}

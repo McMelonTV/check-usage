@@ -45,12 +45,12 @@ func runAccountsCommand(args []string) int {
 }
 
 func accountProviderFlag(fs *flag.FlagSet) *string {
-	return fs.String("provider", "", "provider: codex, claude, opencode-go, deepseek, or cursor")
+	return fs.String("provider", "", "provider: codex, claude, opencode-go, deepseek, cursor, or antigravity")
 }
 
 func selectedProvider(id string) (usage.ProviderDefinition, error) {
 	if strings.TrimSpace(id) == "" {
-		return usage.ProviderDefinition{}, fmt.Errorf("--provider is required; choose: codex, claude, opencode-go, deepseek, cursor")
+		return usage.ProviderDefinition{}, fmt.Errorf("--provider is required; choose: codex, claude, opencode-go, deepseek, cursor, antigravity")
 	}
 	return usage.ProviderFor(id)
 }
@@ -77,6 +77,10 @@ func runAccountsAdd(args []string) int {
 		return 2
 	}
 	if provider.Credentials != providers.APIKey {
+		if provider.Credentials == providers.Native {
+			fmt.Fprintln(os.Stderr, "error: configure Antigravity with server accounts native --driver agy")
+			return 2
+		}
 		fmt.Fprintf(os.Stderr, "error: %s uses browser login; run accounts login --provider %s\n", provider.Name, provider.ID)
 		return 2
 	}
@@ -142,6 +146,10 @@ func runAccountsReauth(args []string) int {
 		return 1
 	}
 	existing := store.Accounts[index]
+	if existing.Provider == providers.Antigravity {
+		fmt.Fprintln(os.Stderr, "error: use server accounts native --driver agy --account "+existing.ID)
+		return 2
+	}
 
 	provider, err := usage.ProviderFor(existing.Provider)
 	if err != nil {
@@ -312,6 +320,10 @@ func runAccountsLogin(args []string) int {
 	provider, err := selectedProvider(*providerID)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
+		return 2
+	}
+	if provider.Credentials == providers.Native {
+		fmt.Fprintln(os.Stderr, "error: configure Antigravity with server accounts native --driver agy")
 		return 2
 	}
 	if provider.Credentials == providers.APIKey && provider.ID != providers.Cursor {
@@ -609,10 +621,11 @@ func findAccountForRemoval(accounts []storage.Account, target string) (int, erro
 
 func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
-	fmt.Println("  check-usage accounts list [--accounts-file path]")
-	fmt.Println("  check-usage accounts add [--accounts-file path] --provider opencode-go|deepseek|cursor (--api-key key|--api-key-env name) [--name name]")
-	fmt.Println("  check-usage accounts login [--accounts-file path] --provider codex|claude|cursor [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
-	fmt.Println("  check-usage accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
-	fmt.Println("  check-usage accounts remove [--accounts-file path] <id-or-name>")
-	fmt.Println("  check-usage accounts rename [--accounts-file path] <id-or-name> <new-name>")
+	fmt.Println("  check-usage server accounts native --driver agy|codex|json [--provider id] [--name name] [--account id] [--source-file path] [--fallback]")
+	fmt.Println("  check-usage server accounts list [--accounts-file path]")
+	fmt.Println("  check-usage server accounts add [--accounts-file path] --provider opencode-go|deepseek|cursor (--api-key key|--api-key-env name) [--name name]")
+	fmt.Println("  check-usage server accounts login [--accounts-file path] --provider codex|claude|cursor [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
+	fmt.Println("  check-usage server accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
+	fmt.Println("  check-usage server accounts remove [--accounts-file path] <id-or-name>")
+	fmt.Println("  check-usage server accounts rename [--accounts-file path] <id-or-name> <new-name>")
 }

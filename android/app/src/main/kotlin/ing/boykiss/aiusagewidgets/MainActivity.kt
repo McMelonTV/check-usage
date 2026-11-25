@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
         val app = application as UsageWidgetsApplication
         setContent {
             UsageWidgetsTheme {
-                val vm: DashboardViewModel = viewModel(factory = DashboardViewModel.Factory(app.container, applicationContext))
+                val vm: DashboardViewModel = viewModel(factory = DashboardViewModel.factory(app.container, applicationContext))
                 val state by vm.state.collectAsStateWithLifecycle()
                 DashboardScreen(state, vm::onEvent)
             }

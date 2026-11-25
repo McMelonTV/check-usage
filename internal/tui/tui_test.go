@@ -506,7 +506,7 @@ func TestUsageListShowsAuthenticationRecovery(t *testing.T) {
 }
 
 func TestTUIMouseClickChangesTabAndSelectsUsageRow(t *testing.T) {
-	m := Model{width: 100, height: 24, settings: storage.DefaultSettings(), rows: []usage.Row{{Name: "One"}, {Name: "Two"}}}
+	m := Model{width: 104, height: 24, settings: storage.DefaultSettings(), rows: []usage.Row{{Name: "One"}, {Name: "Two"}}}
 	updated, _ := m.Update(tea.MouseMsg{X: 12, Y: 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	m = updated.(Model)
 	if m.tab != resetsTab {
@@ -981,7 +981,7 @@ func TestTUIMarksModelScopedLimitInMonthlyColumn(t *testing.T) {
 	}}
 	m := Model{width: 120, height: 24, initialized: true, rows: []usage.Row{row}, settings: storage.DefaultSettings()}
 	view := m.View()
-	if !strings.Contains(view, "MONTHLY ✦") || !strings.Contains(view, "✦ ━") || !strings.Contains(view, "Fable weekly · ") {
+	if strings.Contains(view, "MONTHLY ✦") || !strings.Contains(view, "✦ ━") || !strings.Contains(view, "Fable weekly · ") {
 		t.Fatalf("view = %s", view)
 	}
 }

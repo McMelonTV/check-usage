@@ -184,8 +184,8 @@ func TestRenderTableColorsScopedMarkerSeparately(t *testing.T) {
 	}}}
 	output := RenderTable(rows, time.Now())
 	marker := ansiScoped + ScopedMarker + ANSIReset
-	if strings.Count(output, marker) != 2 {
-		t.Fatalf("header and cell markers are not violet:\n%q", output)
+	if strings.Count(output, marker) != 1 {
+		t.Fatalf("cell marker is not violet or leaked into the header:\n%q", output)
 	}
 	if strings.Contains(output, ansiHeader+"MONTHLY "+ScopedMarker) || !strings.Contains(output, " "+colorizeUsage("81% used / 19% left", &used)) {
 		t.Fatalf("marker took the header or usage color:\n%q", output)

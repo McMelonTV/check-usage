@@ -3,6 +3,7 @@ package storage
 import (
 	"strings"
 
+	"github.com/McMelonTV/check-usage/internal/nativecli"
 	"github.com/McMelonTV/check-usage/internal/providers"
 	"github.com/McMelonTV/check-usage/internal/providers/claudeapi"
 	"github.com/McMelonTV/check-usage/internal/providers/codexapi"
@@ -53,13 +54,14 @@ type Account struct {
 }
 
 type AuthData struct {
-	Type         string  `json:"type"`
-	APIKey       *string `json:"api_key,omitempty"`
-	IDToken      *string `json:"id_token,omitempty"`
-	AccessToken  *string `json:"access_token,omitempty"`
-	RefreshToken *string `json:"refresh_token,omitempty"`
-	AccountID    *string `json:"account_id,omitempty"`
-	ExpiresAt    *int64  `json:"expires_at,omitempty"`
+	Native       *nativecli.Config `json:"native_cli,omitempty"`
+	Type         string            `json:"type"`
+	APIKey       *string           `json:"api_key,omitempty"`
+	IDToken      *string           `json:"id_token,omitempty"`
+	AccessToken  *string           `json:"access_token,omitempty"`
+	RefreshToken *string           `json:"refresh_token,omitempty"`
+	AccountID    *string           `json:"account_id,omitempty"`
+	ExpiresAt    *int64            `json:"expires_at,omitempty"`
 }
 
 type Settings struct {
