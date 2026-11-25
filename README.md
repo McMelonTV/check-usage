@@ -257,6 +257,7 @@ cu version                                         # Show installed version
 Some subscriptions expose multiple model pools under a single account. The TUI, Android cards, and widgets render these in a shared grouped layout with clean column headers:
 
 - **Antigravity:** Preserves all four scoped limits reported by `agy` across **Gemini** and **Claude/GPT** rows with **5-hour** and **Weekly** columns under one selectable account. Weekly-only plans do not receive invented 5-hour allowances, and missing measurements remain unknown. If a family's weekly allowance is exhausted, only that family's 5-hour allowance is struck through. In the TUI, scoped rows use a purple star indicator, muted tree connectors, and normal-text family names.
+- **Antigravity plan:** `agy` print mode does not report the plan, so on Linux and macOS the server briefly starts interactive `agy` in a pseudo-terminal, reads `GetUserStatus` from its loopback language server using a one-time CSRF token, and stops it. This runs at most daily once the plan is known (hourly while unknown), uses no model quota, and never touches the Google login; `agy` makes the upstream request itself. On Windows the plan stays unknown.
 - **Cursor:** Renders **Cursor models** and **Other models** as separate independent rows, both under **Monthly** (older cached slots are normalized automatically).
 - **Compact widgets:** Small square Android widgets retain all four Antigravity values; very short widgets summarize the tightest reported limit per family.
 

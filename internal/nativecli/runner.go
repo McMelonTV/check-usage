@@ -29,6 +29,9 @@ type Config struct {
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 	RefreshSeconds int               `json:"refresh_seconds,omitempty"`
 	Fallback       bool              `json:"fallback,omitempty"`
+	// FetchPlan asks the agy driver to also read the plan. It is decided per
+	// request by the caller and never stored.
+	FetchPlan bool `json:"-"`
 }
 
 type Result struct {
@@ -36,6 +39,8 @@ type Result struct {
 	Email        string
 	AccountID    string
 	ResetCredits *codexapi.ResetCreditsPayload
+	// PlanChecked reports that a plan read was attempted, even if it failed.
+	PlanChecked bool
 }
 
 func (config Config) Validate(provider string) error {
@@ -103,19 +108,9 @@ func Fetch(ctx context.Context, provider string, config Config) (Result, error) 
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Dir, cmd.Env = dir, environment(config.Env)
 	if config.Driver == "agy" {
-		// A quota refresh must not launch a login browser or update the CLI.
-		guardDir := filepath.Join(dir, "browser-guard")
-		if err := os.Mkdir(guardDir, 0700); err != nil {
+		if cmd.Env, err = agyEnvironment(dir, cmd.Env); err != nil {
 			return Result{}, err
 		}
-		for _, name := range []string{"open", "xdg-open"} {
-			if err := os.WriteFile(filepath.Join(guardDir, name), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
-				return Result{}, err
-			}
-		}
-		cmd.Env = withEnv(cmd.Env, "PATH", guardDir+string(os.PathListSeparator)+envValue(cmd.Env, "PATH"))
-		cmd.Env = withEnv(cmd.Env, "BROWSER", filepath.Join(guardDir, "xdg-open"))
-		cmd.Env = withEnv(cmd.Env, "AGY_CLI_DISABLE_AUTO_UPDATE", "true")
 	}
 	configureProcess(cmd)
 	defer killProcess(cmd)
@@ -131,7 +126,15 @@ func Fetch(ctx context.Context, provider string, config Config) (Result, error) 
 		return Result{}, errors.New("native usage output exceeds 1 MiB")
 	}
 	if config.Driver == "agy" {
-		return parseAgy(output.Bytes())
+		result, err := parseAgy(output.Bytes())
+		if err == nil && config.FetchPlan {
+			// The plan is best effort; usage stays valid without it.
+			result.PlanChecked = true
+			if plan, planErr := fetchAgyPlan(ctx, executable, dir, cmd.Env); planErr == nil {
+				result.Usage.Plan = plan
+			}
+		}
+		return result, err
 	}
 	var usage providers.Usage
 	if json.Unmarshal(output.Bytes(), &usage) != nil {
@@ -192,6 +195,22 @@ func parseAgy(data []byte) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Usage: providers.AntigravityUsage(quotas)}, nil
+}
+
+// agyEnvironment keeps agy from opening a login browser or updating itself.
+func agyEnvironment(dir string, env []string) ([]string, error) {
+	guardDir := filepath.Join(dir, "browser-guard")
+	if err := os.MkdirAll(guardDir, 0700); err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"open", "xdg-open"} {
+		if err := os.WriteFile(filepath.Join(guardDir, name), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+			return nil, err
+		}
+	}
+	env = withEnv(env, "PATH", guardDir+string(os.PathListSeparator)+envValue(env, "PATH"))
+	env = withEnv(env, "BROWSER", filepath.Join(guardDir, "xdg-open"))
+	return withEnv(env, "AGY_CLI_DISABLE_AUTO_UPDATE", "true"), nil
 }
 
 func validateUsage(usage providers.Usage) error {

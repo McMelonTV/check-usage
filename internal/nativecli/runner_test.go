@@ -5,18 +5,45 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/McMelonTV/check-usage/internal/providers"
+	"github.com/charmbracelet/x/term"
 )
+
+// serveFakeAgyStatus imitates interactive agy: it requires a terminal and
+// serves GetUserStatus on loopback TLS, guarded by the CSRF token from its environment.
+func serveFakeAgyStatus() {
+	if !term.IsTerminal(os.Stdin.Fd()) {
+		os.Exit(4)
+	}
+	_ = os.WriteFile(os.Getenv("CHECK_USAGE_AGY_PIDFILE"), []byte(strconv.Itoa(os.Getpid())), 0600)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != agyUserStatusRPC || request.Header.Get(agyCSRFHeader) == "" || request.Header.Get(agyCSRFHeader) != os.Getenv(agyCSRFEnv) {
+			http.Error(writer, `{"code":"unauthenticated"}`, http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprint(writer, os.Getenv("CHECK_USAGE_AGY_STATUS"))
+	}))
+	server.StartTLS()
+	select {}
+}
 
 func TestMain(m *testing.M) {
 	if mode := os.Getenv("CHECK_USAGE_NATIVE_TEST"); mode != "" {
 		switch mode {
 		case "agy":
+			if len(os.Args) == 1 {
+				serveFakeAgyStatus()
+			}
 			if strings.Join(os.Args[1:], " ") != "-p /usage --output-format json" || os.Getenv("AGY_CLI_DISABLE_AUTO_UPDATE") != "true" || os.Getenv("BROWSER") == "" {
 				os.Exit(2)
 			}
@@ -109,5 +136,71 @@ func TestNativeAdapterTimeoutAndSanitizedFailures(t *testing.T) {
 	}
 	if err := (Config{Driver: "agy", Args: []string{"prompt"}}).Validate(providers.Antigravity); err == nil {
 		t.Fatal("native usage arguments could be replaced by model prompts")
+	}
+}
+
+func TestNativeAgyReadsPlanFromInteractiveStatusAndStopsIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the agy plan probe needs a Unix pseudo-terminal")
+	}
+	config := fixtureConfig(t, "agy", "agy")
+	pidFile := t.TempDir() + "/pid"
+	config.Env["CHECK_USAGE_AGY_PIDFILE"] = pidFile
+	config.Env["CHECK_USAGE_AGY_STATUS"] = `{"userStatus":{"planStatus":{"planInfo":{"planName":"Google AI Pro"}},"g1Tier":"G1_ULTRA_TIER"}}`
+	config.FetchPlan = true
+	result, err := Fetch(t.Context(), providers.Antigravity, config)
+	if err != nil || !result.PlanChecked || result.Usage.Plan != "Google AI Pro" || len(result.Usage.Metrics) != 4 {
+		t.Fatalf("plan probe failed: plan=%q checked=%v err=%v", result.Usage.Plan, result.PlanChecked, err)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal("fake agy never started in a terminal")
+	}
+	pid, _ := strconv.Atoi(string(data))
+	if process, err := os.FindProcess(pid); err == nil && process.Signal(syscall.Signal(0)) == nil {
+		t.Fatal("interactive agy was left running")
+	}
+}
+
+func TestNativeAgySkipsPlanUnlessRequested(t *testing.T) {
+	config := fixtureConfig(t, "agy", "agy")
+	pidFile := t.TempDir() + "/pid"
+	config.Env["CHECK_USAGE_AGY_PIDFILE"] = pidFile
+	result, err := Fetch(t.Context(), providers.Antigravity, config)
+	if err != nil || result.PlanChecked || result.Usage.Plan != "" {
+		t.Fatal("plan probe ran without being requested")
+	}
+	if _, err := os.Stat(pidFile); err == nil {
+		t.Fatal("interactive agy started without a plan request")
+	}
+}
+
+func TestAgyPlanParsingPrefersPlanNameAndDetectsSignOut(t *testing.T) {
+	cases := map[string]string{
+		`{"userStatus":{"planStatus":{"planInfo":{"planName":"Google AI Ultra"}}}}`: "Google AI Ultra",
+		`{"userStatus":{"planInfo":{"planName":"Pro"}}}`:                            "Pro",
+		`{"userStatus":{"userTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}}`:   "Google AI Pro",
+		`{"userStatus":{"g1Tier":"G1_ULTRA_LITE_TIER"}}`:                            "Ultra Lite",
+		`{"userStatus":{"g1Tier":"USER_TIER_UNSPECIFIED"}}`:                         "",
+		`{"userStatus":{}}`: "",
+	}
+	for input, want := range cases {
+		if plan, err := parseAgyPlan([]byte(input)); err != nil || plan != want {
+			t.Fatalf("parseAgyPlan(%s) = %q, %v; want %q", input, plan, err, want)
+		}
+	}
+	signedOut := `{"userStatus":{"cascadeModelConfigData":{"errorMessage":"failed to get load code assist response: error getting token source: You are not logged into Antigravity."}}}`
+	if _, err := parseAgyPlan([]byte(signedOut)); err != errAgySignedOut {
+		t.Fatal("signed-out agy was not detected")
+	}
+}
+
+func TestAgyPlanDueLimitsInteractiveProbes(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	if !AgyPlanDue("", time.Unix(0, 0), now) || AgyPlanDue("", now.Add(-30*time.Minute), now) || !AgyPlanDue("", now.Add(-time.Hour), now) {
+		t.Fatal("unknown plan should be retried hourly")
+	}
+	if AgyPlanDue("Pro", now.Add(-23*time.Hour), now) || !AgyPlanDue("Pro", now.Add(-24*time.Hour), now) {
+		t.Fatal("known plan should be refreshed daily")
 	}
 }
