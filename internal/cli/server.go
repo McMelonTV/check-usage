@@ -80,9 +80,17 @@ func runServerCommand(args []string) int {
 		service := usageapi.New(usageapi.Config{AccountsFile: config.AccountsFile, CacheDir: config.CacheDir, MinRefreshInterval: time.Minute})
 		handler := &remoteserver.Handler{Config: config, Service: service}
 		server := &http.Server{Addr: config.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 3 * time.Minute, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10}
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		signals, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stopSignals()
+		ctx, cancel := context.WithCancel(signals)
 		defer cancel()
 		server.BaseContext = func(net.Listener) context.Context { return ctx }
+		if binary := os.Getenv(serviceBinaryEnv); binary != "" {
+			go watchServiceBinary(ctx, binary, serviceBinaryPollInterval, func() {
+				fmt.Println("check-usage was upgraded; restarting on the new binary")
+				cancel()
+			})
+		}
 		go func() {
 			<-ctx.Done()
 			shutdown, stop := context.WithTimeout(context.Background(), 5*time.Second)

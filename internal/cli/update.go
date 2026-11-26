@@ -50,6 +50,7 @@ type updateOptions struct {
 	TargetVersion     string
 	CheckOnly         bool
 	Force             bool
+	IgnoreAge         bool
 	NoRestart         bool
 	GOOS              string
 	GOARCH            string
@@ -58,7 +59,11 @@ type updateOptions struct {
 	HTTPClient        *http.Client
 	AuthToken         string
 	AllowInsecureHTTP bool
-	RestartService    func() (bool, error)
+	// RestartService brings an installed service onto binaryPath: it rewrites
+	// an outdated unit and restarts the service when it runs an older binary.
+	RestartService func(binaryPath string) (bool, error)
+	// MiseUpgrade upgrades a mise-managed install to the newest release.
+	MiseUpgrade func(tool string, ignoreAge bool) error
 }
 
 type updateResult struct {
@@ -71,6 +76,8 @@ type updateResult struct {
 	UpdateAvailable  bool
 	AliasCreated     bool
 	AliasUpdated     bool
+	ViaMise          bool
+	HeldBack         bool // mise kept the current version (minimum release age)
 	ServiceRestarted bool
 	RestartWarning   error
 }
@@ -82,7 +89,8 @@ func runUpdateCommand(args []string) int {
 
 	checkOnly := fs.Bool("check", false, "check if a newer release is available without installing")
 	targetVersion := fs.String("version", "", "install a specific release tag (default: latest)")
-	force := fs.Bool("force", false, "reinstall even if already on the target version or managed by mise")
+	force := fs.Bool("force", false, "reinstall even if already on the target version, and replace a mise-managed binary in place instead of running mise")
+	ignoreAge := fs.Bool("ignore-age", false, "for mise installs, install the newest release even if it is newer than mise's minimum release age")
 	noRestart := fs.Bool("no-restart", false, "do not restart an active systemd user service after updating")
 	timeout := fs.Int("timeout", 120, "download timeout in seconds")
 
@@ -109,6 +117,7 @@ func runUpdateCommand(args []string) int {
 		TargetVersion: strings.TrimSpace(*targetVersion),
 		CheckOnly:     *checkOnly,
 		Force:         *force,
+		IgnoreAge:     *ignoreAge,
 		NoRestart:     *noRestart,
 		HTTPClient:    &http.Client{Timeout: time.Duration(*timeout) * time.Second},
 		AuthToken:     token,
@@ -131,12 +140,16 @@ func runUpdateCommand(args []string) int {
 		return 0
 	}
 
-	if res.AlreadyUpToDate {
+	switch {
+	case res.AlreadyUpToDate:
 		fmt.Printf("Already up to date (%s).\n", res.TargetVersion)
-		return 0
+	case res.HeldBack:
+		fmt.Printf("mise kept check-usage at %s: %s is newer than mise's minimum release age.\nRerun with --ignore-age to install it now.\n", res.CurrentVersion, res.TargetVersion)
+	case res.ViaMise:
+		fmt.Printf("Updated check-usage from %s to %s with mise.\n", res.CurrentVersion, res.TargetVersion)
+	default:
+		fmt.Printf("Updated check-usage from %s to %s (%s).\n", res.CurrentVersion, res.TargetVersion, res.ExecutablePath)
 	}
-
-	fmt.Printf("Updated check-usage from %s to %s (%s).\n", res.CurrentVersion, res.TargetVersion, res.ExecutablePath)
 	if res.AliasCreated {
 		if runtime.GOOS == "windows" {
 			fmt.Println("Installed cu.exe alias alongside check-usage.exe.")
@@ -174,7 +187,10 @@ func performSelfUpdate(ctx context.Context, opts updateOptions) (updateResult, e
 		opts.HTTPClient = &http.Client{Timeout: 120 * time.Second}
 	}
 	if opts.RestartService == nil {
-		opts.RestartService = restartSystemdServiceIfActive
+		opts.RestartService = syncSystemdService
+	}
+	if opts.MiseUpgrade == nil {
+		opts.MiseUpgrade = runMiseUpgrade
 	}
 
 	assetName, err := releaseAssetName(opts.GOOS, opts.GOARCH)
@@ -203,10 +219,6 @@ func performSelfUpdate(ctx context.Context, opts updateOptions) (updateResult, e
 		res.UpdateAvailable = !upToDate
 		return res, nil
 	}
-	if upToDate && !opts.Force {
-		res.AlreadyUpToDate = true
-		return res, nil
-	}
 
 	exePath := opts.ExecutablePath
 	if exePath == "" {
@@ -217,11 +229,35 @@ func performSelfUpdate(ctx context.Context, opts updateOptions) (updateResult, e
 	}
 	res.ExecutablePath = exePath
 
+	if upToDate && !opts.Force {
+		res.AlreadyUpToDate = true
+		// The binary may already be new (for example after `mise upgrade`)
+		// while the service still runs an older one or an outdated unit.
+		restartService(&res, opts, stableServiceBinaryPath(exePath))
+		return res, nil
+	}
+
 	if !opts.Force && isMiseManagedPath(exePath) {
-		return res, fmt.Errorf(
-			"this binary is managed by mise (%s); run `mise upgrade github:%s` instead, or rerun with --force to replace it in place",
-			exePath, opts.Repo,
-		)
+		tool := miseToolName(exePath, "github:"+opts.Repo)
+		if opts.TargetVersion != "" {
+			return res, fmt.Errorf("this binary is managed by mise (%s); run `mise use %s@%s` to install a specific release, or rerun with --force to replace it in place", exePath, tool, strings.TrimPrefix(opts.TargetVersion, "v"))
+		}
+		if err := opts.MiseUpgrade(tool, opts.IgnoreAge); err != nil {
+			return res, err
+		}
+		res.ViaMise = true
+		install, _ := parseMiseInstall(exePath)
+		latest := filepath.Join(install.ToolDir, "latest", install.Rel)
+		if after, err := os.Stat(latest); err == nil {
+			// mise exits successfully when its release age holds the update back;
+			// latest still pointing at this binary means nothing was installed.
+			if current, err := os.Stat(exePath); err == nil && os.SameFile(current, after) {
+				res.HeldBack = true
+			}
+			res.ExecutablePath = latest
+		}
+		restartService(&res, opts, res.ExecutablePath)
+		return res, nil
 	}
 
 	archiveAsset, ok := findReleaseAsset(release.Assets, assetName)
@@ -282,13 +318,17 @@ func performSelfUpdate(ctx context.Context, opts updateOptions) (updateResult, e
 		res.AliasUpdated = updated
 	}
 
-	if !opts.NoRestart && opts.RestartService != nil {
-		restarted, restartErr := opts.RestartService()
-		res.ServiceRestarted = restarted && restartErr == nil
-		res.RestartWarning = restartErr
-	}
-
+	restartService(&res, opts, exePath)
 	return res, nil
+}
+
+func restartService(res *updateResult, opts updateOptions, binaryPath string) {
+	if opts.NoRestart || opts.RestartService == nil {
+		return
+	}
+	restarted, err := opts.RestartService(binaryPath)
+	res.ServiceRestarted = restarted && err == nil
+	res.RestartWarning = err
 }
 
 func releaseAssetName(goos, goarch string) (string, error) {
@@ -551,11 +591,6 @@ func resolveSelfExecutablePath() (string, error) {
 		return resolved, nil
 	}
 	return filepath.Abs(exe)
-}
-
-func isMiseManagedPath(exePath string) bool {
-	normalized := strings.ToLower(filepath.ToSlash(filepath.Clean(exePath)))
-	return strings.Contains(normalized, "/mise/installs/")
 }
 
 func fileSHA256(path string) ([]byte, error) {

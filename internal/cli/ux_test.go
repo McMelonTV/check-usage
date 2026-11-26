@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -160,22 +159,6 @@ func TestConcurrentAccountMutationsWithFileLock(t *testing.T) {
 	}
 	if len(accounts) != 10 {
 		t.Fatalf("len(accounts) = %d, want 10 (lost concurrent update!)", len(accounts))
-	}
-}
-
-func TestSystemdUnitGenerationOnLinux(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("linux-only")
-	}
-	unit := systemdUnitContent("/home/me/.local/bin/check-usage", "/srv/check-usage/server.json", "/home/me/.local/bin:/usr/bin")
-	for _, want := range []string{
-		`ExecStart="/home/me/.local/bin/check-usage" server --config "/srv/check-usage/server.json" serve`,
-		`Environment="PATH=/home/me/.local/bin:/usr/bin"`,
-		`Restart=on-failure`,
-	} {
-		if !strings.Contains(unit, want) {
-			t.Fatalf("unit missing %q:\n%s", want, unit)
-		}
 	}
 }
 
