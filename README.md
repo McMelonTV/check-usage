@@ -25,10 +25,10 @@ The same CLI binary runs both the homelab server and the paired terminal client,
 Install the latest prebuilt release (puts both `check-usage` and `cu` on your `$PATH`):
 
 ```bash
-mise use -g github:McMelonTV/check-usage
+mise use -g github:McMelonTV/check-usage@latest
 ```
 
-Upgrade later with `mise upgrade github:McMelonTV/check-usage`.
+Upgrade later with `cu update`. For mise installs it runs `mise upgrade github:McMelonTV/check-usage@latest --bump`, which records `latest` in your mise config so later upgrades are not held back by an old version pin. mise's minimum release age still applies; if it holds a new release back, `cu update` says so. Pass `cu update --ignore-age` to install the newest release right away. A plain `mise upgrade` also works.
 
 ### With `go install`
 
@@ -50,7 +50,7 @@ go build -o check-usage .
 
 ### Self-updates
 
-Standalone installs (from GitHub Releases or `go install`) can update themselves directly from GitHub Releases with SHA-256 checksum verification:
+`cu update` upgrades through mise for mise installs (see above). Standalone installs (from GitHub Releases or `go install`) update themselves directly from GitHub Releases with SHA-256 checksum verification:
 
 ```bash
 cu update            # Download, verify, and replace the binary in place
@@ -58,7 +58,12 @@ cu update --check    # Check whether a newer release is available
 cu version           # Show the installed version
 ```
 
-On Unix, `update` also creates a `cu -> check-usage` symlink next to `check-usage` if one does not already exist (without overwriting an unrelated `cu` binary). On Linux, if `check-usage.service` is running, it is restarted automatically (pass `--no-restart` to skip). If the binary is managed by `mise`, `update` directs you to `mise upgrade` unless `--force` is passed.
+On Unix, `update` also creates a `cu -> check-usage` symlink next to `check-usage` if one does not already exist (without overwriting an unrelated `cu` binary). Pass `--force` to replace a mise-managed binary in place instead of running mise.
+
+On Linux, the service always runs the current release:
+- For mise installs, `check-usage.service` starts mise's stable `installs/<tool>/latest/check-usage` path rather than a versioned directory, so mise pruning old versions cannot break it.
+- The server checks its binary every 30 seconds and restarts on the new one after any upgrade, including a plain `mise upgrade`.
+- `cu update` also rewrites units written by older releases and restarts the service right away if it still runs an older binary, even when the CLI itself is already up to date. Pass `--no-restart` to skip that.
 
 ## Set up the homelab server
 

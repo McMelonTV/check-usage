@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/McMelonTV/check-usage/internal/remoteserver"
@@ -48,7 +50,10 @@ func systemdUnitContent(binaryPath, configPath, pathEnv string) string {
 	if strings.TrimSpace(pathEnv) != "" {
 		b.WriteString("Environment=" + systemdQuote("PATH="+pathEnv) + "\n")
 	}
-	b.WriteString("Restart=on-failure\n")
+	// The server exits cleanly when this file changes, and Restart=always
+	// starts the new binary, so upgrades take effect without a manual restart.
+	b.WriteString("Environment=" + systemdQuote(serviceBinaryEnv+"="+binaryPath) + "\n")
+	b.WriteString("Restart=always\n")
 	b.WriteString("RestartSec=5\n\n")
 	b.WriteString("[Install]\n")
 	b.WriteString("WantedBy=default.target\n")
@@ -56,15 +61,61 @@ func systemdUnitContent(binaryPath, configPath, pathEnv string) string {
 }
 
 func resolveServiceBinaryPath() (string, error) {
-	exe, err := os.Executable()
+	exe, err := resolveSelfExecutablePath()
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(exe)
-	if err == nil {
-		return resolved, nil
+	return stableServiceBinaryPath(exe), nil
+}
+
+var (
+	unitConfigPattern = regexp.MustCompile(`--config "((?:[^"\\]|\\.)*)"`)
+	unitPathPattern   = regexp.MustCompile(`(?m)^Environment="PATH=((?:[^"\\]|\\.)*)"$`)
+)
+
+func systemdUnquote(value string) string {
+	var b strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] == '\\' && i+1 < len(value) {
+			i++
+		}
+		b.WriteByte(value[i])
 	}
-	return filepath.Abs(exe)
+	return strings.ReplaceAll(b.String(), "%%", "%")
+}
+
+// existingUnitSettings recovers the config path and PATH from a unit this
+// command wrote earlier, so rewriting it keeps the user's choices.
+func existingUnitSettings(unit string) (configPath, pathEnv string) {
+	if match := unitConfigPattern.FindStringSubmatch(unit); match != nil {
+		configPath = systemdUnquote(match[1])
+	}
+	if match := unitPathPattern.FindStringSubmatch(unit); match != nil {
+		pathEnv = systemdUnquote(match[1])
+	}
+	return configPath, pathEnv
+}
+
+// serviceRunsBinary reports whether the service's main process runs binaryPath.
+// Unknown counts as yes, so an unreadable state never causes a restart.
+func serviceRunsBinary(binaryPath string) bool {
+	out, err := exec.Command("systemctl", "--user", "show", "--property=MainPID", "--value", systemdUnitName).Output()
+	if err != nil {
+		return true
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		return true
+	}
+	running, err := os.Stat(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
+	if err != nil {
+		return true
+	}
+	wanted, err := os.Stat(binaryPath)
+	if err != nil {
+		return true
+	}
+	return os.SameFile(running, wanted)
 }
 
 func installSystemdService(configPath string) (string, error) {
@@ -153,7 +204,11 @@ func uninstallSystemdService() error {
 	return nil
 }
 
-func restartSystemdServiceIfActive() (bool, error) {
+// syncSystemdService moves an installed service onto binaryPath. It rewrites
+// units from older releases (versioned mise paths, no upgrade watch), and
+// restarts an active service when its unit changed or it still runs an older
+// binary. A stopped service stays stopped.
+func syncSystemdService(binaryPath string) (bool, error) {
 	if !systemdAvailable() {
 		return false, nil
 	}
@@ -161,10 +216,25 @@ func restartSystemdServiceIfActive() (bool, error) {
 	if err != nil {
 		return false, nil
 	}
-	if _, err := os.Stat(unitPath); err != nil {
+	current, err := os.ReadFile(unitPath)
+	if err != nil {
 		return false, nil
 	}
+	configPath, pathEnv := existingUnitSettings(string(current))
+	changed := false
+	if wanted := systemdUnitContent(binaryPath, configPath, pathEnv); wanted != string(current) {
+		if err := os.WriteFile(unitPath, []byte(wanted), 0o644); err != nil {
+			return false, fmt.Errorf("update %s: %w", unitPath, err)
+		}
+		if out, err := exec.Command("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
+			return false, fmt.Errorf("systemctl --user daemon-reload failed: %s", strings.TrimSpace(string(out)))
+		}
+		changed = true
+	}
 	if err := exec.Command("systemctl", "--user", "is-active", "--quiet", systemdUnitName).Run(); err != nil {
+		return false, nil
+	}
+	if !changed && serviceRunsBinary(binaryPath) {
 		return false, nil
 	}
 	if out, err := exec.Command("systemctl", "--user", "restart", systemdUnitName).CombinedOutput(); err != nil {

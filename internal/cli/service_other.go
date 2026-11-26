@@ -15,7 +15,7 @@ func installSystemdService(string) (string, error) {
 	return "", fmt.Errorf("systemd user service installation is only supported on Linux")
 }
 
-func restartSystemdServiceIfActive() (bool, error) {
+func syncSystemdService(string) (bool, error) {
 	return false, nil
 }
 
