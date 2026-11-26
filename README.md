@@ -106,7 +106,7 @@ tailscale serve --bg http://127.0.0.1:8787
 ./check-usage server service uninstall
 ```
 
-> **Note:** To start the user service at boot and keep it running after logout, enable user lingering for this account through your homelab's normal host administration.
+> **Note:** Without user lingering, systemd stops the service when your last login session on the host ends, and remote devices can no longer reach the server. `service install`, `server setup`, and `cu update` enable it with `loginctl enable-linger` when allowed; otherwise they print the `sudo loginctl enable-linger <user>` command to run.
 
 **Live updates:** Server account files use cross-process locking and atomic writes, so you can run `server accounts ...`, `server pair`, and `server devices ...` while the server or systemd service is running.
 

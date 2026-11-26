@@ -95,6 +95,48 @@ func installSystemdService(configPath string) (string, error) {
 	return unitPath, nil
 }
 
+// lingerEnabled reports whether systemd keeps this user's services running
+// without an active login session. Unknown (no loginctl) counts as enabled so
+// hosts without logind are not warned about.
+func lingerEnabled(user string) bool {
+	if _, err := exec.LookPath("loginctl"); err != nil {
+		return true
+	}
+	out, err := exec.Command("loginctl", "show-user", user, "--property=Linger", "--value").Output()
+	if err != nil {
+		// show-user fails when the user has no session and lingering is off.
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "yes"
+}
+
+// ensureLinger enables lingering for the current user. Without it, systemd
+// stops the user service when the last SSH session closes, so remote clients
+// can only reach the server while someone is logged in to it.
+// It returns a user-facing warning when lingering stays off.
+func ensureLinger() string {
+	user := currentUserName()
+	if user == "" || lingerEnabled(user) {
+		return ""
+	}
+	if err := exec.Command("loginctl", "enable-linger", user).Run(); err == nil && lingerEnabled(user) {
+		fmt.Println("  Enabled user lingering so the server keeps running after you log out.")
+		return ""
+	}
+	return fmt.Sprintf("user lingering is off, so systemd stops the server when you log out of this host.\n  Fix: sudo loginctl enable-linger %s", user)
+}
+
+func currentUserName() string {
+	if name := strings.TrimSpace(os.Getenv("USER")); name != "" {
+		return name
+	}
+	out, err := exec.Command("id", "-un").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func uninstallSystemdService() error {
 	if !systemdAvailable() {
 		return fmt.Errorf("systemctl is not installed on this host")
@@ -128,6 +170,10 @@ func restartSystemdServiceIfActive() (bool, error) {
 	if out, err := exec.Command("systemctl", "--user", "restart", systemdUnitName).CombinedOutput(); err != nil {
 		return true, fmt.Errorf("systemctl --user restart %s failed: %s", systemdUnitName, strings.TrimSpace(string(out)))
 	}
+	// Existing installs predate automatic lingering; fix them on update.
+	if warning := ensureLinger(); warning != "" {
+		fmt.Fprintln(os.Stderr, "warning:", warning)
+	}
 	return true, nil
 }
 
@@ -145,12 +191,17 @@ func runServerServiceCommand(configPath string, args []string) int {
 		}
 		fmt.Println("Installed and started systemd user service:", unitPath)
 		fmt.Println("View logs with: journalctl --user -u check-usage.service -f")
-		fmt.Println("Tip: enable user lingering if you want the service to start at boot without logging in.")
+		if warning := ensureLinger(); warning != "" {
+			fmt.Fprintln(os.Stderr, "warning:", warning)
+		}
 		return 0
 	case "status":
 		if !systemdAvailable() {
 			fmt.Fprintln(os.Stderr, "error: systemctl is not installed on this host")
 			return 1
+		}
+		if user := currentUserName(); user != "" && !lingerEnabled(user) {
+			fmt.Fprintf(os.Stderr, "warning: user lingering is off, so systemd stops the server when you log out of this host.\n  Fix: sudo loginctl enable-linger %s\n\n", user)
 		}
 		cmd := exec.Command("systemctl", "--user", "status", "--no-pager", systemdUnitName)
 		cmd.Stdout = os.Stdout

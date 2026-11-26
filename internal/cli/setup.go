@@ -373,6 +373,9 @@ configureNetwork:
 				serviceStarted = true
 				fmt.Println("  Installed and started:", unitPath)
 				fmt.Println("  Logs: journalctl --user -u check-usage.service -f")
+				if warning := ensureLinger(); warning != "" {
+					fmt.Fprintln(os.Stderr, "  warning:", warning)
+				}
 			}
 		}
 	}
