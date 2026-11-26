@@ -19,6 +19,10 @@ func restartSystemdServiceIfActive() (bool, error) {
 	return false, nil
 }
 
+func ensureLinger() string {
+	return ""
+}
+
 func runServerServiceCommand(string, []string) int {
 	fmt.Fprintln(os.Stderr, "error: server service management is only supported on Linux with systemd")
 	return 1

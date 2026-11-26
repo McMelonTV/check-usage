@@ -38,6 +38,17 @@ class ServerModelsTest {
         }
     }
 
+    @Test fun proxyErrorsWithoutServerIdAreNotIdentityChanges() {
+        checkServerIdentity("abc", 200, "abc")
+        checkServerIdentity("", 502, null)
+        val proxy = runCatching { checkServerIdentity("abc", 502, null) }.exceptionOrNull()
+        assertTrue(proxy?.message.orEmpty().contains("unavailable (HTTP 502"))
+        val foreign = runCatching { checkServerIdentity("abc", 200, null) }.exceptionOrNull()
+        assertTrue(foreign?.message.orEmpty().contains("did not come from a check-usage server"))
+        val changed = runCatching { checkServerIdentity("abc", 200, "xyz") }.exceptionOrNull()
+        assertTrue(changed?.message.orEmpty().contains("identity changed"))
+    }
+
     @Test fun pairingInviteParsesValidLinksAndRejectsUnsafeURLs() {
         val invite = parsePairingInvite("check-usage://pair?url=https%3A%2F%2Fhomelab.tail123.ts.net%2F&code=abc123XYZ")
         assertEquals(PairingInvite("https://homelab.tail123.ts.net", "abc123XYZ"), invite)

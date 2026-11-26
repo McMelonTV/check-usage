@@ -150,8 +150,10 @@ func (client *Client) request(ctx context.Context, method, path string, input, o
 		return fmt.Errorf("cannot reach usage server: %w", err)
 	}
 	defer response.Body.Close()
-	if path != "/v1/pair" && client.Config.ServerID != "" && response.Header.Get("X-Check-Usage-Server-ID") != client.Config.ServerID {
-		return errors.New("server identity changed; reconnect explicitly")
+	if path != "/v1/pair" {
+		if err := checkServerIdentity(client.Config.ServerID, response); err != nil {
+			return err
+		}
 	}
 	if response.StatusCode == 401 {
 		return errors.New("device authorization rejected; pair again or check whether this device was revoked")
@@ -171,6 +173,29 @@ func (client *Client) request(ctx context.Context, method, path string, input, o
 	}
 	return nil
 }
+
+// checkServerIdentity verifies the response came from the paired server. A
+// response without the server-ID header did not come from check-usage at all
+// (typically a Tailscale Serve or reverse-proxy error page while the server is
+// restarting or unreachable), so it is reported as unavailable rather than as
+// an identity change. Successful responses must always carry the header.
+func checkServerIdentity(serverID string, response *http.Response) error {
+	if serverID == "" {
+		return nil
+	}
+	got := response.Header.Get("X-Check-Usage-Server-ID")
+	if got == "" {
+		if response.StatusCode == http.StatusOK {
+			return errors.New("response did not come from a check-usage server; check the server URL")
+		}
+		return fmt.Errorf("usage server is unavailable (HTTP %d from proxy); is `check-usage server serve` running?", response.StatusCode)
+	}
+	if got != serverID {
+		return errors.New("server identity changed; reconnect explicitly")
+	}
+	return nil
+}
+
 func Pair(ctx context.Context, address, code string, httpClient *http.Client) (Config, error) {
 	client, err := New(Config{URL: address, Token: "pairing"}, httpClient)
 	if err != nil {

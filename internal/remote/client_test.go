@@ -3,6 +3,7 @@ package remote
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -44,6 +45,36 @@ func TestClientRejectsChangedServerIdentity(t *testing.T) {
 	}
 	if _, err := client.Accounts(t.Context()); err == nil {
 		t.Fatal("RPC accepted a different server")
+	}
+}
+
+func TestClientReportsProxyErrorsWithoutServerIDAsUnavailable(t *testing.T) {
+	cases := []struct {
+		status int
+		header string
+		want   string
+	}{
+		{status: http.StatusBadGateway, want: "unavailable (HTTP 502"},
+		{status: http.StatusOK, want: "did not come from a check-usage server"},
+		{status: http.StatusBadGateway, header: "replacement-server", want: "identity changed"},
+	}
+	for _, tc := range cases {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tc.header != "" {
+				w.Header().Set("X-Check-Usage-Server-ID", tc.header)
+			}
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(`{"server_id":"paired-server","protocol_version":"2.0"}`))
+		}))
+		client, err := New(Config{URL: server.URL, Token: "device-secret", ServerID: "paired-server"}, server.Client())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.Accounts(t.Context())
+		server.Close()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("status %d header %q: got %v, want %q", tc.status, tc.header, err, tc.want)
+		}
 	}
 }
 
