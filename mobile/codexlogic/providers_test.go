@@ -49,6 +49,19 @@ func TestMobileOpenCodeRetainsAllThreeWindows(t *testing.T) {
 		t.Fatalf("lost monthly metric: %+v", result.Usage)
 	}
 }
+func TestMobileFireworksIsAnAPIKeyProvider(t *testing.T) {
+	fixtureClient(t, func(r *http.Request) (int, string) {
+		if r.URL.Path != "/verifyApiKey" || r.Header.Get("Authorization") != "Bearer fixture-key" {
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+		return 401, `{"error":"invalid key"}`
+	})
+	result := decodeSnapshot(t, "fireworks", ProviderCredentials{APIKey: "fixture-key"})
+	if !strings.HasPrefix(result.Error, "authentication required:") || len(result.Usage.Metrics) != 0 {
+		t.Fatalf("bad authentication error: %+v", result)
+	}
+}
+
 func TestMobileDeepSeekReturnsBalanceWithoutNullMetrics(t *testing.T) {
 	fixtureClient(t, func(r *http.Request) (int, string) {
 		return 200, `{"is_available":true,"balance_infos":[{"currency":"USD","total_balance":"12.34"}]}`

@@ -14,7 +14,10 @@ Run the server on your homelab alongside your signed-in AI CLIs and provider cre
 | **Cursor** | Browser login or API key | `server accounts login --provider cursor` or `server accounts add --provider cursor` |
 | **OpenCode Go** | API key | `server accounts add --provider opencode-go` |
 | **DeepSeek** | API key | `server accounts add --provider deepseek` |
+| **Fireworks Nexus** (Pro/Team) | API key | `server accounts add --provider fireworks` |
 | **Custom adapter** | Trusted admin JSON executable | `server accounts native --provider ID --source-file ...` |
+
+Fireworks Nexus uses the key minted by `nexus login` (or created under Settings in the Nexus app); on the server, `nexus key export` prints the stored key. Pro and Team seats show the 5-hour session window and the monthly included-usage window; Enterprise is usage-based and reports only its plan. Browser-sign-in keys expire after 7 days, so refresh the account when `nexus login` renews it. Nexus and Fireworks platform accounts are separate, so a platform API key will not report Nexus usage.
 
 ## Install
 
@@ -125,6 +128,7 @@ All provider credentials and source configurations are managed locally on the se
 ./check-usage server accounts login --provider codex --name "OpenAI API"
 ./check-usage server accounts add --provider opencode-go   # Prompts securely or reads OPENCODE_API_KEY
 ./check-usage server accounts add --provider deepseek --api-key-env DEEPSEEK_API_KEY
+./check-usage server accounts add --provider fireworks --api-key-env FIREWORKS_NEXUS_API_KEY  # Nexus key from `nexus login` or Nexus Settings
 ./check-usage server accounts add --provider cursor --api-key-env CURSOR_API_KEY
 ./check-usage server accounts reauth <id-or-name>
 ```

@@ -127,7 +127,7 @@ func FetchProviderUsage(provider, credentialsJSON string) (string, error) {
 		}
 	case providers.Cursor:
 		result.Usage, result.Credentials.AccessToken, err = providers.FetchCursorUsage(ctx, client, credentials.APIKey, credentials.AccessToken, now)
-	case providers.OpenCodeGo, providers.DeepSeek:
+	case providers.OpenCodeGo, providers.DeepSeek, providers.Fireworks:
 		result.Usage, err = providers.FetchAPIKeyUsage(ctx, client, provider, credentials.APIKey, "usage-widgets/0.1.0")
 	default:
 		return "", fmt.Errorf("unknown usage provider: %q", provider)

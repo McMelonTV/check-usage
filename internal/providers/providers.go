@@ -20,6 +20,7 @@ const (
 	Claude      = "claude"
 	Cursor      = "cursor"
 	Antigravity = "antigravity"
+	Fireworks   = "fireworks"
 )
 
 type CredentialMode string
@@ -45,6 +46,7 @@ var definitions = []Definition{
 	{ID: Claude, Name: "Claude", Credentials: OAuthCode, SupportsResetCredits: true},
 	{ID: OpenCodeGo, Name: "OpenCode", Plan: "Go", Credentials: APIKey},
 	{ID: DeepSeek, Name: "DeepSeek", Credentials: APIKey},
+	{ID: Fireworks, Name: "Fireworks Nexus", Credentials: APIKey},
 	{ID: Cursor, Name: "Cursor", Credentials: APIKey},
 	{ID: Antigravity, Name: "Antigravity", Credentials: Native},
 }
@@ -131,6 +133,8 @@ func FetchAPIKeyUsage(ctx context.Context, client *http.Client, providerID, key,
 		return fetchOpenCodeGo(ctx, client, key, userAgent)
 	case DeepSeek:
 		return fetchDeepSeek(ctx, client, key, userAgent)
+	case Fireworks:
+		return fetchFireworksNexus(ctx, client, key, userAgent)
 	default:
 		return Usage{}, fmt.Errorf("provider %q does not support API-key usage", providerID)
 	}
@@ -240,16 +244,20 @@ func doJSON(client *http.Client, request *http.Request, operation string, output
 		return err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		message := strings.TrimSpace(string(body))
-		if len(message) > 300 {
-			message = message[:300] + "..."
-		}
-		return &HTTPError{Operation: operation, StatusCode: response.StatusCode, Status: response.Status, Body: message}
+		return &HTTPError{Operation: operation, StatusCode: response.StatusCode, Status: response.Status, Body: httpErrorBody(body)}
 	}
 	if err := json.Unmarshal(body, output); err != nil {
 		return fmt.Errorf("decode %s response: %w", operation, err)
 	}
 	return nil
+}
+
+func httpErrorBody(body []byte) string {
+	message := strings.TrimSpace(string(body))
+	if len(message) > 300 {
+		message = message[:300] + "..."
+	}
+	return message
 }
 
 func clampPercent(value float64) float64 {
