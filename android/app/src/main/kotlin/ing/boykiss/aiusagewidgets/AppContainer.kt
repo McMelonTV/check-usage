@@ -17,6 +17,7 @@ class AppContainer(context: Context) {
     val providers = ProviderRegistry(listOf(
         "codex" to "Codex", "claude" to "Claude", "cursor" to "Cursor",
         "opencode-go" to "OpenCode", "deepseek" to "DeepSeek", "antigravity" to "Antigravity",
+        "fireworks" to "Fireworks Nexus",
     ).map { (id, name) -> ServerUsageProvider(id, name, server) })
     val repository = UsageRepository(database.dao(), providers, server)
 

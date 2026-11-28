@@ -57,12 +57,12 @@ func runAccountsCommand(args []string) int {
 }
 
 func accountProviderFlag(fs *flag.FlagSet) *string {
-	return fs.String("provider", "", "provider: codex, claude, opencode-go, deepseek, cursor, or antigravity")
+	return fs.String("provider", "", "provider: codex, claude, opencode-go, deepseek, fireworks, cursor, or antigravity")
 }
 
 func selectedProvider(id string) (usage.ProviderDefinition, error) {
 	if strings.TrimSpace(id) == "" {
-		return usage.ProviderDefinition{}, fmt.Errorf("--provider is required; choose: codex, claude, opencode-go, deepseek, cursor, antigravity")
+		return usage.ProviderDefinition{}, fmt.Errorf("--provider is required; choose: codex, claude, opencode-go, deepseek, fireworks, cursor, antigravity")
 	}
 	return usage.ProviderFor(id)
 }
@@ -669,7 +669,7 @@ func printAccountsCommandUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  check-usage server accounts native --driver agy|codex|json [--provider id] [--name name] [--account id] [--source-file path] [--fallback]")
 	fmt.Println("  check-usage server accounts list [--accounts-file path]")
-	fmt.Println("  check-usage server accounts add [--accounts-file path] --provider opencode-go|deepseek|cursor (--api-key key|--api-key-env name) [--name name]")
+	fmt.Println("  check-usage server accounts add [--accounts-file path] --provider opencode-go|deepseek|fireworks|cursor (--api-key key|--api-key-env name) [--name name]")
 	fmt.Println("  check-usage server accounts login [--accounts-file path] --provider codex|claude|cursor [--name name] [--timeout seconds] [--no-browser] [--auth-flow device|browser]")
 	fmt.Println("  check-usage server accounts reauth [--accounts-file path] [--api-key key|--api-key-env name] [--timeout seconds] [--no-browser] [--auth-flow device|browser] <id-or-name>")
 	fmt.Println("  check-usage server accounts remove [--accounts-file path] <id-or-name>")

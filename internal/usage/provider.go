@@ -77,6 +77,8 @@ func emptyProviderMetrics(providerID string) []providers.Metric {
 		return []providers.Metric{{Kind: providers.Percentage, Slot: providers.SessionSlot, Label: "SESSION"}, {Kind: providers.Percentage, Slot: providers.WeeklySlot, Label: "WEEKLY"}, {Kind: providers.Percentage, Slot: providers.MonthlySlot, Label: "MONTHLY"}}
 	case providers.DeepSeek:
 		return nil
+	case providers.Fireworks:
+		return []providers.Metric{{Kind: providers.Percentage, Slot: providers.SessionSlot, Label: "SESSION"}, {Kind: providers.Percentage, Slot: providers.MonthlySlot, Label: "MONTHLY"}}
 	case providers.Cursor:
 		return providers.CursorMetrics()
 	case providers.Antigravity:

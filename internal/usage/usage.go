@@ -308,6 +308,8 @@ func providerSupportsUsageSlot(providerID string, slot providers.MetricSlot) boo
 		return slot == providers.SessionSlot || slot == providers.WeeklySlot
 	case providers.OpenCodeGo:
 		return slot == providers.SessionSlot || slot == providers.WeeklySlot || slot == providers.MonthlySlot
+	case providers.Fireworks:
+		return slot == providers.SessionSlot || slot == providers.MonthlySlot
 	case providers.Cursor:
 		return slot == providers.MonthlySlot
 	default:

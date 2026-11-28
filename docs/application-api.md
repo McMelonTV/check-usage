@@ -97,7 +97,7 @@ The local interface exposes `rpc.discover`, account list/rename/removal, usage, 
 
 | Local-only method | Params | Result |
 | --- | --- | --- |
-| `accounts.api_key.save` | `{"account":"optional id/name","provider":"opencode-go/deepseek/cursor","api_key":"...","name":"optional"}` | Public account mutation |
+| `accounts.api_key.save` | `{"account":"optional id/name","provider":"opencode-go/deepseek/fireworks/cursor","api_key":"...","name":"optional"}` | Public account mutation |
 | `auth.device.begin` | `{"provider":"codex"}` | Session ID, user code, verification URL and polling interval |
 | `auth.device.poll` | `{"provider":"codex","session_id":"...","user_code":"...","name":"optional"}` | `pending`, or `complete` with persisted public account |
 | `auth.oauth.begin` | `{"provider":"claude"}` | Session ID and authorization URL |

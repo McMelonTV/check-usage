@@ -291,7 +291,8 @@ func runSmartServerAccountsAdd(config remoteserver.Config, args []string) (int, 
 		fmt.Println("  4) Cursor      (browser login or API key)")
 		fmt.Println("  5) OpenCode Go (API key)")
 		fmt.Println("  6) DeepSeek    (API key)")
-		choice, err := promptLine("Choose [1-6]", "")
+		fmt.Println("  7) Fireworks Nexus (API key)")
+		choice, err := promptLine("Choose [1-7]", "")
 		if err != nil || choice == "" {
 			return 0, true
 		}
@@ -353,6 +354,12 @@ func runSmartServerAccountsAdd(config remoteserver.Config, args []string) (int, 
 			return 0, true
 		case "6", "deepseek":
 			if err := addAPIKeyInteractive(config.AccountsFile, providers.DeepSeek, "DeepSeek"); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				return 1, true
+			}
+			return 0, true
+		case "7", "fireworks":
+			if err := addAPIKeyInteractive(config.AccountsFile, providers.Fireworks, "Fireworks Nexus"); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				return 1, true
 			}

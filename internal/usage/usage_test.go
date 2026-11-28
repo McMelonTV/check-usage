@@ -210,3 +210,16 @@ func TestClaudeRateLimitSetsBackoff(t *testing.T) {
 		t.Fatalf("next fetch = %v, err = %v", result.NextFetchAt, err)
 	}
 }
+
+func TestFireworksSupportsSessionAndMonthlySlots(t *testing.T) {
+	row := BaseRow(storage.Account{Provider: providers.Fireworks})
+	if len(row.Metrics) != 2 || row.Metrics[0].Slot != providers.SessionSlot || row.Metrics[1].Slot != providers.MonthlySlot {
+		t.Fatalf("metrics = %#v", row.Metrics)
+	}
+	if !providerSupportsUsageSlot(providers.Fireworks, providers.SessionSlot) || !providerSupportsUsageSlot(providers.Fireworks, providers.MonthlySlot) {
+		t.Fatal("session and monthly slots should be supported")
+	}
+	if providerSupportsUsageSlot(providers.Fireworks, providers.WeeklySlot) {
+		t.Fatal("weekly slot should not be supported")
+	}
+}

@@ -61,7 +61,11 @@ class SharedUsageProvider(
     private val json: Json,
 ) : UsageProvider, ProviderAuthenticator, ProviderUsageSource {
     override val descriptor = ProviderDescriptor(ProviderId(id), name, true,
-        if (id == "deepseek") emptySet() else setOf(UsageMetricKind.SHORT_WINDOW, UsageMetricKind.LONG_WINDOW, UsageMetricKind.MONTHLY_WINDOW))
+        when (id) {
+            "deepseek" -> emptySet()
+            "fireworks" -> setOf(UsageMetricKind.SHORT_WINDOW, UsageMetricKind.MONTHLY_WINDOW)
+            else -> setOf(UsageMetricKind.SHORT_WINDOW, UsageMetricKind.LONG_WINDOW, UsageMetricKind.MONTHLY_WINDOW)
+        })
     override val authenticator: ProviderAuthenticator get() = this
     override val usageSource: ProviderUsageSource get() = this
 

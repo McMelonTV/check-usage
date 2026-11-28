@@ -73,6 +73,126 @@ func response(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }
 
+func responseWithHeaders(status int, body string, headers map[string]string) *http.Response {
+	result := response(status, body)
+	for key, value := range headers {
+		result.Header.Set(key, value)
+	}
+	return result
+}
+
+func TestFireworksDefinition(t *testing.T) {
+	definition, ok := Get(Fireworks)
+	if !ok || definition.Name != "Fireworks Nexus" || definition.Credentials != APIKey {
+		t.Fatalf("definition = %#v", definition)
+	}
+}
+
+func TestFetchFireworksNexusUsage(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Authorization") != "Bearer key" {
+			t.Fatalf("missing authorization on %s", request.URL)
+		}
+		switch request.URL.Path {
+		case "/verifyApiKey":
+			return responseWithHeaders(http.StatusOK, "", map[string]string{
+				"x-fireworks-account-id":      "accounts/acme",
+				"x-fireworks-developer-email": "dev@example.com",
+			}), nil
+		case "/v1/accounts/acme/nexusPlans":
+			if request.URL.Query().Get("pageSize") != "10" {
+				t.Fatalf("plan query = %s", request.URL.RawQuery)
+			}
+			return response(http.StatusOK, `{"nexusPlans":[{"tier":"PRO","state":"ACTIVE"}]}`), nil
+		case "/v1/accounts/acme/users":
+			if request.URL.Query().Get("filter") != `email="dev@example.com"` {
+				t.Fatalf("user filter = %q", request.URL.Query().Get("filter"))
+			}
+			return response(http.StatusOK, `{"users":[{"name":"accounts/acme/users/dev"}]}`), nil
+		case "/v1/accounts/acme/users/dev/nexusPlanUsage":
+			return response(http.StatusOK, `{"monthly":{"usedPercent":12.5,"endTime":"2026-12-06T00:00:00Z"},"rollingWindow":{"usedPercent":80.25,"endTime":"2026-11-28T14:48:26Z"}}`), nil
+		}
+		t.Fatalf("unexpected request %s", request.URL)
+		return nil, nil
+	})}
+	usage, err := FetchAPIKeyUsage(t.Context(), client, Fireworks, "key", "test")
+	if err != nil || usage.Plan != "Pro" || len(usage.Metrics) != 2 {
+		t.Fatalf("usage = %#v, error = %v", usage, err)
+	}
+	session, monthly := usage.Metrics[0], usage.Metrics[1]
+	if session.Slot != SessionSlot || session.Used == nil || *session.Used != 80.25 || session.ResetAt == nil || *session.ResetAt != time.Date(2026, 11, 28, 14, 48, 26, 0, time.UTC).Unix() {
+		t.Fatalf("session = %#v", session)
+	}
+	if monthly.Slot != MonthlySlot || monthly.Used == nil || *monthly.Used != 12.5 || monthly.ResetAt == nil || *monthly.ResetAt != time.Date(2026, 12, 6, 0, 0, 0, 0, time.UTC).Unix() {
+		t.Fatalf("monthly = %#v", monthly)
+	}
+}
+
+func TestFetchFireworksNexusEnterpriseSkipsSeatWindows(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/verifyApiKey":
+			return responseWithHeaders(http.StatusOK, "", map[string]string{
+				"x-fireworks-account-id":      "acme",
+				"x-fireworks-developer-email": "dev@example.com",
+			}), nil
+		case "/v1/accounts/acme/nexusPlans":
+			return response(http.StatusOK, `{"nexusPlans":[{"tier":"ENTERPRISE","state":"ACTIVE"}]}`), nil
+		}
+		t.Fatalf("unexpected request %s", request.URL)
+		return nil, nil
+	})}
+	usage, err := FetchAPIKeyUsage(t.Context(), client, Fireworks, "key", "test")
+	if err != nil || usage.Plan != "Enterprise" || len(usage.Metrics) != 0 {
+		t.Fatalf("usage = %#v, error = %v", usage, err)
+	}
+}
+
+func TestFetchFireworksNexusRejectsInvalidKey(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/verifyApiKey" {
+			t.Fatalf("unexpected request %s", request.URL)
+		}
+		return response(http.StatusUnauthorized, `{"error":"invalid key"}`), nil
+	})}
+	_, err := FetchAPIKeyUsage(t.Context(), client, Fireworks, "bad", "test")
+	if !IsCredentialError(err) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestFetchFireworksNexusRequiresActivePlan(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/verifyApiKey":
+			return responseWithHeaders(http.StatusOK, "", map[string]string{"x-fireworks-account-id": "acme"}), nil
+		case "/v1/accounts/acme/nexusPlans":
+			return response(http.StatusOK, `{"nexusPlans":[{"tier":"PRO","state":"ENDED"}]}`), nil
+		}
+		t.Fatalf("unexpected request %s", request.URL)
+		return nil, nil
+	})}
+	if _, err := FetchAPIKeyUsage(t.Context(), client, Fireworks, "key", "test"); err == nil {
+		t.Fatal("ended plan was accepted")
+	}
+}
+
+func TestFetchFireworksNexusRequiresUserEmail(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/verifyApiKey":
+			return responseWithHeaders(http.StatusOK, "", map[string]string{"x-fireworks-account-id": "acme"}), nil
+		case "/v1/accounts/acme/nexusPlans":
+			return response(http.StatusOK, `{"nexusPlans":[{"tier":"TEAMS","state":"ACTIVE"}]}`), nil
+		}
+		t.Fatalf("unexpected request %s", request.URL)
+		return nil, nil
+	})}
+	if _, err := FetchAPIKeyUsage(t.Context(), client, Fireworks, "key", "test"); err == nil {
+		t.Fatal("service-account key without an email was accepted")
+	}
+}
+
 func TestFetchClaudeUsageMapsWindowsAndPlan(t *testing.T) {
 	now := time.Unix(1000, 0)
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {

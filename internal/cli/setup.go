@@ -110,6 +110,8 @@ func defaultAPIKeyEnvName(providerID string) string {
 		return "OPENCODE_API_KEY"
 	case providers.DeepSeek:
 		return "DEEPSEEK_API_KEY"
+	case providers.Fireworks:
+		return "FIREWORKS_NEXUS_API_KEY"
 	case providers.Cursor:
 		return "CURSOR_API_KEY"
 	default:
@@ -256,6 +258,7 @@ func runServerSetup(configPath string, args []string) int {
 		fmt.Println("  4) DeepSeek       (API key)")
 		fmt.Println("  5) Codex          (native CLI or OAuth)")
 		fmt.Println("  6) Antigravity    (native agy CLI)")
+		fmt.Println("  7) Fireworks Nexus (API key)")
 		fmt.Println("  0) Done")
 		choice, err := promptLine("Choose", "0")
 		if err != nil {
@@ -316,8 +319,12 @@ func runServerSetup(configPath string, args []string) int {
 			if err := registerNativeInteractive(config, providers.Antigravity, "agy", "Google"); err != nil {
 				fmt.Fprintln(os.Stderr, "  error:", err)
 			}
+		case "7", "fireworks":
+			if err := addAPIKeyInteractive(config.AccountsFile, providers.Fireworks, "Fireworks Nexus"); err != nil {
+				fmt.Fprintln(os.Stderr, "  error:", err)
+			}
 		default:
-			fmt.Println("  Unknown choice; enter 1-6 or 0 to continue.")
+			fmt.Println("  Unknown choice; enter 1-7 or 0 to continue.")
 		}
 		fmt.Println()
 	}
