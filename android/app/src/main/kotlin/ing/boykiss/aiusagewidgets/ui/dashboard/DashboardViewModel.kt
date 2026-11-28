@@ -13,6 +13,11 @@ import ing.boykiss.aiusagewidgets.widget.WidgetUpdater
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
+enum class DashboardLayout(val label: String) {
+    INLINE("Inline"),
+    TILES("Tiles"),
+}
+
 data class DashboardState(
     val accounts: List<ProviderAccount> = emptyList(),
     val providers: List<ProviderDescriptor> = emptyList(),
@@ -41,11 +46,13 @@ data class DashboardState(
     val pairingServer: Boolean = false,
     val serverError: String? = null,
     val canManageAccounts: Boolean = false,
+    val layout: DashboardLayout = DashboardLayout.INLINE,
 ) {
     val snapshot: ProviderUsageSnapshot? get() = resetAccount?.let { snapshots[it.id.value] }
 }
 
 sealed interface DashboardEvent {
+    data class SetLayout(val layout: DashboardLayout) : DashboardEvent
     data object ConfigureServer : DashboardEvent
     data object CloseServerDialog : DashboardEvent
     data class ReceivePairingInvite(val url: String, val code: String) : DashboardEvent
@@ -71,12 +78,15 @@ sealed interface DashboardEvent {
 }
 
 class DashboardViewModel(private val container: AppContainer, private val context: Context) : ViewModel() {
+    private val preferences = context.getSharedPreferences("dashboard", Context.MODE_PRIVATE)
     private val mutable = MutableStateFlow(DashboardState(
         providers = container.providers.all().map { it.descriptor },
         serverConfigured = container.server.configured,
         serverAddress = container.server.address,
         serverDialog = !container.server.configured,
         canManageAccounts = container.server.connections.get()?.access == "write",
+        layout = DashboardLayout.entries.firstOrNull { it.name == preferences.getString("layout", null) }
+            ?: DashboardLayout.INLINE,
     ))
     val state = mutable.asStateFlow()
     private var refreshJob: Job? = null
@@ -107,6 +117,10 @@ class DashboardViewModel(private val container: AppContainer, private val contex
 
     fun onEvent(event: DashboardEvent) {
         when (event) {
+            is DashboardEvent.SetLayout -> {
+                preferences.edit().putString("layout", event.layout.name).apply()
+                mutable.update { it.copy(layout = event.layout) }
+            }
             DashboardEvent.ConfigureServer -> mutable.update {
                 it.copy(serverDialog = true, serverError = null, pendingServerAddress = null, pendingPairCode = null, inviteFromLink = false)
             }
