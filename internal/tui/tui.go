@@ -1211,14 +1211,14 @@ func (m Model) updateAuthMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) usageMouseRowIndex(y int) (int, bool) {
 	width := tuiContentWidth(m.width)
-	height := max(1, m.height-2)
-	if m.notice != "" || m.editingName {
-		height = max(1, height-2)
-	}
+	height := m.usageListHeight(width, max(1, m.height-2))
 	wide := width >= tuiWideAt
 	currentY := 5
 	if wide {
 		currentY = 7
+	}
+	if m.err != nil {
+		currentY += lipgloss.Height(m.renderRefreshWarning(width, m.err))
 	}
 	start, end := m.usageVisibleRange(width, height)
 	for index := start; index < end; index++ {
@@ -1775,11 +1775,7 @@ func (m Model) renderUsageTab(width, height int) string {
 		}
 		return m.renderEmpty(width, "No accounts yet", body)
 	}
-	listHeight := height
-	if m.notice != "" || m.editingName {
-		listHeight = max(1, height-2)
-	}
-	accountList := m.renderAccountList(width, listHeight)
+	accountList := m.renderAccountList(width, m.usageListHeight(width, height))
 	if m.editingName {
 		return strings.TrimRight(accountList, "\n") + "\n\n" + m.renderNameEditor(width)
 	}
@@ -1787,6 +1783,16 @@ func (m Model) renderUsageTab(width, height int) string {
 		return strings.TrimRight(accountList, "\n") + "\n\n" + noticeStyle(m.notice).Render(ansi.Truncate(m.notice, width, "…"))
 	}
 	return accountList
+}
+
+func (m Model) usageListHeight(width, height int) int {
+	if m.editingName {
+		return max(1, height-1-lipgloss.Height(m.renderNameEditor(width)))
+	}
+	if m.notice != "" {
+		return max(1, height-2)
+	}
+	return height
 }
 
 func (m Model) renderNameEditor(width int) string {
@@ -2638,7 +2644,25 @@ func (m Model) usageVisibleRange(width, height int) (int, int) {
 		return 0, 0
 	}
 	wide := width >= tuiWideAt
-	budget := max(1, height-15)
+	// Height excludes the outer shell margins. Reserve only the lines actually
+	// rendered around the accounts, including a range hint when scrolling.
+	overhead := lipgloss.Height(m.renderHeader(width)) + lipgloss.Height(m.renderFooter(width)) + 1
+	if wide {
+		overhead += 2 // Column headings and their following blank line.
+	}
+	if m.err != nil {
+		overhead += lipgloss.Height(m.renderRefreshWarning(width, m.err))
+	}
+	budget := max(1, height-overhead)
+	if wide {
+		totalHeight := 0
+		for _, row := range m.rows {
+			totalHeight += m.usageRowHeight(row, wide)
+		}
+		if totalHeight > budget {
+			budget = max(1, budget-1)
+		}
+	}
 	selected := max(0, min(m.cursor, len(m.rows)-1))
 	start, end := selected, selected+1
 	used := m.usageRowHeight(m.rows[selected], wide)

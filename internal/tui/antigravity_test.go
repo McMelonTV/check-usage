@@ -48,9 +48,9 @@ func TestAntigravityAllFourLimitsRenderAndSelectOneAccount(t *testing.T) {
 			t.Fatal("following account cannot be selected")
 		}
 	}
-	model.cursor, model.height = 1, 18
+	model.cursor, model.height = 1, 14
 	model.settings.CompactMode = false
-	start, end := model.usageVisibleRange(120, 18)
+	start, end := model.usageVisibleRange(120, 14)
 	if start != 1 || end != 2 {
 		t.Fatal("tall group hid selected account")
 	}
